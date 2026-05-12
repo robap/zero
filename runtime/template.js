@@ -1,0 +1,472 @@
+import { effect, _createScope } from './reactivity.js';
+// `document` is read from globalThis at call time (set by dom-shim in tests,
+// real DOM in production).
+
+const _templateCache = new WeakMap();
+
+// Parser states
+const TEXT = 'TEXT';
+const TAG_OPEN = 'TAG_OPEN';
+const TAG_NAME = 'TAG_NAME';
+const IN_TAG = 'IN_TAG';
+const ATTR_NAME = 'ATTR_NAME';
+const AFTER_ATTR_NAME = 'AFTER_ATTR_NAME';
+const ATTR_VALUE_UNQUOTED = 'ATTR_VALUE_UNQUOTED';
+const ATTR_VALUE_DQ = 'ATTR_VALUE_DQ';
+const ATTR_VALUE_SQ = 'ATTR_VALUE_SQ';
+const CLOSING_TAG = 'CLOSING_TAG';
+
+/**
+ * @param {TemplateStringsArray} strings
+ * @returns {{ fragment: DocumentFragment, parts: any[] }}
+ */
+function _parseTemplate(strings) {
+  const frag = document.createDocumentFragment();
+  const parts = [];
+
+  let state = TEXT;
+  let parent = frag;
+  const elementStack = [];
+  const parentPath = [];
+  let currentAttrName = '';
+  let currentTagName = '';
+  let currentCloseTagName = '';
+  let currentTextData = '';
+
+  function flushText() {
+    if (currentTextData) {
+      parent.appendChild(document.createTextNode(currentTextData));
+      currentTextData = '';
+    }
+  }
+
+  function childPath(childIndex) {
+    return [...parentPath, childIndex];
+  }
+
+  for (let si = 0; si < strings.length; si++) {
+    const s = strings[si];
+
+    for (let ci = 0; ci < s.length; ci++) {
+      const ch = s[ci];
+      const next = s[ci + 1];
+
+      switch (state) {
+        case TEXT:
+          if (ch === '<') {
+            flushText();
+            if (next === '/') {
+              state = CLOSING_TAG;
+              currentCloseTagName = '';
+              ci++; // skip '/'
+            } else {
+              state = TAG_OPEN;
+              currentTagName = '';
+            }
+          } else {
+            currentTextData += ch;
+          }
+          break;
+
+        case TAG_OPEN:
+          if (/[a-zA-Z]/.test(ch)) {
+            state = TAG_NAME;
+            currentTagName = ch;
+          } else {
+            throw new Error(`html: unexpected char '${ch}' after '<'`);
+          }
+          break;
+
+        case TAG_NAME:
+          if (/[a-zA-Z0-9\-]/.test(ch)) {
+            currentTagName += ch;
+          } else if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
+            const el = document.createElement(currentTagName);
+            parent.appendChild(el);
+            elementStack.push({ el, pathIdx: parent.childNodes.length - 1 });
+            parentPath.push(parent.childNodes.length - 1);
+            parent = el;
+            state = IN_TAG;
+          } else if (ch === '>') {
+            const el = document.createElement(currentTagName);
+            parent.appendChild(el);
+            elementStack.push({ el, pathIdx: parent.childNodes.length - 1 });
+            parentPath.push(parent.childNodes.length - 1);
+            parent = el;
+            state = TEXT;
+          } else if (ch === '/' && next === '>') {
+            const el = document.createElement(currentTagName);
+            parent.appendChild(el);
+            // self-closing: do not push to element stack
+            ci++; // skip '>'
+            state = TEXT;
+          } else {
+            throw new Error(`html: unexpected char '${ch}' in tag name`);
+          }
+          break;
+
+        case IN_TAG:
+          if (ch === '>') {
+            state = TEXT;
+          } else if (ch === '/' && next === '>') {
+            // self-closing for element already pushed
+            elementStack.pop();
+            parentPath.pop();
+            parent = elementStack.length > 0 ? elementStack[elementStack.length - 1].el : frag;
+            ci++;
+            state = TEXT;
+          } else if (ch !== ' ' && ch !== '\t' && ch !== '\n' && ch !== '\r') {
+            state = ATTR_NAME;
+            currentAttrName = ch;
+          }
+          break;
+
+        case ATTR_NAME:
+          if (ch === '=') {
+            state = AFTER_ATTR_NAME;
+          } else if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
+            state = AFTER_ATTR_NAME;
+          } else if (ch === '>') {
+            currentAttrName = '';
+            state = TEXT;
+          } else {
+            currentAttrName += ch;
+          }
+          break;
+
+        case AFTER_ATTR_NAME:
+          if (ch === '"') {
+            state = ATTR_VALUE_DQ;
+          } else if (ch === "'") {
+            state = ATTR_VALUE_SQ;
+          } else if (ch === '>') {
+            currentAttrName = '';
+            state = TEXT;
+          } else if (ch === '=') {
+            // skip
+          } else if (ch !== ' ' && ch !== '\t') {
+            state = ATTR_VALUE_UNQUOTED;
+          }
+          break;
+
+        case ATTR_VALUE_DQ:
+          if (ch === '"') {
+            state = IN_TAG;
+          }
+          break;
+
+        case ATTR_VALUE_SQ:
+          if (ch === "'") {
+            state = IN_TAG;
+          }
+          break;
+
+        case ATTR_VALUE_UNQUOTED:
+          if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
+            state = IN_TAG;
+          } else if (ch === '>') {
+            currentAttrName = '';
+            state = TEXT;
+          }
+          break;
+
+        case CLOSING_TAG:
+          if (ch === '>') {
+            elementStack.pop();
+            parentPath.pop();
+            parent = elementStack.length > 0 ? elementStack[elementStack.length - 1].el : frag;
+            currentCloseTagName = '';
+            state = TEXT;
+          } else {
+            currentCloseTagName += ch;
+          }
+          break;
+      }
+    }
+
+    // Between strings[si] and strings[si+1], a placeholder value sits here.
+    // Record a Part based on current parser state.
+    if (si < strings.length - 1) {
+      flushText();
+      switch (state) {
+        case TEXT: {
+          const anchor = document.createComment('');
+          parent.appendChild(anchor);
+          parts.push({ type: 'node', path: childPath(parent.childNodes.length - 1) });
+          break;
+        }
+        case AFTER_ATTR_NAME:
+        case ATTR_VALUE_DQ:
+        case ATTR_VALUE_SQ:
+        case ATTR_VALUE_UNQUOTED: {
+          const path = [...parentPath];
+          if (currentAttrName.startsWith('@')) {
+            const [eventPart, ...modifiers] = currentAttrName.slice(1).split('.');
+            parts.push({ type: 'event', path, event: eventPart, modifiers });
+          } else if (currentAttrName === 'ref') {
+            parts.push({ type: 'ref', path });
+          } else {
+            parts.push({ type: 'attr', path, name: currentAttrName });
+          }
+          // Transition to IN_TAG so subsequent characters parse correctly
+          if (state === AFTER_ATTR_NAME) state = IN_TAG;
+          break;
+        }
+        default:
+          throw new Error(`html: placeholder in unsupported position (state: ${state})`);
+      }
+    }
+  }
+
+  flushText();
+
+  return { fragment: frag, parts };
+}
+
+export function html(strings, ...values) {
+  let template = _templateCache.get(strings);
+  if (!template) {
+    template = _parseTemplate(strings);
+    _templateCache.set(strings, template);
+  }
+  return { _template: template, _values: values };
+}
+
+// Key modifier map for event handling
+const KEY_MODIFIERS = {
+  enter: 'Enter',
+  escape: 'Escape',
+  space: ' ',
+  tab: 'Tab',
+  up: 'ArrowUp',
+  down: 'ArrowDown',
+  left: 'ArrowLeft',
+  right: 'ArrowRight',
+};
+
+function _isReactive(v) {
+  if (v == null || typeof v !== 'object') return false;
+  const desc = Object.getOwnPropertyDescriptor(v, 'val');
+  return !!desc && typeof desc.get === 'function';
+}
+
+function _isTemplateResult(v) {
+  return v != null && typeof v === 'object' && v._template != null && Array.isArray(v._values);
+}
+
+function _walkPath(root, path) {
+  let node = root;
+  for (const i of path) node = node.childNodes[i];
+  return node;
+}
+
+function _applyAttr(el, name, v) {
+  if (v === false || v == null) el.removeAttribute(name);
+  else if (v === true) el.setAttribute(name, '');
+  else el.setAttribute(name, String(v));
+}
+
+function _commitAttr(el, name, value) {
+  if (_isReactive(value)) {
+    effect(() => _applyAttr(el, name, value.val));
+  } else if (typeof value === 'function') {
+    effect(() => _applyAttr(el, name, value()));
+  } else {
+    _applyAttr(el, name, value);
+  }
+}
+
+function _nextSiblingAfter(anchor, state) {
+  if (state.currentNodes.length === 0) return anchor.nextSibling;
+  const last = state.currentNodes[state.currentNodes.length - 1];
+  return last.nextSibling;
+}
+
+function _clearNodeContent(state) {
+  for (const node of state.currentNodes) {
+    if (node.parentNode) node.parentNode.removeChild(node);
+  }
+  state.currentNodes.length = 0;
+}
+
+function _disposeItemScopes(state) {
+  if (!state.itemScopes) return;
+  for (const s of state.itemScopes) s.dispose();
+  state.itemScopes.length = 0;
+}
+
+function _clearNodeSlot(anchor, state) {
+  _disposeItemScopes(state);
+  _clearNodeContent(state);
+}
+
+function _appendNodeItem(anchor, value, state) {
+  if (value == null) return;
+
+  if (_isTemplateResult(value)) {
+    const frag = document.createDocumentFragment();
+    commit(value, frag);
+    while (frag.childNodes.length > 0) {
+      const node = frag.childNodes[0];
+      anchor.parentNode.insertBefore(node, _nextSiblingAfter(anchor, state));
+      state.currentNodes.push(node);
+    }
+    return;
+  }
+
+  const text = document.createTextNode(String(value));
+  anchor.parentNode.insertBefore(text, _nextSiblingAfter(anchor, state));
+  state.currentNodes.push(text);
+}
+
+function _applyNodeValueLeaf(anchor, value, state) {
+  _clearNodeContent(state);
+
+  if (value == null) return;
+
+  if (Array.isArray(value)) {
+    for (const item of value) _appendNodeItem(anchor, item, state);
+    return;
+  }
+
+  _appendNodeItem(anchor, value, state);
+}
+
+function _commitEach(anchor, eachMarker, state) {
+  const { signal: arrSig, renderFn } = eachMarker;
+  state.itemScopes = state.itemScopes || [];
+
+  effect(() => {
+    _disposeItemScopes(state);
+    _clearNodeContent(state);
+
+    const items = arrSig.val;
+    if (!Array.isArray(items)) return;
+
+    for (let i = 0; i < items.length; i++) {
+      const scope = _createScope();
+      state.itemScopes.push(scope);
+      scope.run(() => {
+        const tr = renderFn(items[i], i);
+        const frag = document.createDocumentFragment();
+        commit(tr, frag);
+        while (frag.childNodes.length > 0) {
+          const node = frag.childNodes[0];
+          anchor.parentNode.insertBefore(node, _nextSiblingAfter(anchor, state));
+          state.currentNodes.push(node);
+        }
+      });
+    }
+  });
+}
+
+function _applyNodeValue(anchor, value, state) {
+  _clearNodeSlot(anchor, state);
+
+  if (value == null) return;
+
+  if (value && value._isEach) {
+    _commitEach(anchor, value, state);
+    return;
+  }
+
+  if (_isReactive(value)) {
+    effect(() => _applyNodeValueLeaf(anchor, value.val, state));
+    return;
+  }
+
+  if (typeof value === 'function') {
+    effect(() => _applyNodeValueLeaf(anchor, value(), state));
+    return;
+  }
+
+  _applyNodeValueLeaf(anchor, value, state);
+}
+
+function _commitNode(anchor, value) {
+  const state = { currentNodes: [] };
+  _applyNodeValue(anchor, value, state);
+  return state;
+}
+
+function _wrapEventHandler(modifiers, handler) {
+  const keyFilters = modifiers.filter(m => m in KEY_MODIFIERS);
+  const hasPrevent = modifiers.includes('prevent');
+  const hasStop = modifiers.includes('stop');
+  const throttleMs = modifiers.includes('throttle') ? 100 : 0;
+  const debounceMs = modifiers.includes('debounce') ? 100 : 0;
+
+  let baseHandler = (e) => {
+    if (keyFilters.length > 0 && !keyFilters.some(m => e.key === KEY_MODIFIERS[m])) return;
+    if (hasPrevent) e.preventDefault?.();
+    if (hasStop) e.stopPropagation?.();
+    return handler(e);
+  };
+
+  if (throttleMs > 0) baseHandler = _throttle(baseHandler, throttleMs);
+  if (debounceMs > 0) baseHandler = _debounce(baseHandler, debounceMs);
+
+  return baseHandler;
+}
+
+function _throttle(fn, ms) {
+  let last = 0;
+  return (...args) => {
+    const now = Date.now();
+    if (now - last < ms) return;
+    last = now;
+    return fn(...args);
+  };
+}
+
+function _debounce(fn, ms) {
+  let timer;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), ms);
+  };
+}
+
+function _commitEvent(el, eventName, modifiers, handler) {
+  const wrapped = _wrapEventHandler(modifiers, handler);
+  const options = modifiers.includes('once') ? { once: true } : undefined;
+  el.addEventListener(eventName, wrapped, options);
+  effect(() => () => el.removeEventListener(eventName, wrapped, options));
+}
+
+function _commitRef(el, refObj) {
+  refObj.el = el;
+  effect(() => () => { refObj.el = null; });
+}
+
+export function commit(templateResult, container) {
+  const { _template, _values } = templateResult;
+  const clone = _template.fragment.cloneNode(true);
+
+  // Walk all paths before committing any part — insertions during commit
+  // would otherwise shift subsequent path indices in the childNodes arrays.
+  const targets = _template.parts.map(part => _walkPath(clone, part.path));
+
+  for (let i = 0; i < _template.parts.length; i++) {
+    const part = _template.parts[i];
+    const target = targets[i];
+    const value = _values[i];
+
+    switch (part.type) {
+      case 'attr':  _commitAttr(target, part.name, value); break;
+      case 'event': _commitEvent(target, part.event, part.modifiers, value); break;
+      case 'ref':   _commitRef(target, value); break;
+      case 'node':  _commitNode(target, value); break;
+    }
+  }
+
+  container.appendChild(clone);
+}
+
+export function ref() {
+  return { el: null };
+}
+
+export function each(sig, renderFn) {
+  return { _isEach: true, signal: sig, renderFn };
+}

@@ -1218,14 +1218,14 @@ Suggested build order for a proof of concept:
 - [x] Ownership scope system (create, nest, dispose)
 
 ### Phase 2 — Template System
-- [ ] `html` tagged template function
-- [ ] `TemplateResult` type
-- [ ] `commit()` — convert TemplateResult to real DOM
-- [ ] Dynamic value types: string, number, signal, function, nested template, array, null
-- [ ] Event binding with `@` prefix
-- [ ] Event modifiers (.prevent, .stop, .once, key filters)
-- [ ] `each()` for keyed list rendering
-- [ ] `ref()` for DOM access
+- [x] `html` tagged template function
+- [x] `TemplateResult` type
+- [x] `commit()` — convert TemplateResult to real DOM
+- [x] Dynamic value types: string, number, signal, function, nested template, array, null
+- [x] Event binding with `@` prefix
+- [x] Event modifiers (.prevent, .stop, .once, key filters)
+- [x] `each()` for keyed list rendering
+- [x] `ref()` for DOM access
 
 ### Phase 3 — App & Router
 - [ ] `App` class with `.state()`, `.use()`, `.route()`, `.layout()`, `.run()`
