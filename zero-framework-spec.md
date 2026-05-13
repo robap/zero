@@ -33,7 +33,6 @@ Commands:
   zero lint                   Lint all source files
   zero gen component <name>   Generate a component
   zero gen route <path>       Generate a route
-  zero gen machine <name>     Generate a state machine
   zero preview                Serve the production build locally
   zero upgrade                Self-update the CLI
 
@@ -66,8 +65,7 @@ my-app/
 │   ├── app.ts             # app configuration and routing
 │   ├── routes/
 │   │   └── home.ts        # default home route
-│   ├── components/        # empty, ready for components
-│   └── machines/          # empty, ready for state machines
+│   └── components/        # empty, ready for components
 └── styles/
     ├── vars.css            # CSS custom properties
     └── app.css             # application styles
@@ -114,7 +112,6 @@ zero gen component Button        → src/components/Button.ts
 zero gen component ui/Card       → src/components/ui/Card.ts
 zero gen route /about            → src/routes/about.ts
 zero gen route /users/:id        → src/routes/users/[id].ts
-zero gen machine auth            → src/machines/auth.ts
 ```
 
 #### `zero check`
@@ -158,19 +155,18 @@ The developer owns the HTML file. The framework does not generate it, modify it,
 The app module builds and exports a configured app object. No side effects on import. The `run()` call is in `index.html`.
 
 ```ts
-import { App, machine } from "z"
-import { auth } from "./machines/auth"
+import { App, signal } from "z"
 import { Layout } from "./components/Layout"
 
 const app = new App()
 
-// global state
-app.state("auth", machine(auth))
-app.state("theme", "light")
+// global state — plain signals
+app.state("auth", signal({ status: "loggedOut", user: null }))
+app.state("theme", signal("light"))
 
 // middleware
 app.use(({ route, state, redirect }) => {
-  if (route.meta?.protected && state.auth.current === "loggedOut") {
+  if (route.meta?.protected && state.auth.val.status === "loggedOut") {
     redirect("/login")
   }
 })
@@ -387,9 +383,9 @@ function AuthStatus() {
   return html`
     <div>
       ${() => {
-        if (auth.current === "loggedIn") return html`<span>Welcome</span>`
-        if (auth.current === "loading") return html`<span>Loading...</span>`
-        return html`<a href="/login">Log in</a>`
+        if (auth.val.status === "loggedIn") return html`<span>Welcome</span>`
+        if (auth.val.status === "loading") return html`<span>Loading...</span>`
+        return html`<a href=${"/login"}>Log in</a>`
       }}
     </div>
   `
@@ -547,161 +543,48 @@ The developer never manually cleans up anything.
 Access app-level state (registered via `app.state()`) from any component:
 
 ```ts
-const theme = inject("theme")      // returns the signal/machine registered under "theme"
-const auth = inject("auth")        // returns the auth machine instance
+const theme = inject("theme")      // returns the signal registered under "theme"
+const auth = inject("auth")        // returns the signal registered under "auth"
 ```
 
 Fully typed — zero knows the shape of registered state.
 
 ---
 
-## 5. State Machines
+## 5. State Machines (Deferred)
 
-First-class primitive, not a library. Machines are reactive — their `.current` state and `.ctx` context properties work like signals.
+State machines (statechart-style, with finite states, hierarchical sub-states, guards, actions, and context) were originally planned as a first-class Phase 4 primitive. They have been **deferred indefinitely**.
 
-### Defining a Machine
+### Rationale
 
-```ts
-import { machine } from "z"
-
-const toggle = machine({
-  initial: "inactive",
-  states: {
-    inactive: {
-      on: { TOGGLE: "active" }
-    },
-    active: {
-      on: { TOGGLE: "inactive" }
-    }
-  }
-})
-```
-
-### Using a Machine
+The cases the original `machine()` API was meant to cover — auth flows, multi-step UIs, video player modes — model cleanly as `signal({ status, ...data })` registered via `app.state()` and read via the route component's `state` prop or `inject()` for non-route components. Components branch on `.val.status`:
 
 ```ts
-const m = toggle()          // create an instance
-m.current                   // "inactive" — reactive
-m.send("TOGGLE")            // transition to "active"
-m.current                   // "active"
-```
+app.state("auth", signal({ status: "loggedOut", user: null }))
 
-### Context
-
-```ts
-const auth = machine({
-  initial: "loggedOut",
-  context: {
-    user: null as User | null,
-    error: null as string | null,
-    attempts: 0
-  },
-  states: {
-    loggedOut: {
-      on: {
-        LOGIN: {
-          to: "loading",
-          action: (ctx, event) => { ctx.attempts += 1 }
-        }
-      }
-    },
-    loading: {
-      enter: async (ctx, event) => {
-        try {
-          const user = await api.login(event.email, event.password)
-          return { to: "loggedIn", assign: { user, error: null } }
-        } catch (e) {
-          return { to: "error", assign: { error: e.message } }
-        }
-      }
-    },
-    loggedIn: {
-      on: {
-        LOGOUT: {
-          to: "loggedOut",
-          action: (ctx) => { ctx.user = null }
-        }
-      }
-    },
-    error: {
-      on: {
-        RETRY: "loading",
-        CANCEL: { to: "loggedOut", action: (ctx) => { ctx.error = null } }
-      }
-    }
-  }
-})
-```
-
-### Guards
-
-```ts
-CHECKOUT: {
-  to: "payment",
-  guard: (ctx) => ctx.items.length > 0   // blocks transition if false
+function AuthStatus() {
+  const auth = inject("auth")
+  return html`
+    ${() => auth.val.status === "loggedIn"
+      ? html`<span>Welcome ${auth.val.user.name}</span>`
+      : html`<a href=${"/login"}>Log in</a>`}
+  `
 }
 ```
 
-### Nested / Hierarchical States
+The finite-phase discriminator that a statechart enforces (which events are legal in which state) is real, but rarely the load-bearing constraint in practice — the UI typically doesn't render the buttons that would dispatch illegal events. Adding a 300-line primitive plus generator subcommand plus integration surface for a payoff that rarely materializes is the wrong trade for a "zero, no magic" framework.
 
-```ts
-const player = machine({
-  initial: "stopped",
-  states: {
-    stopped: {
-      on: { PLAY: "playing.normal" }
-    },
-    playing: {
-      on: { STOP: "stopped" },       // shared for all sub-states
-      initial: "normal",
-      states: {
-        normal:    { on: { SHUFFLE: "shuffled" } },
-        shuffled:  { on: { NORMAL: "normal" } },
-        repeating: { on: { NORMAL: "normal" } }
-      }
-    }
-  }
-})
-```
+### Reservation
 
-`m.current` returns dotted path: `"playing.shuffled"`
-`m.in("playing")` returns true for any sub-state of playing.
+If a concrete application later demands phase-bounded action legality that signals don't express well, the slot in the API surface is reserved:
 
-### Machine API
+- `machine(definition)` factory; `factory()` produces an instance
+- `m.current`, `m.ctx`, `m.send(event)`, `m.in(state)`, `m.settled()`
+- `app.on(stateKey, stateName, handler)` for machine-to-machine wiring
+- `zero gen machine <name>` CLI subcommand
+- `src/machines/` directory in the project scaffold
 
-```
-machine(definition)         → create a machine factory
-m = factory()               → create an instance
-m.current                   → current state (reactive, dotted path for nested)
-m.ctx                       → context object (reactive properties)
-m.send(event, data?)        → send an event
-m.in(state)                 → check if in a state (supports parent checks)
-m.on(state, callback)       → listen for state entry
-m.matches({...})            → pattern match multiple states
-m.settled()                 → promise that resolves after async enter()
-```
-
-### App-Level vs Local Machines
-
-```ts
-// app-level — singleton, shared via inject()
-app.state("auth", machine(auth))
-
-// component-level — new instance per component
-function VideoPlayer() {
-  const m = player()  // scoped to this component
-}
-```
-
-### Machine-to-Machine Communication
-
-Wired in app.ts, not inside machines:
-
-```ts
-app.on("auth", "loggedOut", ({ state }) => {
-  state.cart.send("CLEAR")
-})
-```
+Until then: model lifecycle state as a plain signal whose value carries a `status` field.
 
 ---
 
@@ -819,7 +702,7 @@ a[data-active-exact] { color: var(--color-primary); }
 ```ts
 app.route("/admin", () => import("./routes/admin"), {
   guard: ({ state, redirect }) => {
-    if (state.auth.ctx.user?.role !== "admin") {
+    if (state.auth.val.user?.role !== "admin") {
       redirect("/")
       return false
     }
@@ -988,19 +871,9 @@ it("increments on click", () => {
 ```ts
 it("shows login when logged out", () => {
   const el = render(NavBar(), {
-    state: { auth: machine(auth) }
+    state: { auth: signal({ status: "loggedOut", user: null }) }
   })
   expect(text(el, "a")).toBe("Log in")
-})
-```
-
-### Testing Machines
-
-```ts
-it("blocks checkout with empty cart", () => {
-  const m = checkout()
-  m.send("CHECKOUT")
-  expect(m.current).toBe("cart")  // guard blocked
 })
 ```
 
@@ -1018,7 +891,7 @@ it("extracts params", () => {
 ```ts
 it("redirects unauthenticated users", () => {
   const result = app.testMiddleware("/dashboard", {
-    auth: machine(auth)
+    auth: signal({ status: "loggedOut", user: null })
   })
   expect(result.redirected).toBe("/login")
 })
@@ -1123,7 +996,7 @@ Generated by `zero new` for editor support only. The CLI ignores it.
 }
 ```
 
-`zero` ships type definitions for all its exports (`signal`, `computed`, `html`, `machine`, etc.) so editors provide full autocomplete and type-checking.
+`zero` ships type definitions for all its exports (`signal`, `computed`, `html`, etc.) so editors provide full autocomplete and type-checking.
 
 ---
 
@@ -1140,7 +1013,6 @@ app.route(path, loader, opts?)       // register route
 app.layout(component)                // set layout component
 app.loading(component)               // set global loading UI
 app.error(component)                 // set global error UI
-app.on(stateKey, stateName, handler) // machine-to-machine wiring
 app.run(selector)                    // mount and start
 app.match(path)                      // test: match a path
 app.testMiddleware(path, state)      // test: run middleware
@@ -1157,9 +1029,6 @@ html``                               // tagged template → TemplateResult
 each(signal, renderFn, keyFn)        // keyed list rendering
 ref()                                // DOM element reference
 inject(key)                          // access app-level state
-
-// State Machines
-machine(definition)                  // create machine factory
 
 // Router
 navigate(path, opts?)                // programmatic navigation
@@ -1242,16 +1111,8 @@ Suggested build order for a proof of concept:
 - [x] Loading / error UI
 - [x] `data-active` / `data-active-exact` on links
 
-### Phase 4 — State Machines
-- [ ] `machine()` factory with states, transitions, context
-- [ ] Guards
-- [ ] Actions
-- [ ] Async `enter()` handlers
-- [ ] Nested/hierarchical states with dotted paths
-- [ ] `.in()` for parent state checking
-- [ ] `.settled()` for async testing
-- [ ] Integration with `app.state()` and `inject()`
-- [ ] `app.on()` for machine-to-machine communication
+### Phase 4 — Deferred
+State machines as a first-class primitive are deferred indefinitely. See Section 5 for rationale and the reserved API slot.
 
 ### Phase 5 — Test Runner
 - [ ] File discovery (*.test.ts, *.spec.ts)
@@ -1283,7 +1144,6 @@ Suggested build order for a proof of concept:
 | Reactivity | Signals with auto-tracking | No dependency arrays, no re-render, granular updates |
 | DOM strategy | Direct DOM creation, no virtual DOM | Smaller runtime, no diffing algorithm needed |
 | CSS | Not a framework concern | Developer loads stylesheets in HTML, uses CSS variables |
-| State machines | First-class primitive | Testable in isolation, reactive, replaces ad-hoc state management |
 | Entry point | Developer-owned index.html | No magic, no hidden HTML generation, full control |
 | Boot | `app.run("#app")` in index.html | Explicit, visible, debuggable |
 | Routing | Explicit `app.route()` calls | No file-system conventions, ordered matching, readable |
