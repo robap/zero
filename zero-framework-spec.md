@@ -1229,18 +1229,18 @@ Suggested build order for a proof of concept:
 
 ### Phase 3 — App & Router
 - [ ] `App` class with `.state()`, `.use()`, `.route()`, `.layout()`, `.run()`
-- [ ] Route matching with params and wildcards
+- [x] Route matching with params and wildcards
 - [ ] `load()` function support
-- [ ] `navigate()`, `back()`, `forward()`
-- [ ] History API integration
-- [ ] `<a>` tag interception
-- [ ] `inject()` for app-level state access
-- [ ] `route()` for reactive current route
+- [x] `navigate()`, `back()`, `forward()`
+- [x] History API integration
+- [x] `<a>` tag interception
+- [x] `inject()` for app-level state access
+- [x] `route()` for reactive current route
 - [ ] Middleware chain
 - [ ] Route guards
 - [ ] Nested routes with children
 - [ ] Loading / error UI
-- [ ] `data-active` / `data-active-exact` on links
+- [x] `data-active` / `data-active-exact` on links
 
 ### Phase 4 — State Machines
 - [ ] `machine()` factory with states, transitions, context

@@ -3,6 +3,23 @@ const TEXT_NODE = 3;
 const COMMENT_NODE = 8;
 const DOCUMENT_FRAGMENT_NODE = 11;
 
+function _matchSelector(node, selector) {
+  if (selector.startsWith('#')) {
+    return node.getAttribute != null && node.getAttribute('id') === selector.slice(1);
+  }
+  if (/^[a-z][a-z0-9]*$/.test(selector)) {
+    return node.tagName != null && node.tagName.toLowerCase() === selector;
+  }
+  throw new Error(`dom-shim: unsupported selector "${selector}"`);
+}
+
+function _walkDescendants(root, fn) {
+  for (const child of root.childNodes || []) {
+    fn(child);
+    _walkDescendants(child, fn);
+  }
+}
+
 function _applySiblingGetters(node, getParent) {
   Object.defineProperties(node, {
     nextSibling: {
@@ -122,6 +139,34 @@ function createElement(tagName) {
       for (const h of toRemove) this.removeEventListener(event.type, h);
     },
 
+    querySelector(selector) {
+      let found = null;
+      _walkDescendants(this, node => {
+        if (!found && node.nodeType === ELEMENT_NODE && _matchSelector(node, selector)) found = node;
+      });
+      return found;
+    },
+    querySelectorAll(selector) {
+      const results = [];
+      _walkDescendants(this, node => {
+        if (node.nodeType === ELEMENT_NODE && _matchSelector(node, selector)) results.push(node);
+      });
+      return results;
+    },
+    closest(selector) {
+      let node = this;
+      while (node && node.nodeType === ELEMENT_NODE) {
+        if (_matchSelector(node, selector)) return node;
+        node = node.parentNode;
+      }
+      return null;
+    },
+
+    get id() { return this.getAttribute('id') ?? ''; },
+    set id(v) { this.setAttribute('id', v); },
+    get href() { return this.getAttribute('href') ?? ''; },
+    set href(v) { this.setAttribute('href', v); },
+
     appendChild(child) { return _appendChild(this, child); },
     insertBefore(child, ref) { return _insertBefore(this, child, ref); },
     removeChild(child) { return _removeChild(this, child); },
@@ -173,13 +218,128 @@ function createDocumentFragment() {
   return frag;
 }
 
-export const document = {
-  createElement,
-  createTextNode,
-  createComment,
-  createDocumentFragment,
+function _makeEventTarget() {
+  const _listeners = new Map();
+  return {
+    _listeners,
+    addEventListener(event, handler, options) {
+      if (!_listeners.has(event)) _listeners.set(event, []);
+      _listeners.get(event).push({ handler, once: options?.once ?? false });
+    },
+    removeEventListener(event, handler) {
+      if (!_listeners.has(event)) return;
+      _listeners.set(event, _listeners.get(event).filter(e => e.handler !== handler));
+    },
+    dispatchEvent(event) {
+      if (event.defaultPrevented == null) event.defaultPrevented = false;
+      const origPreventDefault = event.preventDefault;
+      event.preventDefault = () => {
+        event.defaultPrevented = true;
+        if (origPreventDefault) origPreventDefault.call(event);
+      };
+      const list = _listeners.get(event.type);
+      if (!list) return;
+      const toRemove = [];
+      for (const entry of [...list]) {
+        entry.handler(event);
+        if (entry.once) toRemove.push(entry.handler);
+      }
+      for (const h of toRemove) this.removeEventListener(event.type, h);
+    },
+  };
+}
+
+export const document = Object.assign(
+  {
+    createElement,
+    createTextNode,
+    createComment,
+    createDocumentFragment,
+    childNodes: [],
+    appendChild(child) { return _appendChild(this, child); },
+    querySelector(selector) {
+      let found = null;
+      _walkDescendants(this, node => {
+        if (!found && node.nodeType === ELEMENT_NODE && _matchSelector(node, selector)) found = node;
+      });
+      return found;
+    },
+    querySelectorAll(selector) {
+      const results = [];
+      _walkDescendants(this, node => {
+        if (node.nodeType === ELEMENT_NODE && _matchSelector(node, selector)) results.push(node);
+      });
+      return results;
+    },
+  },
+  _makeEventTarget(),
+);
+
+const _windowEventTarget = _makeEventTarget();
+
+const _location = {
+  origin: 'http://localhost',
+  pathname: '/',
+  search: '',
+  hash: '',
+  get href() { return this.origin + this.pathname + this.search + this.hash; },
+  _set(input) {
+    const hashIdx = input.indexOf('#');
+    const noHash = hashIdx >= 0 ? input.slice(0, hashIdx) : input;
+    this.hash = hashIdx >= 0 ? input.slice(hashIdx) : '';
+    const qIdx = noHash.indexOf('?');
+    if (qIdx >= 0) {
+      this.pathname = noHash.slice(0, qIdx);
+      this.search = noHash.slice(qIdx);
+    } else {
+      this.pathname = noHash;
+      this.search = '';
+    }
+  },
 };
+
+const _history = {
+  _entries: [{ state: null, url: '/' }],
+  _index: 0,
+  get length() { return this._entries.length; },
+  pushState(state, _title, url) {
+    this._entries.splice(this._index + 1);
+    this._entries.push({ state, url });
+    this._index = this._entries.length - 1;
+    _location._set(url);
+  },
+  replaceState(state, _title, url) {
+    this._entries[this._index] = { state, url };
+    _location._set(url);
+  },
+  back() {
+    if (this._index > 0) {
+      this._index--;
+      _location._set(this._entries[this._index].url);
+      exports_window.dispatchEvent({ type: 'popstate', state: this._entries[this._index].state });
+    }
+  },
+  forward() {
+    if (this._index < this._entries.length - 1) {
+      this._index++;
+      _location._set(this._entries[this._index].url);
+      exports_window.dispatchEvent({ type: 'popstate', state: this._entries[this._index].state });
+    }
+  },
+};
+
+export const window = Object.assign(_windowEventTarget, {
+  location: _location,
+  history: _history,
+});
+
+// Forward-reference alias so _history.back/forward can reference window after construction.
+const exports_window = window;
 
 if (typeof globalThis.document === 'undefined') {
   globalThis.document = document;
+}
+
+if (typeof globalThis.window === 'undefined') {
+  globalThis.window = window;
 }

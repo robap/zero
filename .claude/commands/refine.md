@@ -19,7 +19,7 @@ Do not ask any questions until you have read all of these.
 
 ## Step 2 — Ask questions one at a time
 
-Ask the user questions **one at a time**. Wait for each answer before asking the next. Do not present a list of questions.
+Ask the user questions **one at a time**. Wait for each answer before asking the next. Do not present a list of questions. Do present your recommendation.
 
 There is no fixed question set — use your judgment based on what you learned in Step 1 and what the roadmap item needs. Good areas to probe:
 
