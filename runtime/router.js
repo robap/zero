@@ -65,6 +65,24 @@ export function _normalizePath(p) {
 }
 
 /**
+ * Join a parent normalized path with a child path segment.
+ * - child `'/'` → parent (exact-parent-match).
+ * - parent `'/'` → child (avoid double-slash).
+ * - else → `parent + child`.
+ * Result is normalized via `_normalizePath`.
+ * @internal
+ * @param {string} parent - Already-normalized parent path.
+ * @param {string} child - Child path segment, begins with `/`.
+ * @returns {string}
+ */
+export function _joinPaths(parent, child) {
+  const p = _normalizePath(parent);
+  if (child === '/') return p;
+  if (p === '/') return _normalizePath(child);
+  return _normalizePath(p + child);
+}
+
+/**
  * Parse a query string into a plain object.
  * Accepts `''`, `'?'`, or `'?k=v&k2=v2'`. Keys and values are
  * `decodeURIComponent`-decoded. Repeated keys: last wins.

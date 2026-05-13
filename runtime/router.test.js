@@ -7,6 +7,7 @@ import {
   _compileRoutePattern,
   _matchAgainst,
   _matchRoutes,
+  _joinPaths,
   navigate,
   back,
   forward,
@@ -202,6 +203,114 @@ describe('router', () => {
     it('decoded params: percent-encoded segment', () => {
       const compiled = _compileRoutePattern('/users/:id');
       assert.deepEqual(_matchAgainst(compiled, '/users/%C3%A9'), { params: { id: 'é' } });
+    });
+  });
+
+  describe('_joinPaths', () => {
+    it('child "/" returns parent', () => {
+      assert.equal(_joinPaths('/dashboard', '/'), '/dashboard');
+    });
+
+    it('joins parent + child path', () => {
+      assert.equal(_joinPaths('/dashboard', '/analytics'), '/dashboard/analytics');
+    });
+
+    it('parent "/" returns child', () => {
+      assert.equal(_joinPaths('/', '/about'), '/about');
+    });
+
+    it('parent "/" and child "/" returns "/"', () => {
+      assert.equal(_joinPaths('/', '/'), '/');
+    });
+
+    it('normalizes trailing slash on parent before join', () => {
+      assert.equal(_joinPaths('/dashboard/', '/stats'), '/dashboard/stats');
+    });
+  });
+
+  describe('nested-route flattening', () => {
+    beforeEach(resetEnv);
+
+    it('one-level: children produce two entries with correct normalized paths', () => {
+      const P = () => html`<div>parent</div>`;
+      const O = () => html`<div>overview</div>`;
+      const A = () => html`<div>analytics</div>`;
+      const app = new App().route('/dashboard', P, {
+        children: [
+          { path: '/', load: O },
+          { path: '/analytics', load: A },
+        ],
+      });
+      assert.equal(app._routes.length, 2);
+      assert.equal(app._routes[0].normalized, '/dashboard');
+      assert.equal(app._routes[1].normalized, '/dashboard/analytics');
+    });
+
+    it('one-level: both entries have chain.length === 2', () => {
+      const P = () => html`<div>parent</div>`;
+      const O = () => html`<div>overview</div>`;
+      const A = () => html`<div>analytics</div>`;
+      const app = new App().route('/dashboard', P, {
+        children: [
+          { path: '/', load: O },
+          { path: '/analytics', load: A },
+        ],
+      });
+      assert.equal(app._routes[0].chain.length, 2);
+      assert.equal(app._routes[1].chain.length, 2);
+    });
+
+    it('sibling parent-descriptor reuse: chain[0] is identical by reference in both children', () => {
+      const P = () => html`<div>parent</div>`;
+      const O = () => html`<div>overview</div>`;
+      const A = () => html`<div>analytics</div>`;
+      const app = new App().route('/dashboard', P, {
+        children: [
+          { path: '/', load: O },
+          { path: '/analytics', load: A },
+        ],
+      });
+      assert.strictEqual(app._routes[0].chain[0], app._routes[1].chain[0]);
+    });
+
+    it('child descriptors carry correct loaderOrLoad', () => {
+      const P = () => html`<div>parent</div>`;
+      const O = () => html`<div>overview</div>`;
+      const A = () => html`<div>analytics</div>`;
+      const app = new App().route('/dashboard', P, {
+        children: [
+          { path: '/', load: O },
+          { path: '/analytics', load: A },
+        ],
+      });
+      assert.strictEqual(app._routes[0].chain[1].loaderOrLoad, O);
+      assert.strictEqual(app._routes[1].chain[1].loaderOrLoad, A);
+    });
+
+    it('two-level nesting produces entry at /dashboard/foo/bar with chain.length === 3', () => {
+      const P = () => html`<div>parent</div>`;
+      const Leaf = () => html`<div>leaf</div>`;
+      const app = new App().route('/dashboard', P, {
+        children: [
+          {
+            path: '/foo',
+            load: () => null,
+            children: [
+              { path: '/bar', load: Leaf },
+            ],
+          },
+        ],
+      });
+      assert.equal(app._routes.length, 1);
+      assert.equal(app._routes[0].normalized, '/dashboard/foo/bar');
+      assert.equal(app._routes[0].chain.length, 3);
+    });
+
+    it('plain top-level route (no children) has chain: [self]', () => {
+      const Home = () => html`<div>home</div>`;
+      const app = new App().route('/', Home);
+      assert.equal(app._routes[0].chain.length, 1);
+      assert.strictEqual(app._routes[0].chain[0].loaderOrLoad, Home);
     });
   });
 
