@@ -1127,7 +1127,6 @@ State machines as a first-class primitive are deferred indefinitely. See Section
 - [x] `zero init` scaffolding
 - [x] `zero dev` dev server (file serving, script injection, proxy mode; no HMR)
 - [x] `zero dev` file watching (full-page reload via SSE)
-- [ ] `zero dev` HMR (module state preservation, error overlay)
 - [x] `zero build` production output
 - [ ] `zero test` integration
 - [ ] `zero check` type checking

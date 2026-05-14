@@ -1,7 +1,11 @@
 import { html } from "zero";
 
 /**
- * @returns {ReturnType<typeof html>}
+ * @typedef {import("zero").TemplateResult} TemplateResult
+ */
+
+/**
+ * @returns {TemplateResult}
  */
 export default function Home() {
   return html`<h1>Hello from zero</h1>`;

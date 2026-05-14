@@ -2,6 +2,19 @@ import { effect, _createScope } from './reactivity.js';
 // `document` is read from globalThis at call time (set by dom-shim in tests,
 // real DOM in production).
 
+/**
+ * @typedef {{ fragment: DocumentFragment, parts: any[] }} Template
+ */
+
+/**
+ * @typedef {{ _template: Template, _values: any[] }} TemplateResult
+ */
+
+/**
+ * @template T
+ * @typedef {{ _isEach: true, signal: { readonly val: T[] }, renderFn: (item: T, index: number) => TemplateResult }} EachMarker
+ */
+
 const _templateCache = new WeakMap();
 
 // Parser states
@@ -18,7 +31,7 @@ const CLOSING_TAG = 'CLOSING_TAG';
 
 /**
  * @param {TemplateStringsArray} strings
- * @returns {{ fragment: DocumentFragment, parts: any[] }}
+ * @returns {Template}
  */
 function _parseTemplate(strings) {
   const frag = document.createDocumentFragment();
@@ -252,6 +265,11 @@ function _parseTemplate(strings) {
   return { fragment: frag, parts };
 }
 
+/**
+ * @param {TemplateStringsArray} strings
+ * @param {...any} values
+ * @returns {TemplateResult}
+ */
 export function html(strings, ...values) {
   let template = _templateCache.get(strings);
   if (!template) {
@@ -492,10 +510,20 @@ export function commit(templateResult, container) {
   container.appendChild(clone);
 }
 
+/**
+ * @template {Element} [T=Element]
+ * @returns {{ el: T | null }}
+ */
 export function ref() {
   return { el: null };
 }
 
+/**
+ * @template T
+ * @param {{ readonly val: T[] }} sig
+ * @param {(item: T, index: number) => TemplateResult} renderFn
+ * @returns {EachMarker<T>}
+ */
 export function each(sig, renderFn) {
   return { _isEach: true, signal: sig, renderFn };
 }
