@@ -36,6 +36,53 @@ describe('html tagged template', () => {
     assert.deepEqual(r._template.parts, []);
   });
 
+  it('static attribute value is preserved (e.g. <a href="/bar">)', () => {
+    const container = document.createDocumentFragment();
+    commit(html`<a href="/bar">bar</a>`, container);
+    const a = container.childNodes[0];
+    assert.equal(a.tagName, 'A');
+    assert.equal(a.getAttribute('href'), '/bar');
+    assert.equal(a.childNodes[0].nodeValue, 'bar');
+  });
+
+  it('multiple static attributes on one element', () => {
+    const container = document.createDocumentFragment();
+    commit(html`<a href="/x" class="link" data-y="z">x</a>`, container);
+    const a = container.childNodes[0];
+    assert.equal(a.getAttribute('href'), '/x');
+    assert.equal(a.getAttribute('class'), 'link');
+    assert.equal(a.getAttribute('data-y'), 'z');
+  });
+
+  it('static attribute mixed with dynamic attribute on same element', () => {
+    const container = document.createDocumentFragment();
+    commit(html`<a href="/x" class=${'c'}>x</a>`, container);
+    const a = container.childNodes[0];
+    assert.equal(a.getAttribute('href'), '/x');
+    assert.equal(a.getAttribute('class'), 'c');
+  });
+
+  it('single-quoted static attribute value is preserved', () => {
+    const container = document.createDocumentFragment();
+    commit(html`<a href='/sq'>x</a>`, container);
+    assert.equal(container.childNodes[0].getAttribute('href'), '/sq');
+  });
+
+  it('boolean static attribute is set to empty string', () => {
+    const container = document.createDocumentFragment();
+    commit(html`<input disabled>`, container);
+    const input = container.childNodes[0];
+    assert.equal(input.getAttribute('disabled'), '');
+  });
+
+  it('dynamic attr value next to static attr does not clobber dynamic', () => {
+    const container = document.createDocumentFragment();
+    commit(html`<a class=${'dyn'} href="/static">x</a>`, container);
+    const a = container.childNodes[0];
+    assert.equal(a.getAttribute('class'), 'dyn');
+    assert.equal(a.getAttribute('href'), '/static');
+  });
+
   it('node part: p with placeholder has text and comment anchor', () => {
     const r = html`<p>Count: ${0}</p>`;
     const frag = r._template.fragment;

@@ -53,7 +53,12 @@ pub async fn sse_handler(
         res.ok()
             .map(|path| Ok::<_, Infallible>(Event::default().event("reload").data(path)))
     });
-    let combined = hello.chain(reloads);
+    // End the stream when shutdown is signaled (or the sender is dropped) so
+    // ctrl-c can complete graceful shutdown while a browser is connected.
+    let mut shutdown = state.shutdown.clone();
+    let combined = hello.chain(reloads).take_until(async move {
+        let _ = shutdown.wait_for(|v| *v).await;
+    });
     Sse::new(combined).keep_alive(
         KeepAlive::new()
             .interval(Duration::from_secs(15))

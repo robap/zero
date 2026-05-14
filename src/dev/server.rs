@@ -9,6 +9,7 @@ use axum::http::StatusCode;
 use axum::http::header;
 use axum::response::IntoResponse;
 use axum::routing::get;
+use tokio::sync::watch as shutdown_watch;
 
 use crate::config::Config;
 use crate::dev::files::{serve_root_file, serve_under};
@@ -30,6 +31,9 @@ pub struct AppState {
     pub proxy: Option<Arc<ProxyState>>,
     /// Broadcast bus for dev-mode reload events.
     pub bus: Arc<ReloadBus>,
+    /// Set to `true` on shutdown so long-lived handlers (e.g. SSE) can end
+    /// their streams and let graceful shutdown complete.
+    pub shutdown: shutdown_watch::Receiver<bool>,
 }
 
 /// Start the dev server and block until shutdown.
@@ -63,11 +67,13 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
     let root_for_watch = root.clone();
     let root_display = root.display().to_string();
     let bus_for_watch = bus.clone();
+    let (shutdown_tx, shutdown_rx) = shutdown_watch::channel(false);
     let state = Arc::new(AppState {
         runtime: runtime_module(),
         root,
         proxy,
         bus,
+        shutdown: shutdown_rx,
     });
     let port = config.dev.port;
 
@@ -146,7 +152,12 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
     }
 
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(async move {
+            let _ = tokio::signal::ctrl_c().await;
+            // Tell long-lived handlers (SSE) to end their streams so the
+            // in-flight connections finish and graceful shutdown completes.
+            let _ = shutdown_tx.send(true);
+        })
         .await?;
 
     drop(watch_handle);
@@ -171,7 +182,3 @@ async fn serve_runtime(State(state): State<Arc<AppState>>) -> impl IntoResponse 
     )
 }
 
-/// Resolve when SIGINT (Ctrl-C) is received.
-async fn shutdown_signal() {
-    let _ = tokio::signal::ctrl_c().await;
-}

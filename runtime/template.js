@@ -29,6 +29,7 @@ function _parseTemplate(strings) {
   const elementStack = [];
   const parentPath = [];
   let currentAttrName = '';
+  let currentAttrValue = '';
   let currentTagName = '';
   let currentCloseTagName = '';
   let currentTextData = '';
@@ -37,6 +38,14 @@ function _parseTemplate(strings) {
     if (currentTextData) {
       parent.appendChild(document.createTextNode(currentTextData));
       currentTextData = '';
+    }
+  }
+
+  function flushStaticAttr() {
+    if (currentAttrName) {
+      parent.setAttribute(currentAttrName, currentAttrValue);
+      currentAttrName = '';
+      currentAttrValue = '';
     }
   }
 
@@ -125,9 +134,11 @@ function _parseTemplate(strings) {
           if (ch === '=') {
             state = AFTER_ATTR_NAME;
           } else if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
+            // Boolean attribute followed by whitespace — may still get `=value`.
             state = AFTER_ATTR_NAME;
           } else if (ch === '>') {
-            currentAttrName = '';
+            // Boolean attribute terminating the tag, e.g. `<input disabled>`.
+            flushStaticAttr();
             state = TEXT;
           } else {
             currentAttrName += ch;
@@ -140,33 +151,47 @@ function _parseTemplate(strings) {
           } else if (ch === "'") {
             state = ATTR_VALUE_SQ;
           } else if (ch === '>') {
-            currentAttrName = '';
+            // Boolean attribute terminating the tag, e.g. `<input disabled >`.
+            flushStaticAttr();
             state = TEXT;
           } else if (ch === '=') {
             // skip
-          } else if (ch !== ' ' && ch !== '\t') {
+          } else if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
+            // still in whitespace after attr name
+          } else {
+            // Unquoted attribute value — capture the first character.
             state = ATTR_VALUE_UNQUOTED;
+            currentAttrValue = ch;
           }
           break;
 
         case ATTR_VALUE_DQ:
           if (ch === '"') {
+            flushStaticAttr();
             state = IN_TAG;
+          } else {
+            currentAttrValue += ch;
           }
           break;
 
         case ATTR_VALUE_SQ:
           if (ch === "'") {
+            flushStaticAttr();
             state = IN_TAG;
+          } else {
+            currentAttrValue += ch;
           }
           break;
 
         case ATTR_VALUE_UNQUOTED:
           if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
+            flushStaticAttr();
             state = IN_TAG;
           } else if (ch === '>') {
-            currentAttrName = '';
+            flushStaticAttr();
             state = TEXT;
+          } else {
+            currentAttrValue += ch;
           }
           break;
 
@@ -208,6 +233,10 @@ function _parseTemplate(strings) {
           } else {
             parts.push({ type: 'attr', path, name: currentAttrName });
           }
+          // The dynamic part owns this attribute now — clear static state so
+          // the closing quote/space/`>` doesn't also setAttribute().
+          currentAttrName = '';
+          currentAttrValue = '';
           // Transition to IN_TAG so subsequent characters parse correctly
           if (state === AFTER_ATTR_NAME) state = IN_TAG;
           break;
