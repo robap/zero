@@ -1124,9 +1124,10 @@ State machines as a first-class primitive are deferred indefinitely. See Section
 - [ ] Snapshot testing
 
 ### Phase 6 — CLI & Dev Server
-- [ ] `zero new` scaffolding
-- [ ] `zero dev` with file watching and HMR
-- [ ] `zero build` production output
+- [x] `zero init` scaffolding
+- [x] `zero dev` dev server (file serving, script injection, proxy mode; no HMR)
+- [ ] `zero dev` file watching and HMR
+- [x] `zero build` production output
 - [ ] `zero test` integration
 - [ ] `zero check` type checking
 - [ ] `zero fmt` and `zero lint`

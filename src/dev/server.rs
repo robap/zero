@@ -1,0 +1,158 @@
+//! Dev server setup and lifecycle.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use axum::Router;
+use axum::extract::{Path, State};
+use axum::http::StatusCode;
+use axum::http::header;
+use axum::response::IntoResponse;
+use axum::routing::get;
+
+use crate::config::Config;
+use crate::dev::files::{serve_root_file, serve_under};
+use crate::dev::headers::no_cache_layer;
+use crate::dev::local::serve_local_index;
+use crate::dev::proxy::{ProxyState, proxy_request};
+use crate::runtime::runtime_module;
+
+/// Shared state passed to dev-server handlers.
+#[derive(Clone)]
+struct AppState {
+    /// Precomputed runtime module text (built once at server start).
+    runtime: String,
+    /// Canonicalized path to `<project-root>/<config.project.root>`.
+    root: PathBuf,
+    /// Proxy state; `None` in no-proxy (static SPA) mode.
+    proxy: Option<Arc<ProxyState>>,
+}
+
+/// Start the dev server and block until shutdown.
+///
+/// # Parameters
+/// - `config`: the validated `zero.toml` configuration.
+///
+/// # Returns
+/// `Ok(())` on graceful shutdown, an error on bind or runtime failure.
+pub async fn serve(config: Config) -> anyhow::Result<()> {
+    let cwd = std::env::current_dir()?;
+    let root = cwd.join(&config.project.root);
+    if !root.exists() {
+        anyhow::bail!(
+            "configured `[project] root = {}` not found at {}; run `zero init` first",
+            config.project.root,
+            root.display()
+        );
+    }
+    let root = root
+        .canonicalize()
+        .unwrap_or_else(|_| cwd.join(&config.project.root));
+
+    let proxy = config
+        .dev
+        .proxy
+        .map(|url| ProxyState::new(url).map(Arc::new))
+        .transpose()?;
+
+    let state = Arc::new(AppState {
+        runtime: runtime_module(),
+        root,
+        proxy,
+    });
+    let port = config.dev.port;
+
+    let app = Router::new()
+        .route("/zero.js", get(serve_runtime))
+        .route(
+            "/src/*path",
+            get(
+                |State(s): State<Arc<AppState>>, Path(p): Path<String>| async move {
+                    serve_under(s.root.join("src"), "/src", &format!("/src/{p}")).await
+                },
+            ),
+        )
+        .route(
+            "/styles/*path",
+            get(
+                |State(s): State<Arc<AppState>>, Path(p): Path<String>| async move {
+                    serve_under(s.root.join("styles"), "/styles", &format!("/styles/{p}")).await
+                },
+            ),
+        )
+        .route(
+            "/public/*path",
+            get(
+                |State(s): State<Arc<AppState>>, Path(p): Path<String>| async move {
+                    serve_under(s.root.join("public"), "/public", &format!("/public/{p}")).await
+                },
+            ),
+        )
+        .route(
+            "/favicon.ico",
+            get(|State(s): State<Arc<AppState>>| async move {
+                serve_root_file(s.root.clone(), "favicon.ico").await
+            }),
+        )
+        .route(
+            "/robots.txt",
+            get(|State(s): State<Arc<AppState>>| async move {
+                serve_root_file(s.root.clone(), "robots.txt").await
+            }),
+        )
+        .fallback(
+            |State(s): State<Arc<AppState>>,
+             req: axum::http::Request<axum::body::Body>| async move {
+                match s.proxy.as_deref() {
+                    Some(ps) => proxy_request(&ps.proxy_base, &ps.client, req).await,
+                    None => {
+                        let _ = req;
+                        serve_local_index(s.root.clone()).await
+                    }
+                }
+            },
+        )
+        .layer(no_cache_layer())
+        .with_state(state);
+
+    let addr = format!("127.0.0.1:{port}");
+    let listener = match tokio::net::TcpListener::bind(&addr).await {
+        Ok(l) => l,
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+            anyhow::bail!(
+                "port {port} is already in use; pick a different [dev].port in zero.toml"
+            );
+        }
+        Err(e) => anyhow::bail!("failed to bind {addr}: {e}"),
+    };
+
+    println!("zero dev — listening on http://{addr}");
+
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+    Ok(())
+}
+
+/// `GET /zero.js` handler: respond with the precomputed runtime module.
+///
+/// # Parameters
+/// - `state`: shared app state.
+///
+/// # Returns
+/// A 200 response carrying the runtime as `application/javascript`.
+async fn serve_runtime(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        [(
+            header::CONTENT_TYPE,
+            "application/javascript; charset=utf-8",
+        )],
+        state.runtime.clone(),
+    )
+}
+
+/// Resolve when SIGINT (Ctrl-C) is received.
+async fn shutdown_signal() {
+    let _ = tokio::signal::ctrl_c().await;
+}
