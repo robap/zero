@@ -1115,10 +1115,10 @@ Suggested build order for a proof of concept:
 State machines as a first-class primitive are deferred indefinitely. See Section 5 for rationale and the reserved API slot.
 
 ### Phase 5 — Test Runner
-- [ ] File discovery (*.test.ts, *.spec.ts)
-- [ ] `describe`, `it`, `expect` API
-- [ ] Lightweight DOM implementation
-- [ ] `render()`, `find()`, `text()`, `fire()`, `cleanup()`
+- [x] File discovery (*.test.ts, *.spec.ts)
+- [x] `describe`, `it`, `expect` API
+- [x] Lightweight DOM implementation
+- [x] `render()`, `find()`, `text()`, `fire()`, `cleanup()`
 - [ ] `--watch` mode
 - [ ] `--coverage`
 - [ ] Snapshot testing
@@ -1128,7 +1128,7 @@ State machines as a first-class primitive are deferred indefinitely. See Section
 - [x] `zero dev` dev server (file serving, script injection, proxy mode; no HMR)
 - [x] `zero dev` file watching (full-page reload via SSE)
 - [x] `zero build` production output
-- [ ] `zero test` integration
+- [x] `zero test` integration
 - [ ] `zero check` type checking
 - [ ] `zero fmt` and `zero lint`
 - [ ] `zero gen` code generation

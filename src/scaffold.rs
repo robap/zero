@@ -13,6 +13,7 @@ pub struct ScaffoldContext {
 const TPL_INDEX_HTML: &str = include_str!("scaffold/index.html");
 const TPL_APP_JS: &str = include_str!("scaffold/src/app.js");
 const TPL_HOME_JS: &str = include_str!("scaffold/src/routes/home.js");
+const TPL_HOME_TEST_JS: &str = include_str!("scaffold/src/routes/home.test.js");
 const TPL_APP_CSS: &str = include_str!("scaffold/styles/app.css");
 
 /// Write the embedded scaffold into `root_dir`, performing `{{title}}` substitution.
@@ -34,6 +35,10 @@ pub fn write_to(root_dir: &Path, ctx: &ScaffoldContext) -> anyhow::Result<()> {
     fs::write(
         root_dir.join("src").join("routes").join("home.js"),
         TPL_HOME_JS,
+    )?;
+    fs::write(
+        root_dir.join("src").join("routes").join("home.test.js"),
+        TPL_HOME_TEST_JS,
     )?;
     fs::write(root_dir.join("styles").join("app.css"), TPL_APP_CSS)?;
     Ok(())
@@ -64,5 +69,25 @@ mod tests {
 
         let css = fs::read_to_string(root.join("styles/app.css")).unwrap();
         assert!(!css.is_empty());
+    }
+
+    #[test]
+    fn write_to_emits_home_test_js() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("web");
+        let ctx = ScaffoldContext {
+            title: "Test app".to_string(),
+        };
+        write_to(&root, &ctx).unwrap();
+
+        let test_js = fs::read_to_string(root.join("src/routes/home.test.js")).unwrap();
+        assert!(
+            test_js.contains(r#"import { describe, it, expect"#),
+            "home.test.js should import from zero/test"
+        );
+        assert!(
+            test_js.contains(r#"from "zero/test""#),
+            "home.test.js should import from zero/test"
+        );
     }
 }

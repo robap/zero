@@ -1,0 +1,495 @@
+//! Boa harness: boots a JS context per file and walks the test tree.
+
+use std::path::Path;
+use std::rc::Rc;
+use std::time::Instant;
+
+use boa_engine::builtins::promise::PromiseState;
+use boa_engine::object::builtins::{JsArray, JsPromise};
+use boa_engine::{Context, JsError, JsValue, Module, Source};
+
+use crate::runtime::ZERO_DOM_SHIM_BODY;
+use crate::test_runner::loader::ZeroModuleLoader;
+use crate::test_runner::result::{Failure, FileResult, Status, TestOutcome};
+
+/// Run all tests in `file_abs` and return the collected outcomes.
+///
+/// # Parameters
+/// - `project_root`: absolute path to the project root (used for module resolution).
+/// - `file_abs`: absolute path to the test file to run.
+///
+/// # Returns
+/// A [`FileResult`] with all outcomes and any load error.
+pub fn run_file(project_root: &Path, file_abs: &Path) -> FileResult {
+    let rel_path = file_abs
+        .strip_prefix(project_root)
+        .unwrap_or(file_abs)
+        .to_path_buf();
+
+    // Build the Boa context with our custom module loader.
+    let loader = Rc::new(ZeroModuleLoader::new(project_root));
+    let mut context = match Context::builder().module_loader(loader.clone()).build() {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            return FileResult {
+                path: rel_path,
+                outcomes: vec![],
+                load_error: Some(Failure {
+                    message: format!("failed to build JS context: {e}"),
+                    stack: None,
+                }),
+            };
+        }
+    };
+
+    // Install console.log/warn/error pass-through.
+    install_console(&mut context);
+
+    // Evaluate the DOM shim as a script so globalThis.document / .window are set.
+    if let Err(e) = context.eval(Source::from_bytes(ZERO_DOM_SHIM_BODY.as_bytes())) {
+        return FileResult {
+            path: rel_path,
+            outcomes: vec![],
+            load_error: Some(js_err_to_failure(&e, &mut context)),
+        };
+    }
+
+    // Read the test file source.
+    let src = match std::fs::read_to_string(file_abs) {
+        Ok(s) => s,
+        Err(e) => {
+            return FileResult {
+                path: rel_path,
+                outcomes: vec![],
+                load_error: Some(Failure {
+                    message: format!("cannot read {}: {e}", file_abs.display()),
+                    stack: None,
+                }),
+            };
+        }
+    };
+
+    // Register the file path so the loader can resolve relative imports from it.
+    loader.register_path(
+        &file_abs.to_string_lossy(),
+        file_abs.parent().unwrap_or(project_root),
+    );
+
+    // Parse the test file as an ES module (pass the path so stack traces name the file).
+    let module = match Module::parse(
+        Source::from_bytes(src.as_bytes()).with_path(file_abs),
+        None,
+        &mut context,
+    ) {
+        Ok(m) => m,
+        Err(e) => {
+            return FileResult {
+                path: rel_path,
+                outcomes: vec![],
+                load_error: Some(js_err_to_failure(&e, &mut context)),
+            };
+        }
+    };
+
+    // Load, link, and evaluate the module; drive the job queue to completion.
+    let eval_promise = module.load_link_evaluate(&mut context);
+    context.run_jobs();
+
+    if let PromiseState::Rejected(reason) = eval_promise.state() {
+        return FileResult {
+            path: rel_path,
+            outcomes: vec![],
+            load_error: Some(js_val_to_failure(reason, &mut context)),
+        };
+    }
+
+    // Retrieve the `zero/test` module's `__getTestTree__` export.
+    let test_mod = match loader.get_cached("zero/test") {
+        Some(m) => m,
+        None => {
+            return FileResult {
+                path: rel_path,
+                outcomes: vec![],
+                load_error: Some(Failure {
+                    message: "zero/test module was not loaded by the test file".to_string(),
+                    stack: None,
+                }),
+            };
+        }
+    };
+
+    let ns = test_mod.namespace(&mut context);
+    let get_tree = match ns.get(boa_engine::js_string!("__getTestTree__"), &mut context) {
+        Ok(v) => v,
+        Err(e) => {
+            return FileResult {
+                path: rel_path,
+                outcomes: vec![],
+                load_error: Some(js_err_to_failure(&e, &mut context)),
+            };
+        }
+    };
+
+    let root = match get_tree
+        .as_callable()
+        .and_then(|f| f.call(&JsValue::undefined(), &[], &mut context).ok())
+    {
+        Some(v) => v,
+        None => {
+            return FileResult {
+                path: rel_path,
+                outcomes: vec![],
+                load_error: Some(Failure {
+                    message: "__getTestTree__ is not callable or threw".to_string(),
+                    stack: None,
+                }),
+            };
+        }
+    };
+
+    // Walk the test tree and collect outcomes.
+    let mut outcomes = Vec::new();
+    walk_describe(&root, &mut Vec::new(), &mut outcomes, &mut context);
+
+    FileResult {
+        path: rel_path,
+        outcomes,
+        load_error: None,
+    }
+}
+
+/// Recursively walk a describe node, running hooks and `it` bodies.
+fn walk_describe(
+    node: &JsValue,
+    name_chain: &mut Vec<String>,
+    outcomes: &mut Vec<TestOutcome>,
+    ctx: &mut Context,
+) {
+    let obj = match node.as_object() {
+        Some(o) => o,
+        None => return,
+    };
+
+    // Run beforeAll hooks for this describe.
+    let before_all = js_get_array(obj, "beforeAll", ctx);
+    let mut before_all_failed: Option<String> = None;
+    for hook in &before_all {
+        if let Err(msg) = call_and_drain(hook, ctx) {
+            before_all_failed = Some(format!("beforeAll failed: {msg}"));
+            break;
+        }
+    }
+
+    // Walk children.
+    let children = js_get_array(obj, "children", ctx);
+    for child in &children {
+        let child_obj = match child.as_object() {
+            Some(o) => o,
+            None => continue,
+        };
+
+        // Distinguish It (has `fn`) from Describe (has `children`).
+        let fn_val = child_obj
+            .get(boa_engine::js_string!("fn"), ctx)
+            .unwrap_or(JsValue::undefined());
+        let has_fn = fn_val.is_callable();
+
+        let child_name = js_get_string(child, "name", ctx);
+
+        if has_fn {
+            // It node.
+            name_chain.push(child_name.clone());
+
+            if let Some(ref reason) = before_all_failed {
+                outcomes.push(TestOutcome {
+                    name_chain: name_chain.clone(),
+                    status: Status::Skipped(reason.clone()),
+                    duration_ms: 0,
+                    failure: None,
+                });
+                name_chain.pop();
+                continue;
+            }
+
+            // Collect beforeEach hooks from this describe and ancestors.
+            let before_each = collect_hooks(node, "beforeEach", ctx);
+            let after_each = collect_hooks(node, "afterEach", ctx);
+
+            let mut skip_reason: Option<String> = None;
+            for hook in &before_each {
+                if let Err(msg) = call_and_drain(hook, ctx) {
+                    skip_reason = Some(format!("beforeEach failed: {msg}"));
+                    break;
+                }
+            }
+
+            let start = Instant::now();
+            let result = if skip_reason.is_none() {
+                call_and_drain(&fn_val, ctx)
+            } else {
+                Ok(())
+            };
+            let duration_ms = start.elapsed().as_millis();
+
+            let (status, failure) = match (skip_reason, result) {
+                (Some(reason), _) => (Status::Skipped(reason), None),
+                (None, Ok(())) => (Status::Passed, None),
+                (None, Err(msg)) => (
+                    Status::Failed,
+                    Some(Failure {
+                        message: msg,
+                        stack: None,
+                    }),
+                ),
+            };
+
+            outcomes.push(TestOutcome {
+                name_chain: name_chain.clone(),
+                status,
+                duration_ms,
+                failure,
+            });
+            name_chain.pop();
+
+            for hook in &after_each {
+                let _ = call_and_drain(hook, ctx);
+            }
+        } else {
+            // Describe node.
+            name_chain.push(child_name);
+            walk_describe(child, name_chain, outcomes, ctx);
+            name_chain.pop();
+        }
+    }
+
+    // Run afterAll hooks.
+    let after_all = js_get_array(obj, "afterAll", ctx);
+    for hook in &after_all {
+        let _ = call_and_drain(hook, ctx);
+    }
+}
+
+/// Collect `hookName` arrays from the given describe node (does not walk ancestors
+/// — ancestor hooks are composed by the walk at call time).
+fn collect_hooks(node: &JsValue, hook_name: &str, ctx: &mut Context) -> Vec<JsValue> {
+    node.as_object()
+        .map(|obj| js_get_array(obj, hook_name, ctx))
+        .unwrap_or_default()
+}
+
+/// Call `fn_val` and drain the job queue; return any thrown error as a string.
+fn call_and_drain(fn_val: &JsValue, ctx: &mut Context) -> Result<(), String> {
+    let result = match fn_val.as_callable() {
+        Some(f) => f.call(&JsValue::undefined(), &[], ctx),
+        None => return Err("value is not callable".to_string()),
+    };
+
+    match result {
+        Err(e) => return Err(js_err_msg(&e, ctx)),
+        Ok(val) => {
+            // If the return value is a Promise, drain until it settles.
+            if let Some(obj) = val.as_object()
+                && let Ok(promise) = JsPromise::from_object(obj.clone())
+            {
+                loop {
+                    ctx.run_jobs();
+                    match promise.state() {
+                        PromiseState::Pending => continue,
+                        PromiseState::Fulfilled(_) => break,
+                        PromiseState::Rejected(reason) => {
+                            return Err(js_val_to_string(reason, ctx));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// JS value helpers
+// ---------------------------------------------------------------------------
+
+fn js_get_string(val: &JsValue, key: &str, ctx: &mut Context) -> String {
+    val.as_object()
+        .and_then(|obj| obj.get(boa_engine::JsString::from(key), ctx).ok())
+        .and_then(|v| v.as_string().map(|s| s.to_std_string_escaped()))
+        .unwrap_or_default()
+}
+
+fn js_get_array(obj: &boa_engine::JsObject, key: &str, ctx: &mut Context) -> Vec<JsValue> {
+    let val = obj
+        .get(boa_engine::JsString::from(key), ctx)
+        .unwrap_or(JsValue::undefined());
+    if let Some(arr_obj) = val.as_object()
+        && let Ok(arr) = JsArray::from_object(arr_obj.clone())
+    {
+        let len = arr.length(ctx).unwrap_or(0);
+        return (0..len).filter_map(|i| arr.get(i, ctx).ok()).collect();
+    }
+    vec![]
+}
+
+fn js_val_to_string(val: JsValue, ctx: &mut Context) -> String {
+    val.to_string(ctx)
+        .map(|s| s.to_std_string_escaped())
+        .unwrap_or_else(|_| "<non-string error>".to_string())
+}
+
+fn js_err_msg(e: &JsError, _ctx: &mut Context) -> String {
+    e.to_string()
+}
+
+fn js_err_to_failure(e: &JsError, _ctx: &mut Context) -> Failure {
+    Failure {
+        message: e.to_string(),
+        stack: None,
+    }
+}
+
+fn js_val_to_failure(val: JsValue, ctx: &mut Context) -> Failure {
+    Failure {
+        message: js_val_to_string(val, ctx),
+        stack: None,
+    }
+}
+
+/// Install a minimal `console` object on `globalThis`.
+fn install_console(ctx: &mut Context) {
+    use boa_engine::NativeFunction;
+    use boa_engine::object::ObjectInitializer;
+
+    let log = NativeFunction::from_fn_ptr(|_, args, ctx| {
+        let parts: Vec<String> = args
+            .iter()
+            .map(|v| {
+                v.to_string(ctx)
+                    .map(|s| s.to_std_string_escaped())
+                    .unwrap_or_else(|_| "<?>".to_string())
+            })
+            .collect();
+        println!("{}", parts.join(" "));
+        Ok(JsValue::undefined())
+    });
+    let warn = NativeFunction::from_fn_ptr(|_, args, ctx| {
+        let parts: Vec<String> = args
+            .iter()
+            .map(|v| {
+                v.to_string(ctx)
+                    .map(|s| s.to_std_string_escaped())
+                    .unwrap_or_else(|_| "<?>".to_string())
+            })
+            .collect();
+        eprintln!("warn: {}", parts.join(" "));
+        Ok(JsValue::undefined())
+    });
+    let error = NativeFunction::from_fn_ptr(|_, args, ctx| {
+        let parts: Vec<String> = args
+            .iter()
+            .map(|v| {
+                v.to_string(ctx)
+                    .map(|s| s.to_std_string_escaped())
+                    .unwrap_or_else(|_| "<?>".to_string())
+            })
+            .collect();
+        eprintln!("error: {}", parts.join(" "));
+        Ok(JsValue::undefined())
+    });
+
+    let console = ObjectInitializer::new(ctx)
+        .function(log, boa_engine::js_string!("log"), 0)
+        .function(warn, boa_engine::js_string!("warn"), 0)
+        .function(error, boa_engine::js_string!("error"), 0)
+        .build();
+
+    ctx.global_object()
+        .set(boa_engine::js_string!("console"), console, false, ctx)
+        .expect("failed to install console");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write as _;
+    use tempfile::NamedTempFile;
+
+    fn write_temp_js(content: &str) -> NamedTempFile {
+        let mut f = NamedTempFile::with_suffix(".js").unwrap();
+        f.write_all(content.as_bytes()).unwrap();
+        f
+    }
+
+    #[test]
+    fn passing_test_produces_passed_outcome() {
+        let f = write_temp_js(
+            r#"import { describe, it, expect } from "zero/test";
+describe("g", () => { it("ok", () => expect(1).toBe(1)); });
+"#,
+        );
+        let root = f.path().parent().unwrap();
+        let result = run_file(root, f.path());
+        assert!(
+            result.load_error.is_none(),
+            "load_error: {:?}",
+            result.load_error
+        );
+        assert_eq!(result.outcomes.len(), 1);
+        assert_eq!(result.outcomes[0].name_chain, vec!["g", "ok"]);
+        assert_eq!(result.outcomes[0].status, Status::Passed);
+    }
+
+    #[test]
+    fn failing_assertion_produces_failed_outcome() {
+        let f = write_temp_js(
+            r#"import { describe, it, expect } from "zero/test";
+describe("g", () => { it("fail", () => expect(1).toBe(2)); });
+"#,
+        );
+        let root = f.path().parent().unwrap();
+        let result = run_file(root, f.path());
+        assert!(result.load_error.is_none());
+        assert_eq!(result.outcomes.len(), 1);
+        assert_eq!(result.outcomes[0].status, Status::Failed);
+        let msg = result.outcomes[0].failure.as_ref().unwrap().message.clone();
+        assert!(msg.contains('1') && msg.contains('2'), "message: {msg}");
+    }
+
+    #[test]
+    fn top_level_throw_sets_load_error() {
+        let f = write_temp_js(
+            r#"import { describe } from "zero/test";
+throw new Error("nope");
+"#,
+        );
+        let root = f.path().parent().unwrap();
+        let result = run_file(root, f.path());
+        assert!(result.load_error.is_some(), "expected load_error");
+        assert!(result.outcomes.is_empty());
+    }
+
+    #[test]
+    fn failing_before_each_skips_subsequent_its() {
+        let f = write_temp_js(
+            r#"import { describe, it, beforeEach, expect } from "zero/test";
+describe("g", () => {
+  beforeEach(() => { throw new Error("oh no"); });
+  it("a", () => expect(1).toBe(1));
+  it("b", () => expect(2).toBe(2));
+});
+"#,
+        );
+        let root = f.path().parent().unwrap();
+        let result = run_file(root, f.path());
+        assert!(result.load_error.is_none());
+        for o in &result.outcomes {
+            assert!(
+                matches!(o.status, Status::Skipped(_)),
+                "expected Skipped, got {:?} for {}",
+                o.status,
+                o.name_chain.join(" > ")
+            );
+        }
+    }
+}

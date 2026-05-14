@@ -1,4 +1,4 @@
-import { describe, it, expect } from "zero/test";
+import { describe, it, expect, afterEach } from "zero/test";
 import { render, find, text, fire, cleanup } from "zero/test";
 import { signal } from "zero";
 import Home from "./home.js";

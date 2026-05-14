@@ -1,0 +1,364 @@
+import { commit } from "./template.js";
+import { _createScope } from "./reactivity.js";
+import { _setCurrentApp } from "./app.js";
+
+/**
+ * @typedef {{ name: string, parent: DescribeNode|null, children: Array<DescribeNode|ItNode>, beforeAll: Function[], afterAll: Function[], beforeEach: Function[], afterEach: Function[] }} DescribeNode
+ */
+
+/**
+ * @typedef {{ name: string, fn: Function, parent: DescribeNode }} ItNode
+ */
+
+/**
+ * @param {string} name
+ * @param {DescribeNode|null} parent
+ * @returns {DescribeNode}
+ */
+function makeDescribe(name, parent) {
+  return { name, parent, children: [], beforeAll: [], afterAll: [], beforeEach: [], afterEach: [] };
+}
+
+/** @type {DescribeNode} */
+let _root = makeDescribe("", null);
+
+/** @type {DescribeNode} */
+let _current = _root;
+
+/** @type {Array<{ scope: object, container: object }>} */
+let _renderTracker = [];
+
+/**
+ * Group tests under a named suite. The callback may be sync or async.
+ * @param {string} name
+ * @param {() => void | Promise<void>} fn
+ * @returns {void | Promise<void>}
+ */
+export function describe(name, fn) {
+  const node = makeDescribe(name, _current);
+  _current.children.push(node);
+  const prev = _current;
+  _current = node;
+  const result = fn();
+  _current = prev;
+  if (result && typeof result.then === "function") return result;
+}
+
+/**
+ * Register a single test case.
+ * @param {string} name
+ * @param {() => void | Promise<void>} fn
+ * @returns {void}
+ */
+export function it(name, fn) {
+  _current.children.push({ name, fn, parent: _current });
+}
+
+/**
+ * Register a hook that runs before each `it` in the enclosing `describe`.
+ * @param {() => void | Promise<void>} fn
+ * @returns {void}
+ */
+export function beforeEach(fn) {
+  _current.beforeEach.push(fn);
+}
+
+/**
+ * Register a hook that runs after each `it` in the enclosing `describe`.
+ * @param {() => void | Promise<void>} fn
+ * @returns {void}
+ */
+export function afterEach(fn) {
+  _current.afterEach.push(fn);
+}
+
+/**
+ * Register a hook that runs once before all `it`s in the enclosing `describe`.
+ * @param {() => void | Promise<void>} fn
+ * @returns {void}
+ */
+export function beforeAll(fn) {
+  _current.beforeAll.push(fn);
+}
+
+/**
+ * Register a hook that runs once after all `it`s in the enclosing `describe`.
+ * @param {() => void | Promise<void>} fn
+ * @returns {void}
+ */
+export function afterAll(fn) {
+  _current.afterAll.push(fn);
+}
+
+/**
+ * Return the root of the test tree collected during module evaluation.
+ * @internal
+ * @returns {DescribeNode}
+ */
+export function __getTestTree__() {
+  return _root;
+}
+
+/**
+ * Reinitialize the test tree (used only by node:test self-tests; under Boa each file gets a fresh context).
+ * @internal
+ * @returns {void}
+ */
+export function __resetTestTree__() {
+  _root = makeDescribe("", null);
+  _current = _root;
+}
+
+/**
+ * Render a TemplateResult into an isolated container with optional stub state.
+ * Registers the scope and container with the cleanup tracker.
+ * Returns the container element so callers can query any rendered descendant
+ * regardless of how many root elements the template produces.
+ * @param {object} tr - TemplateResult produced by `html`.
+ * @param {{ state?: Record<string, unknown> }} [opts]
+ * @returns {object} The container element holding all rendered children.
+ */
+export function render(tr, opts = {}) {
+  const stateMap = new Map(Object.entries(opts.state ?? {}));
+  const stub = {
+    _state: stateMap,
+    /**
+     * @param {string} key
+     * @returns {unknown}
+     */
+    _getState(key) {
+      if (!stateMap.has(key)) throw new Error(`inject: key "${key}" is not registered`);
+      return stateMap.get(key);
+    },
+  };
+  _setCurrentApp(stub);
+  const scope = _createScope();
+  const container = document.createElement("div");
+  scope.run(() => commit(tr, container));
+  _renderTracker.push({ scope, container });
+  return container;
+}
+
+/**
+ * Query a single descendant of `el` matching `selector`.
+ * @param {object} el
+ * @param {string} selector
+ * @returns {object|null}
+ */
+export function find(el, selector) {
+  return el.querySelector(selector);
+}
+
+/**
+ * Query all descendants of `el` matching `selector`.
+ * @param {object} el
+ * @param {string} selector
+ * @returns {object[]}
+ */
+export function findAll(el, selector) {
+  return el.querySelectorAll(selector);
+}
+
+/**
+ * Return concatenated text content of all text node descendants.
+ * If `selector` is provided, first queries from `el`; throws if it matches nothing.
+ * @param {object} el
+ * @param {string} [selector]
+ * @returns {string}
+ */
+export function text(el, selector) {
+  const target = selector ? el.querySelector(selector) : el;
+  if (selector && target == null) throw new Error(`text: selector "${selector}" matched nothing`);
+  let out = "";
+  (function walk(node) {
+    if (node.nodeType === 3) out += node.nodeValue;
+    if (node.childNodes) for (const c of node.childNodes) walk(c);
+  })(target);
+  return out;
+}
+
+/**
+ * Dispatch a synthetic event on `el`.
+ * @param {object} el
+ * @param {string} type
+ * @param {Record<string, unknown>} [data]
+ * @returns {void}
+ */
+export function fire(el, type, data = {}) {
+  let prevented = false;
+  el.dispatchEvent({
+    type,
+    ...data,
+    preventDefault() { prevented = true; },
+    stopPropagation() {},
+    get defaultPrevented() { return prevented; },
+  });
+}
+
+/**
+ * Dispose all scopes created by `render()` since the last `cleanup()`,
+ * clear the current-app stub, and empty the render tracker.
+ * @returns {void}
+ */
+export function cleanup() {
+  for (const { scope } of _renderTracker) scope.dispose();
+  _renderTracker.length = 0;
+  _setCurrentApp(null);
+}
+
+// ---------------------------------------------------------------------------
+// Assertions
+// ---------------------------------------------------------------------------
+
+/**
+ * Pretty-print a value for use in assertion error messages.
+ * @internal
+ * @param {unknown} v
+ * @param {Set} [seen]
+ * @returns {string}
+ */
+function _pretty(v, seen = new Set()) {
+  if (v === null) return "null";
+  if (v === undefined) return "undefined";
+  if (typeof v === "string") return `"${v}"`;
+  if (typeof v === "function") return "[Function]";
+  if (typeof v !== "object") return String(v);
+  if (seen.has(v)) return "[Circular]";
+  seen.add(v);
+  const desc = Object.getOwnPropertyDescriptor(v, "val");
+  if (desc && typeof desc.get === "function") return `signal(${_pretty(v.val, seen)})`;
+  if (Array.isArray(v)) return `[${v.map(item => _pretty(item, seen)).join(", ")}]`;
+  const proto = Object.getPrototypeOf(v);
+  if (proto === Object.prototype || proto === null) {
+    const entries = Object.keys(v).map(k => `${k}: ${_pretty(v[k], seen)}`);
+    return `{${entries.join(", ")}}`;
+  }
+  return String(v);
+}
+
+/**
+ * Deep equality used by `.toEqual`. Handles primitives, arrays, plain objects, and signal-shaped objects.
+ * @internal
+ * @param {unknown} a
+ * @param {unknown} b
+ * @returns {boolean}
+ */
+function _deepEqual(a, b) {
+  if (a === b) return true;
+  if (a == null || b == null) return false;
+  if (typeof a !== "object" || typeof b !== "object") return false;
+  const aDesc = Object.getOwnPropertyDescriptor(a, "val");
+  const bDesc = Object.getOwnPropertyDescriptor(b, "val");
+  if (aDesc && typeof aDesc.get === "function" && bDesc && typeof bDesc.get === "function") {
+    return _deepEqual(a.val, b.val);
+  }
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false;
+    return a.every((item, i) => _deepEqual(item, b[i]));
+  }
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  const aProto = Object.getPrototypeOf(a);
+  const bProto = Object.getPrototypeOf(b);
+  if ((aProto === Object.prototype || aProto === null) && (bProto === Object.prototype || bProto === null)) {
+    const aKeys = Object.keys(a);
+    const bKeys = Object.keys(b);
+    if (aKeys.length !== bKeys.length) return false;
+    return aKeys.every(k => Object.prototype.hasOwnProperty.call(b, k) && _deepEqual(a[k], b[k]));
+  }
+  return false;
+}
+
+/**
+ * Create a matcher object for `actual`.
+ * @param {unknown} actual
+ * @returns {{ toBe(expected: unknown): void, toEqual(expected: unknown): void, toBeTruthy(): void, toBeFalsy(): void, toBeNull(): void, toContain(item: unknown): void, toThrow(message?: string): void, toBeTemplateResult(): void, toMatchSnapshot(): void }}
+ */
+export function expect(actual) {
+  return {
+    toBe(expected) {
+      if (actual !== expected) {
+        throw new Error(
+          `expect(${_pretty(actual)}).toBe(${_pretty(expected)}): values are not strictly equal`,
+        );
+      }
+    },
+    toEqual(expected) {
+      if (!_deepEqual(actual, expected)) {
+        throw new Error(
+          `expect(${_pretty(actual)}).toEqual(${_pretty(expected)}): values are not deeply equal`,
+        );
+      }
+    },
+    toBeTruthy() {
+      if (!Boolean(actual)) {
+        throw new Error(`expect(${_pretty(actual)}).toBeTruthy(): value is falsy`);
+      }
+    },
+    toBeFalsy() {
+      if (Boolean(actual)) {
+        throw new Error(`expect(${_pretty(actual)}).toBeFalsy(): value is truthy`);
+      }
+    },
+    toBeNull() {
+      if (actual !== null) {
+        throw new Error(`expect(${_pretty(actual)}).toBeNull(): value is not null`);
+      }
+    },
+    toContain(item) {
+      if (typeof actual === "string") {
+        if (!actual.includes(item)) {
+          throw new Error(
+            `expect(${_pretty(actual)}).toContain(${_pretty(item)}): string does not include substring`,
+          );
+        }
+      } else if (Array.isArray(actual)) {
+        if (actual.indexOf(item) < 0) {
+          throw new Error(
+            `expect(${_pretty(actual)}).toContain(${_pretty(item)}): array does not contain item`,
+          );
+        }
+      } else {
+        throw new Error(`expect(...).toContain: value is not a string or array`);
+      }
+    },
+    toThrow(message) {
+      if (typeof actual !== "function") {
+        throw new Error(`expect(...).toThrow: value must be a function`);
+      }
+      let threw = false;
+      let thrownError;
+      try {
+        actual();
+      } catch (e) {
+        threw = true;
+        thrownError = e;
+      }
+      if (!threw) {
+        throw new Error(`expect(...).toThrow: function did not throw`);
+      }
+      if (typeof message === "string") {
+        const errMsg = thrownError instanceof Error ? thrownError.message : String(thrownError);
+        if (!errMsg.includes(message)) {
+          throw new Error(
+            `expect(...).toThrow(${_pretty(message)}): threw "${errMsg}" which does not contain "${message}"`,
+          );
+        }
+      }
+    },
+    toBeTemplateResult() {
+      if (
+        actual == null ||
+        typeof actual !== "object" ||
+        actual._template == null ||
+        !Array.isArray(actual._values)
+      ) {
+        throw new Error(
+          `expect(${_pretty(actual)}).toBeTemplateResult(): value is not a TemplateResult`,
+        );
+      }
+    },
+    toMatchSnapshot() {
+      throw new Error("toMatchSnapshot: snapshot testing is not in this slice yet");
+    },
+  };
+}

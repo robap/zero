@@ -4,10 +4,51 @@
 /// the `export { createScope as _createScope }` alias flattened).
 pub const ZERO_RUNTIME_BODY: &str = include_str!(concat!(env!("OUT_DIR"), "/zero_runtime_body.js"));
 
+/// Cleaned DOM shim body (imports stripped, exports flattened).
+pub const ZERO_DOM_SHIM_BODY: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/zero_dom_shim_body.js"));
+
+/// Cleaned test API body (imports stripped, exports flattened).
+pub const ZERO_TEST_BODY: &str = include_str!(concat!(env!("OUT_DIR"), "/zero_test_body.js"));
+
 /// Public names re-exported by the concatenated runtime.
 pub const ZERO_RUNTIME_EXPORTS: &[&str] = &[
-    "signal", "computed", "effect", "html", "commit", "each", "ref", "App", "inject", "navigate",
-    "back", "forward", "route",
+    "signal",
+    "computed",
+    "effect",
+    "html",
+    "commit",
+    "each",
+    "ref",
+    "App",
+    "inject",
+    "navigate",
+    "back",
+    "forward",
+    "route",
+    // Internals needed by the test API; underscore prefix signals "not public API".
+    "_setCurrentApp",
+    "_createScope",
+    "_getCurrentApp",
+];
+
+/// Names exported by the `zero/test` module.
+pub const ZERO_TEST_EXPORTS: &[&str] = &[
+    "describe",
+    "it",
+    "beforeEach",
+    "afterEach",
+    "beforeAll",
+    "afterAll",
+    "expect",
+    "render",
+    "find",
+    "findAll",
+    "text",
+    "fire",
+    "cleanup",
+    "__getTestTree__",
+    "__resetTestTree__",
 ];
 
 /// Compose `ZERO_RUNTIME_BODY` with a trailing `export { ... }` block of the public names.
@@ -21,6 +62,29 @@ pub fn runtime_module() -> String {
     }
     s.push_str("export { ");
     s.push_str(&ZERO_RUNTIME_EXPORTS.join(", "));
+    s.push_str(" };\n");
+    s
+}
+
+/// Build the `zero/test` module string: import runtime helpers from `"zero"`,
+/// then the test body, then a trailing `export { ... }` for the test exports.
+///
+/// Importing from `"zero"` rather than re-embedding the runtime body ensures
+/// that `_currentApp` (and other mutable runtime state) is shared between
+/// `"zero"` and `"zero/test"` within the same Boa context. This is necessary
+/// for `render()` / `inject()` to cooperate when test components import from
+/// `"zero"`.
+///
+/// # Returns
+/// A complete ES module string ready to register under `"zero/test"`.
+pub fn test_module() -> String {
+    let mut s = String::from("import { _setCurrentApp, _createScope, commit } from \"zero\";\n");
+    s.push_str(ZERO_TEST_BODY);
+    if !s.ends_with('\n') {
+        s.push('\n');
+    }
+    s.push_str("export { ");
+    s.push_str(&ZERO_TEST_EXPORTS.join(", "));
     s.push_str(" };\n");
     s
 }
@@ -77,6 +141,18 @@ mod tests {
     }
 
     #[test]
+    fn runtime_export_block_contains_internal_names() {
+        let m = runtime_module();
+        let last_export = m.rfind("export {").expect("expected an `export {` block");
+        for name in ["_setCurrentApp", "_createScope", "_getCurrentApp"] {
+            assert!(
+                m[last_export..].contains(name),
+                "trailing export block should mention internal `{name}`"
+            );
+        }
+    }
+
+    #[test]
     fn runtime_body_has_no_top_level_imports() {
         let re = regex::Regex::new(r"(?m)^\s*import\s").unwrap();
         assert!(
@@ -87,8 +163,6 @@ mod tests {
 
     #[test]
     fn runtime_body_has_no_intermediate_export_blocks() {
-        // The body must contain no `export { ... }` re-export blocks; the
-        // aggregate is appended by `runtime_module()`, not baked into the body.
         let re = regex::Regex::new(r"export\s*\{").unwrap();
         assert!(
             !re.is_match(ZERO_RUNTIME_BODY),
@@ -102,5 +176,39 @@ mod tests {
             ZERO_RUNTIME_BODY.contains("const _createScope = createScope;"),
             "expected alias flattening `const _createScope = createScope;` in body"
         );
+    }
+
+    #[test]
+    fn zero_dom_shim_body_contains_create_element_and_installs_global() {
+        assert!(
+            ZERO_DOM_SHIM_BODY.contains("function createElement("),
+            "ZERO_DOM_SHIM_BODY should contain `function createElement(`"
+        );
+        assert!(
+            ZERO_DOM_SHIM_BODY.contains("globalThis.document = document"),
+            "ZERO_DOM_SHIM_BODY should install globalThis.document"
+        );
+    }
+
+    #[test]
+    fn test_module_contains_describe_and_expect() {
+        let m = test_module();
+        assert!(
+            m.contains("function describe("),
+            "missing `function describe(`"
+        );
+        assert!(m.contains("function expect("), "missing `function expect(`");
+    }
+
+    #[test]
+    fn test_module_ends_with_aggregate_export_block_for_test_exports() {
+        let m = test_module();
+        let last_export = m.rfind("export {").expect("expected an `export {` block");
+        for name in ZERO_TEST_EXPORTS {
+            assert!(
+                m[last_export..].contains(name),
+                "trailing export block should mention `{name}`"
+            );
+        }
     }
 }

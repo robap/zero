@@ -16,6 +16,11 @@ enum Commands {
     Dev,
     /// Produce a production build
     Build,
+    /// Run *.test.js / *.spec.js under the embedded engine
+    Test {
+        /// Optional file path or substring filter
+        target: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -25,6 +30,7 @@ async fn main() {
         Commands::Init => cmd::init::run().await,
         Commands::Dev => cmd::dev::run().await,
         Commands::Build => cmd::build::run().await,
+        Commands::Test { target } => cmd::test::run(target).await,
     };
     if let Err(err) = result {
         eprintln!("error: {err}");
