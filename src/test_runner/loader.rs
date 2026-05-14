@@ -9,6 +9,7 @@ use boa_engine::module::{ModuleLoader, Referrer};
 use boa_engine::{Context, JsError, JsNativeError, JsResult, JsString, Module, Source};
 
 use crate::runtime::{runtime_module, test_module};
+use crate::transpile::{TranspileOptions, transpile_typescript};
 
 /// Module loader for the `zero test` harness.
 ///
@@ -85,12 +86,33 @@ impl ZeroModuleLoader {
             return Ok(m);
         }
 
-        let src = fs::read_to_string(&canonical).map_err(|e| {
+        let raw = fs::read_to_string(&canonical).map_err(|e| {
             JsError::from_native(
                 JsNativeError::error()
                     .with_message(format!("cannot read \"{}\": {e}", canonical.display())),
             )
         })?;
+
+        let src = if canonical.extension().and_then(|e| e.to_str()) == Some("ts") {
+            let logical = canonical.to_string_lossy().into_owned();
+            match transpile_typescript(
+                &raw,
+                &TranspileOptions {
+                    filename: &logical,
+                    inline_source_map: false,
+                    emit_source_map: false,
+                },
+            ) {
+                Ok(out) => out.code,
+                Err(e) => {
+                    return Err(JsError::from_native(JsNativeError::error().with_message(
+                        format!("transpile error in {}: {e}", canonical.display()),
+                    )));
+                }
+            }
+        } else {
+            raw
+        };
 
         let module = Module::parse(
             Source::from_bytes(src.as_bytes()).with_path(&canonical),
@@ -283,6 +305,64 @@ mod tests {
                 boa_engine::builtins::promise::PromiseState::Rejected(_)
             ),
             "relative import rejected: {state:?}"
+        );
+    }
+
+    #[test]
+    fn resolves_relative_ts_file() {
+        let dir = make_root();
+        let foo_path = dir.path().join("foo.ts");
+        std::fs::write(&foo_path, b"export const x: number = 42;").unwrap();
+
+        let loader = ZeroModuleLoader::new(dir.path());
+        let (mut ctx, _) = make_context_with_loader(loader);
+
+        let entry_path = dir.path().join("entry.js");
+        let m = Module::parse(
+            Source::from_bytes(
+                b"import { x } from './foo.ts'; if (x !== 42) throw new Error('nope');",
+            )
+            .with_path(&entry_path),
+            None,
+            &mut ctx,
+        )
+        .expect("failed to parse entry");
+        let promise = m.load_link_evaluate(&mut ctx);
+        ctx.run_jobs();
+        let state = promise.state();
+        assert!(
+            !matches!(
+                state,
+                boa_engine::builtins::promise::PromiseState::Rejected(_)
+            ),
+            "ts relative import rejected: {state:?}"
+        );
+    }
+
+    #[test]
+    fn parse_error_in_ts_dependency_surfaces() {
+        let dir = make_root();
+        let foo_path = dir.path().join("foo.ts");
+        std::fs::write(&foo_path, b"const x: = ;").unwrap();
+
+        let loader = ZeroModuleLoader::new(dir.path());
+        let (mut ctx, _) = make_context_with_loader(loader);
+        let entry_path = dir.path().join("entry.js");
+        let m = Module::parse(
+            Source::from_bytes(b"import { } from './foo.ts';").with_path(&entry_path),
+            None,
+            &mut ctx,
+        )
+        .expect("entry parse ok");
+        let promise = m.load_link_evaluate(&mut ctx);
+        ctx.run_jobs();
+        let state = promise.state();
+        assert!(
+            matches!(
+                state,
+                boa_engine::builtins::promise::PromiseState::Rejected(_)
+            ),
+            "expected rejection on bad TS, got: {state:?}"
         );
     }
 

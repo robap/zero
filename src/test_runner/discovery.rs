@@ -10,6 +10,7 @@ pub struct DiscoveryOpts<'a> {
 }
 
 /// Discovery output: sorted list of absolute paths.
+#[derive(Debug)]
 pub struct DiscoveryResult {
     pub files: Vec<PathBuf>,
 }
@@ -42,6 +43,27 @@ pub fn discover(opts: DiscoveryOpts<'_>) -> anyhow::Result<DiscoveryResult> {
     let mut files: Vec<PathBuf> = Vec::new();
     walk_dir(root, out_dir, &mut files)?;
     files.sort();
+
+    // Detect TS/JS collisions before filtering. Bail with both paths in the
+    // message — same rule the bundler enforces for the entry point.
+    for p in &files {
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+        let (stem_kind, ts_kind) = if let Some(stem) = name.strip_suffix(".test.ts") {
+            (stem.to_string(), ".test")
+        } else if let Some(stem) = name.strip_suffix(".spec.ts") {
+            (stem.to_string(), ".spec")
+        } else {
+            continue;
+        };
+        let sibling = p.with_file_name(format!("{stem_kind}{ts_kind}.js"));
+        if sibling.is_file() {
+            anyhow::bail!(
+                "zero test: {} and {} both exist; remove one",
+                p.display(),
+                sibling.display()
+            );
+        }
+    }
 
     // Apply substring filter if target was provided but didn't resolve to a file.
     if let Some(t) = opts.target {
@@ -94,9 +116,12 @@ fn walk_dir(
     Ok(())
 }
 
-/// Returns true if the filename ends with `.test.js` or `.spec.js`.
+/// Returns true if the filename ends with `.test.{js,ts}` or `.spec.{js,ts}`.
 fn is_test_file(name: &str) -> bool {
-    name.ends_with(".test.js") || name.ends_with(".spec.js")
+    name.ends_with(".test.js")
+        || name.ends_with(".spec.js")
+        || name.ends_with(".test.ts")
+        || name.ends_with(".spec.ts")
 }
 
 #[cfg(test)]
@@ -233,6 +258,31 @@ mod tests {
         let result = discover(opts(root, &out, None)).unwrap();
         assert_eq!(result.files.len(), 1);
         assert!(result.files[0].to_string_lossy().ends_with("src.test.js"));
+    }
+
+    #[test]
+    fn collects_test_ts_and_spec_ts() {
+        let dir = make_root();
+        let root = dir.path();
+        let out = root.join("dist");
+        fs::write(root.join("a.test.ts"), "").unwrap();
+        fs::write(root.join("b.spec.ts"), "").unwrap();
+        fs::write(root.join("c.test.js"), "").unwrap();
+        let result = discover(opts(root, &out, None)).unwrap();
+        assert_eq!(result.files.len(), 3);
+    }
+
+    #[test]
+    fn collision_ts_and_js_for_same_logical_name_errors() {
+        let dir = make_root();
+        let root = dir.path();
+        let out = root.join("dist");
+        fs::write(root.join("home.test.ts"), "").unwrap();
+        fs::write(root.join("home.test.js"), "").unwrap();
+        let err = discover(opts(root, &out, None)).expect_err("should error");
+        let msg = format!("{err}");
+        assert!(msg.contains("home.test.ts"), "msg missing ts path: {msg}");
+        assert!(msg.contains("home.test.js"), "msg missing js path: {msg}");
     }
 
     #[test]

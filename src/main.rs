@@ -15,7 +15,14 @@ enum Commands {
     /// Run the development server
     Dev,
     /// Produce a production build
-    Build,
+    Build {
+        /// Emit an external source map alongside the bundle.
+        #[arg(long, default_value_t = false)]
+        sourcemap: bool,
+        /// Suppress the source map even if `[build] sourcemap = true` is set.
+        #[arg(long, default_value_t = false)]
+        no_sourcemap: bool,
+    },
     /// Run *.test.js / *.spec.js under the embedded engine
     Test {
         /// Optional file path or substring filter
@@ -29,7 +36,21 @@ async fn main() {
     let result = match cli.command {
         Commands::Init => cmd::init::run().await,
         Commands::Dev => cmd::dev::run().await,
-        Commands::Build => cmd::build::run().await,
+        Commands::Build {
+            sourcemap,
+            no_sourcemap,
+        } => {
+            let override_flag = match (sourcemap, no_sourcemap) {
+                (true, true) => {
+                    eprintln!("error: --sourcemap and --no-sourcemap are mutually exclusive");
+                    std::process::exit(2);
+                }
+                (true, false) => Some(true),
+                (false, true) => Some(false),
+                (false, false) => None,
+            };
+            cmd::build::run(override_flag).await
+        }
         Commands::Test { target } => cmd::test::run(target).await,
     };
     if let Err(err) = result {

@@ -150,7 +150,7 @@ mod tests {
             }
             let totals = r.finish().unwrap();
             let out = String::from_utf8(buf).unwrap();
-            return (out, totals);
+            (out, totals)
         }
     }
 

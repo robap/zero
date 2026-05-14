@@ -29,6 +29,8 @@ pub struct DevConfig {
     pub port: u16,
     /// Optional backend proxy URL.
     pub proxy: Option<url::Url>,
+    /// Inline source maps in dev `.ts` responses. Default `true`.
+    pub sourcemap: bool,
 }
 
 /// `[build]` section.
@@ -36,6 +38,8 @@ pub struct DevConfig {
 pub struct BuildConfig {
     /// Output directory.
     pub out: String,
+    /// Emit external `.map` files alongside the bundle. Default `false`.
+    pub sourcemap: bool,
 }
 
 #[derive(Deserialize)]
@@ -59,12 +63,14 @@ struct RawProject {
 struct RawDev {
     port: Option<u16>,
     proxy: Option<String>,
+    sourcemap: Option<bool>,
 }
 
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawBuild {
     out: Option<String>,
+    sourcemap: Option<bool>,
 }
 
 impl Config {
@@ -103,12 +109,22 @@ impl Config {
         let out = raw.build.out.unwrap_or_else(|| "dist".to_string());
         validate_relative_path(&out, "build.out")?;
 
+        let dev_sourcemap = raw.dev.sourcemap.unwrap_or(true);
+        let build_sourcemap = raw.build.sourcemap.unwrap_or(false);
+
         Ok(Config {
             project: ProjectConfig {
                 root: raw.project.root,
             },
-            dev: DevConfig { port, proxy },
-            build: BuildConfig { out },
+            dev: DevConfig {
+                port,
+                proxy,
+                sourcemap: dev_sourcemap,
+            },
+            build: BuildConfig {
+                out,
+                sourcemap: build_sourcemap,
+            },
         })
     }
 
@@ -318,6 +334,60 @@ host = "0.0.0.0"
         assert!(
             msg.to_lowercase().contains("unknown") || msg.contains("host"),
             "error should mention unknown field, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn defaults_sourcemap_dev_true_build_false() {
+        let toml = r#"
+[project]
+root = "web"
+"#;
+        let cfg = Config::from_toml_str(toml).expect("should parse");
+        assert!(cfg.dev.sourcemap);
+        assert!(!cfg.build.sourcemap);
+    }
+
+    #[test]
+    fn explicit_dev_sourcemap_false_is_honored() {
+        let toml = r#"
+[project]
+root = "web"
+
+[dev]
+sourcemap = false
+"#;
+        let cfg = Config::from_toml_str(toml).expect("should parse");
+        assert!(!cfg.dev.sourcemap);
+    }
+
+    #[test]
+    fn explicit_build_sourcemap_true_is_honored() {
+        let toml = r#"
+[project]
+root = "web"
+
+[build]
+sourcemap = true
+"#;
+        let cfg = Config::from_toml_str(toml).expect("should parse");
+        assert!(cfg.build.sourcemap);
+    }
+
+    #[test]
+    fn non_boolean_sourcemap_is_rejected() {
+        let toml = r#"
+[project]
+root = "web"
+
+[dev]
+sourcemap = "yes"
+"#;
+        let err = Config::from_toml_str(toml).expect_err("should fail");
+        let msg = format!("{err}");
+        assert!(
+            msg.to_lowercase().contains("bool") || msg.to_lowercase().contains("sourcemap"),
+            "error should mention bool/sourcemap, got: {msg}"
         );
     }
 

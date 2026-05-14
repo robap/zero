@@ -58,6 +58,59 @@ pub async fn serve_under(root: PathBuf, prefix: &'static str, uri_path: &str) ->
     serve_file_within(&root, &candidate).await
 }
 
+/// Like `serve_under` but routes `.ts` requests through the TS transpiler.
+///
+/// # Parameters
+/// - `root`: directory to serve from.
+/// - `prefix`: leading URI segment used to strip the request path.
+/// - `uri_path`: the full URI path of the incoming request.
+/// - `inline_source_map`: whether to append an inline source map to TS responses.
+///
+/// # Returns
+/// A `Response`. `.ts` files are transpiled before responding; all other
+/// extensions follow the byte-pure `serve_under` path.
+pub async fn serve_under_with_transpile(
+    root: PathBuf,
+    prefix: &'static str,
+    uri_path: &str,
+    inline_source_map: bool,
+) -> Response {
+    if uri_path.split('/').any(|seg| seg == "..") {
+        return (StatusCode::FORBIDDEN, "forbidden").into_response();
+    }
+    let Some(rest) = uri_path.strip_prefix(prefix) else {
+        return (StatusCode::NOT_FOUND, "not found").into_response();
+    };
+    let rel = rest.trim_start_matches('/');
+    let candidate = root.join(rel);
+
+    let is_ts = candidate
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("ts"))
+        .unwrap_or(false);
+
+    if !is_ts {
+        return serve_file_within(&root, &candidate).await;
+    }
+
+    // Path-traversal check before transpiling: ensure the resolved path is
+    // beneath `root`. Reuse `serve_file_within`'s logic by first canonicalizing.
+    let Ok(root_canon) = std::fs::canonicalize(&root) else {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "root missing").into_response();
+    };
+    let canonical = match std::fs::canonicalize(&candidate) {
+        Ok(c) => c,
+        Err(_) => return (StatusCode::NOT_FOUND, "not found").into_response(),
+    };
+    if !canonical.starts_with(&root_canon) {
+        return (StatusCode::FORBIDDEN, "forbidden").into_response();
+    }
+
+    crate::dev::transpile::serve_typescript_file(canonical, uri_path.to_string(), inline_source_map)
+        .await
+}
+
 /// Serve a single well-known root-level file (e.g., `/favicon.ico`).
 ///
 /// # Parameters

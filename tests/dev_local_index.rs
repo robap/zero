@@ -34,6 +34,62 @@ impl Drop for ChildGuard {
     }
 }
 
+fn write_ts_only_project(tmp: &std::path::Path, port: u16) {
+    std::fs::write(
+        tmp.join("zero.toml"),
+        format!("[project]\nroot = \"web\"\n\n[dev]\nport = {port}\n"),
+    )
+    .unwrap();
+    let web = tmp.join("web");
+    std::fs::create_dir_all(web.join("src")).unwrap();
+    std::fs::write(
+        web.join("index.html"),
+        "<!doctype html><html><head><title>x</title></head><body><div id=app></div></body></html>",
+    )
+    .unwrap();
+    std::fs::write(web.join("src/app.ts"), "const x: number = 1; x;\n").unwrap();
+}
+
+#[test]
+fn injected_script_points_at_app_ts_when_ts_entry_present() {
+    let tmp = tempfile::tempdir().unwrap();
+    let port = pick_free_port();
+    write_ts_only_project(tmp.path(), port);
+
+    let bin = assert_cmd::cargo::cargo_bin("zero");
+    let child = Command::new(&bin)
+        .arg("dev")
+        .current_dir(tmp.path())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let _guard = ChildGuard(child);
+
+    assert!(wait_for_port(port, Duration::from_secs(5)));
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async move {
+        let client = reqwest::Client::new();
+        let body = client
+            .get(format!("http://127.0.0.1:{port}/"))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert!(
+            body.contains(r#"src="/src/app.ts""#),
+            "expected app.ts script tag: {body}"
+        );
+        assert!(!body.contains(r#"src="/src/app.js""#));
+    });
+}
+
 #[test]
 fn no_proxy_fallback_injects_scripts_and_serves_no_cache() {
     let tmp = tempfile::tempdir().unwrap();
@@ -99,8 +155,8 @@ fn no_proxy_fallback_injects_scripts_and_serves_no_cache() {
             "missing importmap script"
         );
         assert!(
-            body.contains(r#"<script type="module" src="/src/app.js">"#),
-            "missing module script"
+            body.contains(r#"<script type="module" src="/src/app.ts">"#),
+            "missing module script (expected TS entry)"
         );
 
         // Any other path also returns the same SPA shell.

@@ -9,3 +9,4 @@ pub mod runtime;
 pub mod scaffold;
 pub mod test_runner;
 pub mod toml_writer;
+pub mod transpile;

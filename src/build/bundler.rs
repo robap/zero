@@ -8,6 +8,16 @@ use regex::Regex;
 use crate::build::resolver::{ModuleId, resolve};
 use crate::config::Config;
 use crate::runtime::{ZERO_RUNTIME_BODY, ZERO_RUNTIME_EXPORTS};
+use crate::transpile::{TranspileOptions, transpile_typescript};
+
+/// Bundle product: the JS source and optional sourcemap JSON.
+#[derive(Debug)]
+pub struct BundleOutput {
+    /// Bundled JS code.
+    pub code: String,
+    /// JSON-encoded v3 sourcemap. `Some` iff `emit_sourcemap` was true.
+    pub source_map: Option<String>,
+}
 
 /// CommonJS preamble injected at the top of every bundle.
 const PREAMBLE: &str = r#"const __zero_modules = {};
@@ -22,21 +32,31 @@ function __zero_require(id) {
 }
 "#;
 
-/// Produce a single bundled JS string from the project root's `src/app.js`.
+/// Produce a single bundled JS string from the project root's entry module.
 ///
 /// # Parameters
 /// - `config`: the validated `zero.toml` configuration.
+/// - `emit_sourcemap`: when `true`, build a v3 sourcemap alongside the bundle.
 ///
 /// # Returns
-/// A string containing the complete CommonJS-style bundle.
-pub fn bundle(config: &Config) -> anyhow::Result<String> {
+/// `BundleOutput { code, source_map }`. `source_map` is `Some` iff `emit_sourcemap`.
+pub fn bundle(config: &Config, emit_sourcemap: bool) -> anyhow::Result<BundleOutput> {
     let cwd = std::env::current_dir()?;
     let root = cwd.join(&config.project.root).canonicalize()?;
-    let entry_path = root.join("src").join("app.js");
-
-    let entry_id = ModuleId::User(PathBuf::from("./src/app.js"));
+    let entry_ts = root.join("src").join("app.ts");
+    let entry_js = root.join("src").join("app.js");
+    let (entry_path, entry_id) = match (entry_ts.is_file(), entry_js.is_file()) {
+        (true, true) => {
+            anyhow::bail!("zero build: both src/app.ts and src/app.js exist; remove one")
+        }
+        (true, false) => (entry_ts, ModuleId::User(PathBuf::from("./src/app.ts"))),
+        (false, true) => (entry_js, ModuleId::User(PathBuf::from("./src/app.js"))),
+        (false, false) => anyhow::bail!("zero build: no entry point at src/app.ts or src/app.js"),
+    };
 
     // BFS to collect modules in visit order (dependencies first via post-order).
+    let mut sources: HashMap<ModuleId, String> = HashMap::new();
+    sources.insert(ModuleId::Runtime, ZERO_RUNTIME_BODY.to_string());
     let mut order: Vec<ModuleId> = Vec::new();
     let mut visited: HashSet<ModuleId> = HashSet::new();
     let mut queue: VecDeque<(ModuleId, PathBuf)> = VecDeque::new();
@@ -50,9 +70,28 @@ pub fn bundle(config: &Config) -> anyhow::Result<String> {
 
         let src = match &id {
             ModuleId::Runtime => ZERO_RUNTIME_BODY.to_string(),
-            ModuleId::User(_) => std::fs::read_to_string(&path)
-                .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?,
+            ModuleId::User(rel) => {
+                let raw = std::fs::read_to_string(&path)
+                    .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
+                if rel.extension().and_then(|e| e.to_str()) == Some("ts") {
+                    let logical = rel.to_string_lossy().into_owned();
+                    let out = transpile_typescript(
+                        &raw,
+                        &TranspileOptions {
+                            filename: &logical,
+                            inline_source_map: false,
+                            emit_source_map: false,
+                        },
+                    )
+                    .map_err(|e| anyhow::anyhow!("transpile failed for {logical}: {e}"))?;
+                    out.code
+                } else {
+                    raw
+                }
+            }
         };
+        sources.insert(id.clone(), src.clone());
+
         let importer_dir = if id == ModuleId::Runtime {
             root.to_path_buf()
         } else {
@@ -75,20 +114,6 @@ pub fn bundle(config: &Config) -> anyhow::Result<String> {
             }
         }
         order.push(id);
-
-        let _ = src;
-    }
-
-    // Build module source map.
-    let mut sources: HashMap<ModuleId, String> = HashMap::new();
-    sources.insert(ModuleId::Runtime, ZERO_RUNTIME_BODY.to_string());
-    for id in &order {
-        if let ModuleId::User(rel) = id {
-            let path = root.join(rel.strip_prefix("./").unwrap_or(rel));
-            let src = std::fs::read_to_string(&path)
-                .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
-            sources.insert(id.clone(), src);
-        }
     }
 
     // Emit the bundle.
@@ -111,9 +136,43 @@ pub fn bundle(config: &Config) -> anyhow::Result<String> {
     }
 
     // Bootstrap call.
-    out.push_str("\n__zero_require('./src/app.js');\n");
+    let bootstrap_id = match &entry_id {
+        ModuleId::User(rel) => rel.to_string_lossy().into_owned(),
+        ModuleId::Runtime => unreachable!(),
+    };
+    out.push_str(&format!("\n__zero_require('{bootstrap_id}');\n"));
 
-    Ok(out)
+    let source_map = if emit_sourcemap {
+        Some(build_combined_sourcemap(&emit_order)?)
+    } else {
+        None
+    };
+
+    Ok(BundleOutput {
+        code: out,
+        source_map,
+    })
+}
+
+/// Build a coarse v3 sourcemap that lists each user module in `sources`.
+///
+/// The bundle is concatenated post-transpile, so we register source paths but
+/// emit no row-level mappings — line-accurate stack traces inside the bundle
+/// are not part of v1 scope. The map is well-formed JSON with `"version":3`
+/// and a non-empty `"sources"` array.
+fn build_combined_sourcemap(emit_order: &[ModuleId]) -> anyhow::Result<String> {
+    let mut builder = sourcemap::SourceMapBuilder::new(None);
+    for id in emit_order {
+        if let ModuleId::User(rel) = id {
+            let s = rel.to_string_lossy();
+            builder.add_source(&s);
+        }
+    }
+    let sm = builder.into_sourcemap();
+    let mut buf: Vec<u8> = Vec::new();
+    sm.to_writer(&mut buf)
+        .map_err(|e| anyhow::anyhow!("sourcemap serialization failed: {e}"))?;
+    String::from_utf8(buf).map_err(|e| anyhow::anyhow!("sourcemap not UTF-8: {e}"))
 }
 
 /// The string key used in `__zero_define` / `__zero_require` calls.
@@ -383,6 +442,132 @@ const app = new App();
             result.contains("__zero_require('zero')"),
             "import not rewritten: {result}"
         );
+    }
+
+    /// Serialize CWD-mutating tests within this module.
+    static CWD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn write_minimal_config(root: &Path) -> Config {
+        let toml = format!(
+            "[project]\nroot = \"{}\"\n",
+            root.file_name().unwrap().to_string_lossy()
+        );
+        Config::from_toml_str(&toml).unwrap()
+    }
+
+    fn with_cwd<F, R>(dir: &Path, f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        let guard = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir).unwrap();
+        let out = f();
+        // Best-effort restore; ignore error so test failures aren't masked.
+        let _ = std::env::set_current_dir(&prev);
+        drop(guard);
+        out
+    }
+
+    #[test]
+    fn bundle_with_ts_entry_strips_types_and_imports_zero() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("web");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("src/app.ts"),
+            "import { signal } from \"zero\";\nconst n: number = 1; signal(n);\n",
+        )
+        .unwrap();
+        let result = with_cwd(dir.path(), || bundle(&write_minimal_config(&root), false));
+        let bundled = result.unwrap().code;
+        assert!(
+            bundled.contains("__zero_require('zero')"),
+            "missing zero require: {bundled}"
+        );
+        let app_section_start = bundled
+            .find("__zero_define('./src/app.ts'")
+            .expect("expected app.ts module section");
+        let app_section = &bundled[app_section_start..];
+        let app_section_end = app_section
+            .find("__zero_require('./src/app.ts')")
+            .unwrap_or(app_section.len());
+        let app_module = &app_section[..app_section_end];
+        assert!(
+            !app_module.contains(": number"),
+            "type annotation leaked: {app_module}"
+        );
+        assert!(bundled.contains("__zero_require('./src/app.ts')"));
+    }
+
+    #[test]
+    fn bundle_errors_when_both_entries_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("web");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/app.ts"), "").unwrap();
+        std::fs::write(root.join("src/app.js"), "").unwrap();
+        let result = with_cwd(dir.path(), || bundle(&write_minimal_config(&root), false));
+        let err = result.unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("both src/app.ts and src/app.js"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
+    fn bundle_emits_no_source_map_by_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("web");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/app.ts"), "const x: number = 1; x;\n").unwrap();
+        let out = with_cwd(dir.path(), || bundle(&write_minimal_config(&root), false))
+            .expect("bundle ok");
+        assert!(out.source_map.is_none());
+    }
+
+    #[test]
+    fn bundle_emits_source_map_when_requested() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("web");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/app.ts"), "const x: number = 1; x;\n").unwrap();
+        let out =
+            with_cwd(dir.path(), || bundle(&write_minimal_config(&root), true)).expect("bundle ok");
+        let json = out.source_map.expect("source_map should be Some");
+        assert!(
+            json.contains(r#""version":3"#) || json.contains(r#""version": 3"#),
+            "missing version: {json}"
+        );
+        assert!(
+            json.contains("./src/app.ts"),
+            "sources missing entry: {json}"
+        );
+    }
+
+    #[test]
+    fn bundle_mixed_ts_and_js_dependencies() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("web");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("src/app.ts"),
+            "import { x } from \"./util.js\";\nconst v: number = x;\nconsole.log(v);\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("src/util.js"),
+            "import { y } from \"./inner.ts\";\nexport const x = y;\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("src/inner.ts"), "export const y: number = 1;\n").unwrap();
+        let result = with_cwd(dir.path(), || bundle(&write_minimal_config(&root), false));
+        let bundled = result.unwrap().code;
+        assert!(bundled.contains("__zero_define('./src/app.ts'"));
+        assert!(bundled.contains("__zero_define('./src/util.js'"));
+        assert!(bundled.contains("__zero_define('./src/inner.ts'"));
+        assert!(!bundled.contains(": number"), "type leaked: {bundled}");
     }
 
     #[test]

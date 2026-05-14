@@ -11,9 +11,10 @@ pub struct ScaffoldContext {
 }
 
 const TPL_INDEX_HTML: &str = include_str!("scaffold/index.html");
-const TPL_APP_JS: &str = include_str!("scaffold/src/app.js");
-const TPL_HOME_JS: &str = include_str!("scaffold/src/routes/home.js");
-const TPL_HOME_TEST_JS: &str = include_str!("scaffold/src/routes/home.test.js");
+const TPL_APP_TS: &str = include_str!("scaffold/src/app.ts");
+const TPL_HOME_TS: &str = include_str!("scaffold/src/routes/home.ts");
+const TPL_HOME_TEST_TS: &str = include_str!("scaffold/src/routes/home.test.ts");
+const TPL_TSCONFIG_JSON: &str = include_str!("scaffold/tsconfig.json");
 const TPL_APP_CSS: &str = include_str!("scaffold/styles/app.css");
 const TPL_AGENTS_MD: &str = include_str!("scaffold/AGENTS.md");
 
@@ -32,14 +33,20 @@ pub fn write_to(root_dir: &Path, ctx: &ScaffoldContext) -> anyhow::Result<()> {
 
     let index_html = TPL_INDEX_HTML.replace("{{title}}", &ctx.title);
     fs::write(root_dir.join("index.html"), index_html)?;
-    fs::write(root_dir.join("src").join("app.js"), TPL_APP_JS)?;
+    fs::write(root_dir.join("src").join("app.ts"), TPL_APP_TS)?;
     fs::write(
-        root_dir.join("src").join("routes").join("home.js"),
-        TPL_HOME_JS,
+        root_dir.join("src").join("routes").join("home.ts"),
+        TPL_HOME_TS,
     )?;
     fs::write(
-        root_dir.join("src").join("routes").join("home.test.js"),
-        TPL_HOME_TEST_JS,
+        root_dir.join("src").join("routes").join("home.test.ts"),
+        TPL_HOME_TEST_TS,
+    )?;
+    fs::write(root_dir.join("tsconfig.json"), TPL_TSCONFIG_JSON)?;
+    fs::write(root_dir.join("zero.d.ts"), crate::runtime::ZERO_TYPES_BODY)?;
+    fs::write(
+        root_dir.join("zero-test.d.ts"),
+        crate::runtime::ZERO_TEST_TYPES_BODY,
     )?;
     fs::write(root_dir.join("styles").join("app.css"), TPL_APP_CSS)?;
     fs::write(root_dir.join("AGENTS.md"), TPL_AGENTS_MD)?;
@@ -52,7 +59,7 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn write_to_emits_all_four_files() {
+    fn write_to_emits_all_files() {
         let dir = tempdir().unwrap();
         let root = dir.path().join("web");
         let ctx = ScaffoldContext {
@@ -63,20 +70,42 @@ mod tests {
         let index = fs::read_to_string(root.join("index.html")).unwrap();
         assert!(index.contains("<title>My zero app</title>"));
 
-        let app_js = fs::read_to_string(root.join("src/app.js")).unwrap();
-        assert!(app_js.contains("new App()"));
+        let app_ts = fs::read_to_string(root.join("src/app.ts")).unwrap();
+        assert!(app_ts.contains("new App()"));
 
-        let home_js = fs::read_to_string(root.join("src/routes/home.js")).unwrap();
-        assert!(home_js.contains("Hello from zero"));
+        let home_ts = fs::read_to_string(root.join("src/routes/home.ts")).unwrap();
+        assert!(home_ts.contains("Hello from zero"));
+
+        let home_test_ts = fs::read_to_string(root.join("src/routes/home.test.ts")).unwrap();
+        assert!(!home_test_ts.is_empty());
+
+        let tsconfig = fs::read_to_string(root.join("tsconfig.json")).unwrap();
+        assert!(tsconfig.contains("\"strict\": true"));
+        assert!(tsconfig.contains("\"allowImportingTsExtensions\": true"));
+
+        let zero_dts = fs::read_to_string(root.join("zero.d.ts")).unwrap();
+        assert!(zero_dts.contains("declare module \"zero\""));
+
+        let zero_test_dts = fs::read_to_string(root.join("zero-test.d.ts")).unwrap();
+        assert!(zero_test_dts.contains("declare module \"zero/test\""));
 
         let css = fs::read_to_string(root.join("styles/app.css")).unwrap();
         assert!(!css.is_empty());
 
         let agents = fs::read_to_string(root.join("AGENTS.md")).unwrap();
-        assert!(
-            !agents.is_empty(),
-            "AGENTS.md should be written and non-empty"
-        );
+        assert!(!agents.is_empty());
+    }
+
+    #[test]
+    fn write_to_app_ts_imports_zero() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("web");
+        let ctx = ScaffoldContext {
+            title: "T".to_string(),
+        };
+        write_to(&root, &ctx).unwrap();
+        let app_ts = fs::read_to_string(root.join("src/app.ts")).unwrap();
+        assert!(app_ts.contains("import { App, signal } from \"zero\""));
     }
 
     #[test]
@@ -111,7 +140,7 @@ mod tests {
     }
 
     #[test]
-    fn write_to_emits_home_test_js() {
+    fn write_to_emits_home_test_ts() {
         let dir = tempdir().unwrap();
         let root = dir.path().join("web");
         let ctx = ScaffoldContext {
@@ -119,14 +148,8 @@ mod tests {
         };
         write_to(&root, &ctx).unwrap();
 
-        let test_js = fs::read_to_string(root.join("src/routes/home.test.js")).unwrap();
-        assert!(
-            test_js.contains(r#"import { describe, it, expect"#),
-            "home.test.js should import from zero/test"
-        );
-        assert!(
-            test_js.contains(r#"from "zero/test""#),
-            "home.test.js should import from zero/test"
-        );
+        let test_ts = fs::read_to_string(root.join("src/routes/home.test.ts")).unwrap();
+        assert!(test_ts.contains(r#"import { describe, it, expect"#));
+        assert!(test_ts.contains(r#"from "zero/test""#));
     }
 }

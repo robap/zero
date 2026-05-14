@@ -16,13 +16,15 @@ fn init_with_existing_toml_scaffolds_into_root() {
     let root = dir.path().join("web");
     assert!(root.join("index.html").exists(), "index.html missing");
     assert!(
-        root.join("src").join("app.js").exists(),
-        "src/app.js missing"
+        root.join("src").join("app.ts").exists(),
+        "src/app.ts missing"
     );
     assert!(
-        root.join("src").join("routes").join("home.js").exists(),
-        "src/routes/home.js missing"
+        root.join("src").join("routes").join("home.ts").exists(),
+        "src/routes/home.ts missing"
     );
+    assert!(root.join("tsconfig.json").exists(), "tsconfig.json missing");
+    assert!(root.join("zero.d.ts").exists(), "zero.d.ts missing");
     assert!(
         root.join("styles").join("app.css").exists(),
         "styles/app.css missing"

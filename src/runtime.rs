@@ -11,6 +11,15 @@ pub const ZERO_DOM_SHIM_BODY: &str =
 /// Cleaned test API body (imports stripped, exports flattened).
 pub const ZERO_TEST_BODY: &str = include_str!(concat!(env!("OUT_DIR"), "/zero_test_body.js"));
 
+/// TypeScript declarations for the `"zero"` module, embedded verbatim from
+/// `runtime/zero.d.ts`.
+pub const ZERO_TYPES_BODY: &str = include_str!(concat!(env!("OUT_DIR"), "/zero_types_body.d.ts"));
+
+/// TypeScript declarations for the `"zero/test"` module, embedded verbatim
+/// from `runtime/zero-test.d.ts`.
+pub const ZERO_TEST_TYPES_BODY: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/zero_test_types_body.d.ts"));
+
 /// Public names re-exported by the concatenated runtime.
 pub const ZERO_RUNTIME_EXPORTS: &[&str] = &[
     "signal",
@@ -198,6 +207,42 @@ mod tests {
             "missing `function describe(`"
         );
         assert!(m.contains("function expect("), "missing `function expect(`");
+    }
+
+    #[test]
+    fn zero_types_body_declares_every_public_runtime_export() {
+        for name in ZERO_RUNTIME_EXPORTS {
+            if name.starts_with('_') {
+                continue;
+            }
+            assert!(
+                ZERO_TYPES_BODY.contains(name),
+                "zero.d.ts missing declaration for runtime export `{name}`"
+            );
+        }
+    }
+
+    #[test]
+    fn zero_test_types_body_declares_every_public_test_export() {
+        for name in ZERO_TEST_EXPORTS {
+            if name.starts_with('_') {
+                continue;
+            }
+            assert!(
+                ZERO_TEST_TYPES_BODY.contains(name),
+                "zero-test.d.ts missing declaration for test export `{name}`"
+            );
+        }
+    }
+
+    #[test]
+    fn zero_types_body_contains_signal_app_html_route() {
+        for needle in ["signal", "class App", "function html", "function route"] {
+            assert!(
+                ZERO_TYPES_BODY.contains(needle),
+                "zero.d.ts spot-check missing: {needle}"
+            );
+        }
     }
 
     #[test]

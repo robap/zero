@@ -31,8 +31,8 @@ fn scaffolded_home_test_passes() {
 fn failing_test_produces_nonzero_exit_and_fail_output() {
     let tmp = scaffold_temp_project();
 
-    // Break one assertion in home.test.js.
-    let test_path = tmp.path().join("web/src/routes/home.test.js");
+    // Break one assertion in home.test.ts.
+    let test_path = tmp.path().join("web/src/routes/home.test.ts");
     let content = std::fs::read_to_string(&test_path).unwrap();
     let broken = content.replace(r#"toBe("Count: 0")"#, r#"toBe("Count: 99")"#);
     std::fs::write(&test_path, broken).unwrap();
@@ -91,7 +91,7 @@ describe("Other", () => { it("works", () => expect(1).toBe(1)); });
     let output = Command::cargo_bin("zero")
         .unwrap()
         .arg("test")
-        .arg("home.test.js")
+        .arg("home.test.ts")
         .current_dir(tmp.path())
         .output()
         .unwrap();

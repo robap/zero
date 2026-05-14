@@ -11,6 +11,7 @@ use boa_engine::{Context, JsError, JsValue, Module, Source};
 use crate::runtime::ZERO_DOM_SHIM_BODY;
 use crate::test_runner::loader::ZeroModuleLoader;
 use crate::test_runner::result::{Failure, FileResult, Status, TestOutcome};
+use crate::transpile::{TranspileOptions, transpile_typescript};
 
 /// Run all tests in `file_abs` and return the collected outcomes.
 ///
@@ -55,7 +56,7 @@ pub fn run_file(project_root: &Path, file_abs: &Path) -> FileResult {
     }
 
     // Read the test file source.
-    let src = match std::fs::read_to_string(file_abs) {
+    let raw = match std::fs::read_to_string(file_abs) {
         Ok(s) => s,
         Err(e) => {
             return FileResult {
@@ -67,6 +68,32 @@ pub fn run_file(project_root: &Path, file_abs: &Path) -> FileResult {
                 }),
             };
         }
+    };
+
+    let src = if file_abs.extension().and_then(|e| e.to_str()) == Some("ts") {
+        let logical = file_abs.to_string_lossy().into_owned();
+        match transpile_typescript(
+            &raw,
+            &TranspileOptions {
+                filename: &logical,
+                inline_source_map: false,
+                emit_source_map: false,
+            },
+        ) {
+            Ok(out) => out.code,
+            Err(e) => {
+                return FileResult {
+                    path: rel_path,
+                    outcomes: vec![],
+                    load_error: Some(Failure {
+                        message: format!("transpile error: {e}"),
+                        stack: None,
+                    }),
+                };
+            }
+        }
+    } else {
+        raw
     };
 
     // Register the file path so the loader can resolve relative imports from it.
@@ -419,6 +446,31 @@ mod tests {
         let mut f = NamedTempFile::with_suffix(".js").unwrap();
         f.write_all(content.as_bytes()).unwrap();
         f
+    }
+
+    fn write_temp_ts(content: &str) -> NamedTempFile {
+        let mut f = NamedTempFile::with_suffix(".test.ts").unwrap();
+        f.write_all(content.as_bytes()).unwrap();
+        f
+    }
+
+    #[test]
+    fn run_file_handles_ts_entry() {
+        let f = write_temp_ts(
+            r#"import { describe, it, expect } from "zero/test";
+const n: number = 1;
+describe("g", () => { it("ok", () => expect(n).toBe(1)); });
+"#,
+        );
+        let root = f.path().parent().unwrap();
+        let result = run_file(root, f.path());
+        assert!(
+            result.load_error.is_none(),
+            "load_error: {:?}",
+            result.load_error
+        );
+        assert_eq!(result.outcomes.len(), 1);
+        assert_eq!(result.outcomes[0].status, Status::Passed);
     }
 
     #[test]

@@ -7,4 +7,5 @@ pub mod local;
 pub mod proxy;
 pub mod server;
 pub mod sse;
+pub mod transpile;
 pub mod watch;

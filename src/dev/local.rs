@@ -8,7 +8,10 @@ use axum::response::{IntoResponse, Response};
 
 use crate::dev::inject::inject;
 
-/// Read `root/index.html`, inject dev scripts, and return it as a response.
+/// Read `root/index.html`, inject dev scripts pointing at whichever bootstrap
+/// entry actually exists in the project, and return as an HTML response.
+///
+/// Probes for `src/app.ts` first; falls back to `src/app.js`.
 ///
 /// # Parameters
 /// - `root`: canonicalized path to the project root directory.
@@ -31,7 +34,13 @@ pub async fn serve_local_index(root: PathBuf) -> Response {
         }
     };
 
-    let body = inject(&raw);
+    let app_entry_href = if root.join("src").join("app.ts").is_file() {
+        "/src/app.ts"
+    } else {
+        "/src/app.js"
+    };
+
+    let body = inject(&raw, app_entry_href);
     (
         StatusCode::OK,
         [(header::CONTENT_TYPE, "text/html; charset=utf-8")],

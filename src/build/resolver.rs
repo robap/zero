@@ -65,6 +65,16 @@ mod tests {
     }
 
     #[test]
+    fn relative_ts_resolves_to_user() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/home.ts"), "").unwrap();
+        let importer_dir = dir.path().join("src");
+        let r = resolve("./home.ts", &importer_dir, dir.path()).unwrap();
+        assert_eq!(r, ModuleId::User(PathBuf::from("./src/home.ts")));
+    }
+
+    #[test]
     fn relative_resolves_to_user() {
         let dir = tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("src")).unwrap();

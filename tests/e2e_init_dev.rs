@@ -53,8 +53,8 @@ fn init_then_dev_serves_all_expected_urls() {
 
     // Assert scaffold files are present.
     assert!(tmp.path().join("web/index.html").exists());
-    assert!(tmp.path().join("web/src/app.js").exists());
-    assert!(tmp.path().join("web/src/routes/home.js").exists());
+    assert!(tmp.path().join("web/src/app.ts").exists());
+    assert!(tmp.path().join("web/src/routes/home.ts").exists());
     assert!(tmp.path().join("web/styles/app.css").exists());
 
     // Step 3: start `zero dev`.
@@ -91,7 +91,7 @@ fn init_then_dev_serves_all_expected_urls() {
             "importmap must be injected"
         );
         assert!(
-            body.contains(r#"<script type="module" src="/src/app.js">"#),
+            body.contains(r#"<script type="module" src="/src/app.ts">"#),
             "module script must be injected"
         );
 
@@ -102,16 +102,18 @@ fn init_then_dev_serves_all_expected_urls() {
         assert!(body.len() > 1000, "runtime should be > 1000 bytes");
         assert!(body.contains("function signal("));
 
-        // GET /src/app.js → disk file.
+        // GET /src/app.ts → transpiled JS body.
         let resp = client
-            .get(format!("{base}/src/app.js"))
+            .get(format!("{base}/src/app.ts"))
             .send()
             .await
             .unwrap();
-        assert_eq!(resp.status(), 200, "GET /src/app.js should be 200");
+        assert_eq!(resp.status(), 200, "GET /src/app.ts should be 200");
         let body = resp.text().await.unwrap();
-        let on_disk = std::fs::read_to_string(tmp.path().join("web/src/app.js")).unwrap();
-        assert_eq!(body, on_disk, "served file must match disk");
+        assert!(
+            body.contains("import { App, signal } from"),
+            "transpiled body missing imports: {body}"
+        );
 
         // GET /styles/app.css → text/css + no-cache.
         let resp = client

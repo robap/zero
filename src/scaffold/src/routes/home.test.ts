@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "zero/test";
 import { render, find, text, fire, cleanup } from "zero/test";
 import { signal } from "zero";
-import Home from "./home.js";
+import Home from "./home.ts";
 
 describe("Home", () => {
   afterEach(cleanup);

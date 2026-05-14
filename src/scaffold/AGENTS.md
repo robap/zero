@@ -16,7 +16,7 @@ Any identifier whose name begins with `_` or `__` is internal — do not import 
 ```bash
 zero init     # scaffold a project (already run — this is how AGENTS.md got here)
 zero dev      # start the dev server with file watching and full-page reload
-zero test     # run all *.test.js / *.spec.js under the project root
+zero test     # run all *.test.ts / *.test.js / *.spec.ts / *.spec.js under the project root
 zero build    # produce a production build into the configured output directory
 ```
 
@@ -27,15 +27,22 @@ The generated project layout:
 ```
 .
 ├── AGENTS.md                # this file
+├── tsconfig.json            # editor-only TS config; the CLI ignores it
+├── zero.d.ts                # type surface for `"zero"` (auto-managed)
+├── zero-test.d.ts           # type surface for `"zero/test"` (auto-managed)
 ├── index.html               # entry HTML; <script> tags are injected automatically
 ├── src/
-│   ├── app.js               # builds and starts the App
+│   ├── app.ts               # builds and starts the App
 │   └── routes/
-│       ├── home.js          # default route component
-│       └── home.test.js     # unit test for the home route
+│       ├── home.ts          # default route component
+│       └── home.test.ts     # unit test for the home route
 └── styles/
     └── app.css              # plain CSS, served as-is
 ```
+
+### JavaScript projects
+
+Authoring in plain `.js` is still fully supported — both extensions work everywhere. The scaffold ships `.ts` because that's where the documented examples live; switching the suffix is the only change needed to use plain JS, and the JSDoc conventions in this document still apply to those files.
 
 `zero` reads `zero.toml` at the project root for the dev port, build output directory, and optional backend proxy. The CLI never modifies your source files.
 
@@ -43,7 +50,7 @@ The generated project layout:
 
 ## Imports
 
-```js
+```ts
 import {
   App, signal, computed, effect,
   html, each, ref,
@@ -58,7 +65,7 @@ import {
 } from "zero/test";
 ```
 
-Examples in this file use ES module imports with explicit `.js` extensions, matching the scaffold's own files (`./routes/home.js`, not `./routes/home`).
+Examples in this file use ES module imports with explicit extensions, matching the scaffold's own files (`./routes/home.ts`, not `./routes/home`). JS files are imported with `./routes/home.js`.
 
 ---
 
@@ -282,7 +289,7 @@ Dependencies are auto-tracked on each run — no dependency arrays. Effects crea
 
 ```js
 import { App, signal } from "zero";
-import Home from "./routes/home.js";
+import Home from "./routes/home.ts";
 
 const app = new App();
 app.state("count", signal(0));
@@ -541,7 +548,7 @@ function Counter() {
 }
 ```
 
-The scaffold's `src/routes/home.js` is the canonical example of this pattern: register a signal in `src/app.js`, read it via `inject` in a route component.
+The scaffold's `src/routes/home.ts` is the canonical example of this pattern: register a signal in `src/app.ts`, read it via `inject` in a route component.
 
 In tests, `render(tr, { state })` plays the role of `app.state` — see the next section.
 
@@ -573,7 +580,7 @@ describe("Counter", () => {
 ```js
 import { render, find, findAll, text, fire, cleanup, expect } from "zero/test";
 import { signal } from "zero";
-import Home from "./home.js";
+import Home from "./home.ts";
 
 afterEach(cleanup);
 
@@ -617,7 +624,7 @@ The pattern: render the component, query, optionally dispatch events, assert on 
 import { describe, it, expect, afterEach } from "zero/test";
 import { render, find, text, fire, cleanup } from "zero/test";
 import { signal } from "zero";
-import Home from "./home.js";
+import Home from "./home.ts";
 
 describe("Home", () => {
   afterEach(cleanup);
@@ -633,7 +640,7 @@ describe("Home", () => {
 });
 ```
 
-The scaffold's `src/routes/home.test.js` is the canonical shape — start from there.
+The scaffold's `src/routes/home.test.ts` is the canonical shape — start from there.
 
 ### Testing reactivity directly
 
@@ -683,7 +690,7 @@ Every JavaScript file in a zero project is fully JSDoc-annotated. The rules:
 - `@internal` marks exports that are not part of the public API.
 - `@private` marks private class methods.
 
-Canonical shape, taken from the scaffold's `src/routes/home.js`:
+Canonical shape, taken from the scaffold's `src/routes/home.ts`:
 
 ```js
 import { html, inject } from "zero";

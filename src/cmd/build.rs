@@ -10,9 +10,13 @@ use crate::config::Config;
 
 /// Run the `zero build` subcommand.
 ///
+/// # Parameters
+/// - `sourcemap_override`: `Some(true)` / `Some(false)` from the CLI flag,
+///   `None` falls back to `[build] sourcemap` in `zero.toml`.
+///
 /// # Returns
 /// `Ok(())` on success, an error otherwise.
-pub async fn run() -> anyhow::Result<()> {
+pub async fn run(sourcemap_override: Option<bool>) -> anyhow::Result<()> {
     let config = Config::load_from_cwd()?;
     let cwd = std::env::current_dir()?;
     let root = cwd.join(&config.project.root);
@@ -20,12 +24,28 @@ pub async fn run() -> anyhow::Result<()> {
     let assets_dir = out_dir.join("assets");
     std::fs::create_dir_all(&assets_dir)?;
 
+    let emit_sourcemap = sourcemap_override.unwrap_or(config.build.sourcemap);
+
     // 1. Bundle JS.
-    let bundle_src = bundle(&config)?;
+    let bundle_out = bundle(&config, emit_sourcemap)?;
+    let bundle_src = bundle_out.code;
     let hash = &format!("{:x}", Sha256::digest(bundle_src.as_bytes()))[..8];
     let bundle_filename = format!("app.{hash}.js");
     let bundle_path = assets_dir.join(&bundle_filename);
-    std::fs::write(&bundle_path, &bundle_src)?;
+    let final_bundle = if let Some(ref map) = bundle_out.source_map {
+        let map_filename = format!("{bundle_filename}.map");
+        let map_path = assets_dir.join(&map_filename);
+        std::fs::write(&map_path, map)?;
+        let mut s = bundle_src.clone();
+        if !s.ends_with('\n') {
+            s.push('\n');
+        }
+        s.push_str(&format!("//# sourceMappingURL={map_filename}\n"));
+        s
+    } else {
+        bundle_src.clone()
+    };
+    std::fs::write(&bundle_path, &final_bundle)?;
 
     // 2. Hash + copy CSS.
     let css_pairs = process_css(&root, &out_dir)?;

@@ -55,10 +55,16 @@ pub fn build_client() -> anyhow::Result<Client> {
 /// - `proxy_base`: base URL of the backend (e.g. `http://localhost:8080`).
 /// - `client`: shared HTTP client.
 /// - `req`: the incoming axum request.
+/// - `app_entry_href`: bootstrap script `src` to substitute into injected HTML.
 ///
 /// # Returns
 /// A proxied response, or a 502/501 on error.
-pub async fn proxy_request(proxy_base: &url::Url, client: &Client, req: Request<Body>) -> Response {
+pub async fn proxy_request(
+    proxy_base: &url::Url,
+    client: &Client,
+    req: Request<Body>,
+    app_entry_href: &str,
+) -> Response {
     // Reject WebSocket upgrade requests.
     if req
         .headers()
@@ -160,7 +166,7 @@ pub async fn proxy_request(proxy_base: &url::Url, client: &Client, req: Request<
 
     if content_type.starts_with("text/html") {
         let body_bytes = upstream_resp.bytes().await.unwrap_or_default();
-        let injected = inject(&body_bytes);
+        let injected = inject(&body_bytes, app_entry_href);
         let len = injected.len();
         resp_headers.insert(
             axum::http::header::CONTENT_TYPE,

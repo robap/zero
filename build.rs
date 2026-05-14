@@ -31,6 +31,14 @@ fn main() {
         "cargo:rerun-if-changed={}",
         runtime_dir.join("test.js").display()
     );
+    println!(
+        "cargo:rerun-if-changed={}",
+        runtime_dir.join("zero.d.ts").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        runtime_dir.join("zero-test.d.ts").display()
+    );
     println!("cargo:rerun-if-changed=build.rs");
 
     let single_line_import =
@@ -111,6 +119,20 @@ fn main() {
     }
     let out_path = out_dir.join("zero_test_body.js");
     fs::write(&out_path, &test_body)
+        .unwrap_or_else(|e| panic!("failed to write {}: {e}", out_path.display()));
+
+    // --- zero_types_body.d.ts ---
+    let raw = fs::read_to_string(runtime_dir.join("zero.d.ts"))
+        .unwrap_or_else(|e| panic!("failed to read zero.d.ts: {e}"));
+    let out_path = out_dir.join("zero_types_body.d.ts");
+    fs::write(&out_path, &raw)
+        .unwrap_or_else(|e| panic!("failed to write {}: {e}", out_path.display()));
+
+    // --- zero_test_types_body.d.ts ---
+    let raw = fs::read_to_string(runtime_dir.join("zero-test.d.ts"))
+        .unwrap_or_else(|e| panic!("failed to read zero-test.d.ts: {e}"));
+    let out_path = out_dir.join("zero_test_types_body.d.ts");
+    fs::write(&out_path, &raw)
         .unwrap_or_else(|e| panic!("failed to write {}: {e}", out_path.display()));
 }
 

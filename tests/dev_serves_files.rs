@@ -75,22 +75,24 @@ fn serves_src_and_styles_with_correct_types_and_no_cache() {
         let client = reqwest::Client::new();
         let base = format!("http://127.0.0.1:{port}");
 
-        // /src/app.js
+        // /src/app.ts is transpiled to JS on the fly.
         let resp = client
-            .get(format!("{base}/src/app.js"))
+            .get(format!("{base}/src/app.ts"))
             .send()
             .await
             .unwrap();
-        assert_eq!(resp.status(), 200, "/src/app.js should be 200");
+        assert_eq!(resp.status(), 200, "/src/app.ts should be 200");
         let ctype = header_str(&resp, "content-type");
         assert!(
             ctype.starts_with("application/javascript"),
-            "wrong content-type for /src/app.js: {ctype}"
+            "wrong content-type for /src/app.ts: {ctype}"
         );
         assert_no_cache(&resp);
         let body = resp.text().await.unwrap();
-        let on_disk = std::fs::read_to_string(tmp.path().join("web/src/app.js")).unwrap();
-        assert_eq!(body, on_disk);
+        assert!(
+            body.contains("import { App, signal } from"),
+            "transpiled body missing imports: {body}"
+        );
 
         // /styles/app.css
         let resp = client

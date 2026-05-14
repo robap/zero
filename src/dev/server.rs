@@ -12,13 +12,13 @@ use axum::routing::get;
 use tokio::sync::watch as shutdown_watch;
 
 use crate::config::Config;
-use crate::dev::files::{serve_root_file, serve_under};
+use crate::dev::files::{serve_root_file, serve_under, serve_under_with_transpile};
 use crate::dev::headers::no_cache_layer;
 use crate::dev::local::serve_local_index;
 use crate::dev::proxy::{ProxyState, proxy_request};
 use crate::dev::sse::{ReloadBus, sse_handler};
 use crate::dev::watch;
-use crate::runtime::runtime_module;
+use crate::runtime::{ZERO_TEST_TYPES_BODY, ZERO_TYPES_BODY, runtime_module};
 
 /// Shared state passed to dev-server handlers.
 #[derive(Clone)]
@@ -34,6 +34,8 @@ pub struct AppState {
     /// Set to `true` on shutdown so long-lived handlers (e.g. SSE) can end
     /// their streams and let graceful shutdown complete.
     pub shutdown: shutdown_watch::Receiver<bool>,
+    /// Whether `.ts` responses should include an inline source map.
+    pub dev_sourcemap: bool,
 }
 
 /// Start the dev server and block until shutdown.
@@ -57,6 +59,13 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
         .canonicalize()
         .unwrap_or_else(|_| cwd.join(&config.project.root));
 
+    if let Err(e) = std::fs::write(root.join("zero.d.ts"), ZERO_TYPES_BODY) {
+        eprintln!("zero dev: failed to write zero.d.ts: {e}");
+    }
+    if let Err(e) = std::fs::write(root.join("zero-test.d.ts"), ZERO_TEST_TYPES_BODY) {
+        eprintln!("zero dev: failed to write zero-test.d.ts: {e}");
+    }
+
     let proxy = config
         .dev
         .proxy
@@ -74,6 +83,7 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
         proxy,
         bus,
         shutdown: shutdown_rx,
+        dev_sourcemap: config.dev.sourcemap,
     });
     let port = config.dev.port;
 
@@ -84,7 +94,13 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
             "/src/*path",
             get(
                 |State(s): State<Arc<AppState>>, Path(p): Path<String>| async move {
-                    serve_under(s.root.join("src"), "/src", &format!("/src/{p}")).await
+                    serve_under_with_transpile(
+                        s.root.join("src"),
+                        "/src",
+                        &format!("/src/{p}"),
+                        s.dev_sourcemap,
+                    )
+                    .await
                 },
             ),
         )
@@ -119,8 +135,15 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
         .fallback(
             |State(s): State<Arc<AppState>>,
              req: axum::http::Request<axum::body::Body>| async move {
+                let app_entry_href = if s.root.join("src").join("app.ts").is_file() {
+                    "/src/app.ts"
+                } else {
+                    "/src/app.js"
+                };
                 match s.proxy.as_deref() {
-                    Some(ps) => proxy_request(&ps.proxy_base, &ps.client, req).await,
+                    Some(ps) => {
+                        proxy_request(&ps.proxy_base, &ps.client, req, app_entry_href).await
+                    }
                     None => {
                         let _ = req;
                         serve_local_index(s.root.clone()).await
