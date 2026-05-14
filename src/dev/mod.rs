@@ -5,6 +5,7 @@ pub mod headers;
 pub mod inject;
 pub mod local;
 pub mod proxy;
+pub mod sass;
 pub mod server;
 pub mod sse;
 pub mod transpile;

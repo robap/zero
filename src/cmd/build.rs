@@ -48,7 +48,7 @@ pub async fn run(sourcemap_override: Option<bool>) -> anyhow::Result<()> {
     std::fs::write(&bundle_path, &final_bundle)?;
 
     // 2. Hash + copy CSS.
-    let css_pairs = process_css(&root, &out_dir)?;
+    let css_pairs = process_css(&root, &out_dir, emit_sourcemap)?;
 
     // 3. Build manifest entries.
     let mut manifest_entries: Vec<(String, String)> = Vec::new();

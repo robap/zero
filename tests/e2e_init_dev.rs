@@ -55,7 +55,7 @@ fn init_then_dev_serves_all_expected_urls() {
     assert!(tmp.path().join("web/index.html").exists());
     assert!(tmp.path().join("web/src/app.ts").exists());
     assert!(tmp.path().join("web/src/routes/home.ts").exists());
-    assert!(tmp.path().join("web/styles/app.css").exists());
+    assert!(tmp.path().join("web/styles/app.scss").exists());
 
     // Step 3: start `zero dev`.
     let bin = assert_cmd::cargo::cargo_bin("zero");
@@ -115,13 +115,13 @@ fn init_then_dev_serves_all_expected_urls() {
             "transpiled body missing imports: {body}"
         );
 
-        // GET /styles/app.css → text/css + no-cache.
+        // GET /styles/app.scss → compiled text/css + no-cache.
         let resp = client
-            .get(format!("{base}/styles/app.css"))
+            .get(format!("{base}/styles/app.scss"))
             .send()
             .await
             .unwrap();
-        assert_eq!(resp.status(), 200, "GET /styles/app.css should be 200");
+        assert_eq!(resp.status(), 200, "GET /styles/app.scss should be 200");
         let ctype = resp
             .headers()
             .get("content-type")

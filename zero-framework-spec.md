@@ -766,31 +766,49 @@ Click <a href="/users/42">
 
 ## 7. CSS Strategy
 
-**The framework has zero CSS features.** No scoped styles, no CSS modules, no CSS-in-JS, no class object syntax.
+**SCSS is the canonical CSS authoring layer.** `.scss` files give you variables, nesting, partials, and the modern Sass module system (`@use` / `@forward`). The framework still forbids scoped styles, CSS modules, CSS-in-JS, and class object syntax — SCSS unlocks variables and nesting, not scoped styling.
 
-The developer writes CSS files and loads them via `<link>` tags in `index.html`. CSS custom properties (variables) are the recommended pattern for theming and design tokens.
+The developer writes `.scss` files and loads them via `<link>` tags in `index.html`. CSS custom properties remain the recommended pattern for *runtime* theming (e.g. dark mode); SCSS variables are compile-time only.
 
-```css
-/* styles/vars.css */
+```html
+<link rel="stylesheet" href="/styles/app.scss">
+```
+
+```scss
+// styles/_vars.scss — design tokens
+$color-primary: #3b82f6;
+$color-text:    #1a1a1a;
+$space-md:      1rem;
+$radius:        4px;
+
 :root {
-  --color-primary: #3b82f6;
-  --color-danger: #ef4444;
-  --color-text: #1a1a1a;
-  --color-bg: #ffffff;
-  --color-surface: #f5f5f5;
-  --space-sm: 0.5rem;
-  --space-md: 1rem;
-  --space-lg: 2rem;
-  --radius: 4px;
-  --font-sans: system-ui, sans-serif;
-}
-
-[data-theme="dark"] {
-  --color-text: #f0f0f0;
-  --color-bg: #1a1a1a;
-  --color-surface: #2a2a2a;
+  --color-primary: #{$color-primary};
+  --color-text:    #{$color-text};
+  --space-md:      #{$space-md};
+  --radius:        #{$radius};
 }
 ```
+
+```scss
+// styles/app.scss — entry stylesheet
+@use 'vars';
+
+body {
+  color: var(--color-text);
+  padding: vars.$space-md * 2;
+}
+
+.btn {
+  border-radius: vars.$radius;
+  &.btn-primary { background: vars.$color-primary; }
+}
+```
+
+Partials use the standard underscore prefix: `styles/_buttons.scss` is consumed via `@use 'buttons';`. Files whose name starts with `_` are not addressable as standalone stylesheets.
+
+`zero dev` compiles `.scss` on the fly and serves the compiled CSS with an inline source map. `zero build` compiles each top-level `.scss` to hashed CSS in `<out>/assets/` and rewrites the source `<link>`'s href to point at the hashed asset. External source maps are emitted when `[build] sourcemap = true` (default: off). The dev inline sourcemap is gated on `[dev] sourcemap = true` (default: on).
+
+Plain `.css` still works — the dev server and build hash and serve `.css` files unchanged. Use whichever extension fits.
 
 Components use plain string class names:
 
@@ -800,7 +818,7 @@ function Button(props: { variant: string, children: any }) {
 }
 ```
 
-The only thing `zero build` does with CSS is copy it to the output directory and optionally minify it.
+The only thing `zero build` does with CSS — compiled or not — is hash it, copy it to `<out>/assets/`, and rewrite source-side `<link>` hrefs to the hashed URL.
 
 ---
 
@@ -1144,7 +1162,7 @@ State machines as a first-class primitive are deferred indefinitely. See Section
 | Template syntax | Tagged template literals (`html\`\``) | Standard JS, no transpiler needed for syntax, editor support exists (Lit plugin) |
 | Reactivity | Signals with auto-tracking | No dependency arrays, no re-render, granular updates |
 | DOM strategy | Direct DOM creation, no virtual DOM | Smaller runtime, no diffing algorithm needed |
-| CSS | Not a framework concern | Developer loads stylesheets in HTML, uses CSS variables |
+| CSS | SCSS authoring layer; CSS variables for runtime theming | Variables and nesting are table stakes; runtime theming stays in plain CSS for zero-cost dynamism |
 | Entry point | Developer-owned index.html | No magic, no hidden HTML generation, full control |
 | Boot | `app.run("#app")` in index.html | Explicit, visible, debuggable |
 | Routing | Explicit `app.route()` calls | No file-system conventions, ordered matching, readable |

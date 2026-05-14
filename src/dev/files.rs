@@ -24,7 +24,7 @@ pub fn content_type_for(path: &Path) -> &'static str {
     {
         Some("js") => "application/javascript; charset=utf-8",
         Some("mjs") => "application/javascript; charset=utf-8",
-        Some("css") => "text/css; charset=utf-8",
+        Some("css") | Some("scss") => "text/css; charset=utf-8",
         Some("html") | Some("htm") => "text/html; charset=utf-8",
         Some("json") => "application/json",
         Some("svg") => "image/svg+xml",
@@ -109,6 +109,72 @@ pub async fn serve_under_with_transpile(
 
     crate::dev::transpile::serve_typescript_file(canonical, uri_path.to_string(), inline_source_map)
         .await
+}
+
+/// Like `serve_under` but routes `.scss` requests through the SCSS compiler.
+///
+/// Partials (any URI path segment beginning with `_`) return 404. Plain `.css`
+/// files pass through byte-pure. `.scss` files are compiled and returned as
+/// `text/css`.
+///
+/// # Parameters
+/// - `root`: directory to serve from.
+/// - `prefix`: leading URI segment used to strip the request path.
+/// - `uri_path`: the full URI path of the incoming request.
+/// - `inline_source_map`: whether to append an inline source map to SCSS responses.
+///
+/// # Returns
+/// A `Response`. `.scss` files are compiled before responding; all other
+/// extensions follow the byte-pure `serve_under` path.
+pub async fn serve_under_with_sass(
+    root: PathBuf,
+    prefix: &'static str,
+    uri_path: &str,
+    inline_source_map: bool,
+) -> Response {
+    if uri_path.split('/').any(|seg| seg == "..") {
+        return (StatusCode::FORBIDDEN, "forbidden").into_response();
+    }
+    let Some(rest) = uri_path.strip_prefix(prefix) else {
+        return (StatusCode::NOT_FOUND, "not found").into_response();
+    };
+    let rel = rest.trim_start_matches('/');
+    let candidate = root.join(rel);
+
+    let ext_lower = candidate
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase());
+
+    let is_scss = ext_lower.as_deref() == Some("scss");
+
+    if is_scss {
+        // Check if any URI segment starts with `_` — partial check.
+        let is_partial = uri_path.split('/').any(|seg| seg.starts_with('_'));
+        if is_partial {
+            return (StatusCode::NOT_FOUND, "not found").into_response();
+        }
+
+        let Ok(root_canon) = std::fs::canonicalize(&root) else {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "root missing").into_response();
+        };
+        let canonical = match std::fs::canonicalize(&candidate) {
+            Ok(c) => c,
+            Err(_) => return (StatusCode::NOT_FOUND, "not found").into_response(),
+        };
+        if !canonical.starts_with(&root_canon) {
+            return (StatusCode::FORBIDDEN, "forbidden").into_response();
+        }
+
+        return crate::dev::sass::serve_scss_file(
+            canonical,
+            uri_path.to_string(),
+            inline_source_map,
+        )
+        .await;
+    }
+
+    serve_file_within(&root, &candidate).await
 }
 
 /// Serve a single well-known root-level file (e.g., `/favicon.ico`).
@@ -240,5 +306,187 @@ mod tests {
         let resp =
             rt.block_on(async { serve_under(root.clone(), "/src", "/src/nonexistent.js").await });
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn content_type_scss() {
+        assert_eq!(
+            content_type_for(Path::new("a.scss")),
+            "text/css; charset=utf-8"
+        );
+    }
+
+    fn rt() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    fn partial_request_returns_404() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("styles")).unwrap();
+        std::fs::write(dir.path().join("styles/_x.scss"), "$c: red;").unwrap();
+        let styles_root = dir.path().join("styles");
+        let resp = rt().block_on(async {
+            serve_under_with_sass(styles_root, "/styles", "/styles/_x.scss", false).await
+        });
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn nested_partial_returns_404() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("styles/forms")).unwrap();
+        std::fs::write(dir.path().join("styles/forms/_inputs.scss"), "$c: red;").unwrap();
+        let styles_root = dir.path().join("styles");
+        let resp = rt().block_on(async {
+            serve_under_with_sass(styles_root, "/styles", "/styles/forms/_inputs.scss", false).await
+        });
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn scss_request_returns_compiled_css() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("styles")).unwrap();
+        std::fs::write(
+            dir.path().join("styles/app.scss"),
+            "$c: red; body { color: $c; }",
+        )
+        .unwrap();
+        let styles_root = dir.path().join("styles");
+        let resp = rt().block_on(async {
+            serve_under_with_sass(styles_root, "/styles", "/styles/app.scss", false).await
+        });
+        assert_eq!(resp.status(), StatusCode::OK);
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert_eq!(ct, "text/css; charset=utf-8");
+        let body = rt().block_on(async {
+            use http_body_util::BodyExt as _;
+            resp.into_body().collect().await.unwrap().to_bytes()
+        });
+        let body_str = std::str::from_utf8(&body).unwrap();
+        assert!(
+            body_str.contains("red"),
+            "compiled CSS missing 'red': {body_str}"
+        );
+    }
+
+    #[test]
+    fn scss_response_has_inline_sourcemap_when_enabled() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("styles")).unwrap();
+        std::fs::write(
+            dir.path().join("styles/app.scss"),
+            "$c: red; body { color: $c; }",
+        )
+        .unwrap();
+        let styles_root = dir.path().join("styles");
+        let resp = rt().block_on(async {
+            serve_under_with_sass(styles_root, "/styles", "/styles/app.scss", true).await
+        });
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = rt().block_on(async {
+            use http_body_util::BodyExt as _;
+            resp.into_body().collect().await.unwrap().to_bytes()
+        });
+        let body_str = std::str::from_utf8(&body).unwrap();
+        assert!(
+            body_str.contains("/*# sourceMappingURL=data:application/json;base64,"),
+            "inline sourcemap missing: {body_str}"
+        );
+    }
+
+    #[test]
+    fn scss_response_omits_sourcemap_when_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("styles")).unwrap();
+        std::fs::write(
+            dir.path().join("styles/app.scss"),
+            "$c: red; body { color: $c; }",
+        )
+        .unwrap();
+        let styles_root = dir.path().join("styles");
+        let resp = rt().block_on(async {
+            serve_under_with_sass(styles_root, "/styles", "/styles/app.scss", false).await
+        });
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = rt().block_on(async {
+            use http_body_util::BodyExt as _;
+            resp.into_body().collect().await.unwrap().to_bytes()
+        });
+        let body_str = std::str::from_utf8(&body).unwrap();
+        assert!(
+            !body_str.contains("sourceMappingURL"),
+            "sourcemap present when disabled: {body_str}"
+        );
+    }
+
+    #[test]
+    fn compile_error_returns_500_plain_text() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("styles")).unwrap();
+        std::fs::write(dir.path().join("styles/bad.scss"), "body { color: ; }").unwrap();
+        let styles_root = dir.path().join("styles");
+        let resp = rt().block_on(async {
+            serve_under_with_sass(styles_root, "/styles", "/styles/bad.scss", false).await
+        });
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(
+            ct.contains("text/plain"),
+            "content-type not text/plain: {ct}"
+        );
+        let body = rt().block_on(async {
+            use http_body_util::BodyExt as _;
+            resp.into_body().collect().await.unwrap().to_bytes()
+        });
+        let body_str = std::str::from_utf8(&body).unwrap();
+        assert!(
+            body_str.contains("bad.scss") || body_str.contains("/styles/bad.scss"),
+            "filename missing in error: {body_str}"
+        );
+    }
+
+    #[test]
+    fn css_request_passes_through() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("styles")).unwrap();
+        let content = "body { color: blue; }";
+        std::fs::write(dir.path().join("styles/legacy.css"), content).unwrap();
+        let styles_root = dir.path().join("styles");
+        let resp = rt().block_on(async {
+            serve_under_with_sass(styles_root, "/styles", "/styles/legacy.css", false).await
+        });
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = rt().block_on(async {
+            use http_body_util::BodyExt as _;
+            resp.into_body().collect().await.unwrap().to_bytes()
+        });
+        assert_eq!(body.as_ref(), content.as_bytes());
+    }
+
+    #[test]
+    fn traversal_rejected_in_sass_handler() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("styles")).unwrap();
+        std::fs::write(dir.path().join("secret.txt"), "no").unwrap();
+        let styles_root = dir.path().join("styles");
+        let resp = rt().block_on(async {
+            serve_under_with_sass(styles_root, "/styles", "/styles/../secret.txt", false).await
+        });
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 }

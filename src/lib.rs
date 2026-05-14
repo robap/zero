@@ -6,6 +6,7 @@ pub mod config;
 pub mod dev;
 pub mod prompts;
 pub mod runtime;
+pub mod sass;
 pub mod scaffold;
 pub mod test_runner;
 pub mod toml_writer;

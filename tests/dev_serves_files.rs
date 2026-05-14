@@ -94,17 +94,17 @@ fn serves_src_and_styles_with_correct_types_and_no_cache() {
             "transpiled body missing imports: {body}"
         );
 
-        // /styles/app.css
+        // /styles/app.scss compiles to CSS on the fly.
         let resp = client
-            .get(format!("{base}/styles/app.css"))
+            .get(format!("{base}/styles/app.scss"))
             .send()
             .await
             .unwrap();
-        assert_eq!(resp.status(), 200, "/styles/app.css should be 200");
+        assert_eq!(resp.status(), 200, "/styles/app.scss should be 200");
         let ctype = header_str(&resp, "content-type");
         assert!(
             ctype.starts_with("text/css"),
-            "wrong content-type for /styles/app.css: {ctype}"
+            "wrong content-type for /styles/app.scss: {ctype}"
         );
         assert_no_cache(&resp);
 

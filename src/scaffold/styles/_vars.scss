@@ -1,0 +1,23 @@
+// Design tokens. Edit these to retheme the app.
+//
+// Compile-time use: `@use 'vars';` then `vars.$color-primary`.
+// Runtime use: the `:root` block below bridges each token to a CSS
+// custom property, so plain CSS can read `var(--color-primary)`.
+
+$color-primary: #3b82f6;
+$color-text:    #1a1a1a;
+$color-bg:      #ffffff;
+
+$space-sm: 0.5rem;
+$space-md: 1rem;
+
+$radius: 4px;
+
+:root {
+  --color-primary: #{$color-primary};
+  --color-text:    #{$color-text};
+  --color-bg:      #{$color-bg};
+  --space-sm:      #{$space-sm};
+  --space-md:      #{$space-md};
+  --radius:        #{$radius};
+}

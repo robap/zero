@@ -12,7 +12,9 @@ use axum::routing::get;
 use tokio::sync::watch as shutdown_watch;
 
 use crate::config::Config;
-use crate::dev::files::{serve_root_file, serve_under, serve_under_with_transpile};
+use crate::dev::files::{
+    serve_root_file, serve_under, serve_under_with_sass, serve_under_with_transpile,
+};
 use crate::dev::headers::no_cache_layer;
 use crate::dev::local::serve_local_index;
 use crate::dev::proxy::{ProxyState, proxy_request};
@@ -108,7 +110,13 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
             "/styles/*path",
             get(
                 |State(s): State<Arc<AppState>>, Path(p): Path<String>| async move {
-                    serve_under(s.root.join("styles"), "/styles", &format!("/styles/{p}")).await
+                    serve_under_with_sass(
+                        s.root.join("styles"),
+                        "/styles",
+                        &format!("/styles/{p}"),
+                        s.dev_sourcemap,
+                    )
+                    .await
                 },
             ),
         )

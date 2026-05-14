@@ -26,8 +26,8 @@ fn init_with_existing_toml_scaffolds_into_root() {
     assert!(root.join("tsconfig.json").exists(), "tsconfig.json missing");
     assert!(root.join("zero.d.ts").exists(), "zero.d.ts missing");
     assert!(
-        root.join("styles").join("app.css").exists(),
-        "styles/app.css missing"
+        root.join("styles").join("app.scss").exists(),
+        "styles/app.scss missing"
     );
 }
 

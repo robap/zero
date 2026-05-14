@@ -37,7 +37,8 @@ The generated project layout:
 │       ├── home.ts          # default route component
 │       └── home.test.ts     # unit test for the home route
 └── styles/
-    └── app.css              # plain CSS, served as-is
+    ├── _vars.scss           # SCSS partial — design tokens
+    └── app.scss             # entry stylesheet — @use 'vars';
 ```
 
 ### JavaScript projects
@@ -489,6 +490,19 @@ a[data-active-exact] { color: var(--primary); }
 ```
 
 External links, hash-only links, and links with `target`, `download`, or `data-external` are skipped.
+
+---
+
+## Styles
+
+The scaffold authors styles in SCSS. `zero dev` compiles `.scss` on the fly; `zero build` emits hashed CSS into `<out>/assets/`.
+
+- `index.html` links to the SCSS entry: `<link rel="stylesheet" href="/styles/app.scss">`. The build rewrites this href to the hashed output.
+- Partials use the standard underscore prefix: `styles/_buttons.scss` is consumed via `@use 'buttons';` from a sibling file. Files whose name starts with `_` are not addressable as standalone stylesheets.
+- Design tokens live in `styles/_vars.scss` and are bridged to `:root` CSS custom properties so plain CSS can read them via `var(--name)`. Use `vars.$token` inside SCSS, `var(--token)` outside.
+- Plain `.css` still works — the dev server and build serve and hash `.css` files unchanged. Rename to `.scss` to opt in.
+
+The framework forbids scoped styles, CSS modules, and CSS-in-JS. SCSS gives you variables and nesting; class names are still plain strings.
 
 ---
 

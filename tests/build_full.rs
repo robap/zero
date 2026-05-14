@@ -61,8 +61,8 @@ fn full_build_produces_all_outputs() {
         .as_object()
         .unwrap()
         .keys()
-        .find(|k| k.ends_with(".css"))
-        .expect("manifest must have a CSS key");
+        .find(|k| k.ends_with(".css") || k.ends_with(".scss"))
+        .expect("manifest must have a CSS or SCSS key");
     let css_entry = manifest[css_key.as_str()].as_str().unwrap();
     assert!(
         dist.join(css_entry).exists(),
