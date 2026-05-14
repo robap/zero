@@ -1,10 +1,21 @@
 //! HTML injection: insert the dev-mode script tags before `</head>`.
 
-/// The two script tags injected into every HTML response in dev mode.
+/// The script tags injected into every HTML response in dev mode.
 pub const DEV_SCRIPTS: &str = concat!(
     r#"<script type="importmap">{"imports":{"zero":"/zero.js"}}</script>"#,
     "\n",
-    r#"<script type="module" src="/src/app.js"></script>"#
+    r#"<script type="module" src="/src/app.js"></script>"#,
+    "\n",
+    "<script>\n",
+    "(function(){\n",
+    "  if (typeof EventSource === \"undefined\") return;\n",
+    "  var es = new EventSource(\"/_zero/events\");\n",
+    "  es.addEventListener(\"reload\", function(e){\n",
+    "    try { console.log(\"[zero] reloading: \" + (e.data || \"\")); } catch(_) {}\n",
+    "    location.reload();\n",
+    "  });\n",
+    "})();\n",
+    "</script>"
 );
 
 /// Inject `DEV_SCRIPTS` into `body` before `</head>`, with fallbacks.
@@ -63,6 +74,26 @@ mod tests {
 
     fn s(bytes: &[u8]) -> &str {
         std::str::from_utf8(bytes).unwrap()
+    }
+
+    #[test]
+    fn injects_reload_client_alongside_other_scripts() {
+        // DEV_SCRIPTS must include all three script tags
+        assert!(
+            DEV_SCRIPTS.contains(r#"new EventSource("/_zero/events")"#),
+            "DEV_SCRIPTS must contain the EventSource constructor"
+        );
+        assert!(
+            DEV_SCRIPTS.contains(r#"addEventListener("reload""#),
+            "DEV_SCRIPTS must contain the reload event listener"
+        );
+        assert!(
+            DEV_SCRIPTS.contains("location.reload()"),
+            "DEV_SCRIPTS must contain location.reload()"
+        );
+        // Existing scripts must still be present
+        assert!(DEV_SCRIPTS.contains(r#"type="importmap""#));
+        assert!(DEV_SCRIPTS.contains(r#"src="/src/app.js""#));
     }
 
     #[test]

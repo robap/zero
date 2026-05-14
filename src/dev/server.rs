@@ -15,17 +15,21 @@ use crate::dev::files::{serve_root_file, serve_under};
 use crate::dev::headers::no_cache_layer;
 use crate::dev::local::serve_local_index;
 use crate::dev::proxy::{ProxyState, proxy_request};
+use crate::dev::sse::{ReloadBus, sse_handler};
+use crate::dev::watch;
 use crate::runtime::runtime_module;
 
 /// Shared state passed to dev-server handlers.
 #[derive(Clone)]
-struct AppState {
+pub struct AppState {
     /// Precomputed runtime module text (built once at server start).
-    runtime: String,
+    pub runtime: String,
     /// Canonicalized path to `<project-root>/<config.project.root>`.
-    root: PathBuf,
+    pub root: PathBuf,
     /// Proxy state; `None` in no-proxy (static SPA) mode.
-    proxy: Option<Arc<ProxyState>>,
+    pub proxy: Option<Arc<ProxyState>>,
+    /// Broadcast bus for dev-mode reload events.
+    pub bus: Arc<ReloadBus>,
 }
 
 /// Start the dev server and block until shutdown.
@@ -55,14 +59,20 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
         .map(|url| ProxyState::new(url).map(Arc::new))
         .transpose()?;
 
+    let bus = Arc::new(ReloadBus::new());
+    let root_for_watch = root.clone();
+    let root_display = root.display().to_string();
+    let bus_for_watch = bus.clone();
     let state = Arc::new(AppState {
         runtime: runtime_module(),
         root,
         proxy,
+        bus,
     });
     let port = config.dev.port;
 
     let app = Router::new()
+        .route("/_zero/events", get(sse_handler))
         .route("/zero.js", get(serve_runtime))
         .route(
             "/src/*path",
@@ -128,9 +138,18 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
 
     println!("zero dev — listening on http://{addr}");
 
+    let out_dir = cwd.join(&config.build.out);
+    let out_dir = out_dir.canonicalize().unwrap_or(out_dir);
+    let watch_handle = watch::start(root_for_watch, out_dir, bus_for_watch)?;
+    if watch_handle.is_some() {
+        println!("zero dev — watching {root_display} for changes");
+    }
+
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
+
+    drop(watch_handle);
     Ok(())
 }
 

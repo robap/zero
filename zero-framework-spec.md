@@ -80,7 +80,7 @@ my-app/
 --https            Enable self-signed TLS
 ```
 
-HMR is always on. Errors render as a browser overlay AND in the terminal.
+File watching with full-page reload is always on; HMR (module state preservation) and an in-page error overlay are planned (see Phase 6). Errors render in the terminal today.
 
 #### `zero build`
 
@@ -1126,7 +1126,8 @@ State machines as a first-class primitive are deferred indefinitely. See Section
 ### Phase 6 — CLI & Dev Server
 - [x] `zero init` scaffolding
 - [x] `zero dev` dev server (file serving, script injection, proxy mode; no HMR)
-- [ ] `zero dev` file watching and HMR
+- [x] `zero dev` file watching (full-page reload via SSE)
+- [ ] `zero dev` HMR (module state preservation, error overlay)
 - [x] `zero build` production output
 - [ ] `zero test` integration
 - [ ] `zero check` type checking
