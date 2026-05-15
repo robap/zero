@@ -7,8 +7,12 @@ function Counter(): TemplateResult {
 
 export default function Home(): TemplateResult {
   return html`
-    <h1>Hello from zero</h1>
-    <button @click=${() => inject<Signal<number>>("count").update(n => n + 1)}>Increment</button>
-    ${Counter()}
+    <main class="stack pad-xl">
+      <h1>Hello from zero</h1>
+      <div class="cluster gap-md">
+        <button class="pad-sm border" @click=${() => inject<Signal<number>>("count").update(n => n + 1)}>Increment</button>
+        ${Counter()}
+      </div>
+    </main>
   `;
 }

@@ -768,39 +768,44 @@ Click <a href="/users/42">
 
 **SCSS is the canonical CSS authoring layer.** `.scss` files give you variables, nesting, partials, and the modern Sass module system (`@use` / `@forward`). The framework still forbids scoped styles, CSS modules, CSS-in-JS, and class object syntax — SCSS unlocks variables and nesting, not scoped styling.
 
-The developer writes `.scss` files and loads them via `<link>` tags in `index.html`. CSS custom properties remain the recommended pattern for *runtime* theming (e.g. dark mode); SCSS variables are compile-time only.
+The developer writes `.scss` files and loads them via `<link>` tags in `index.html`. Design tokens are authored as CSS custom properties directly on `:root` — no SCSS-variable bridge layer. SCSS still owns nesting, partials, and `@use`/`@forward`; it just does not hold token values.
 
 ```html
 <link rel="stylesheet" href="/styles/app.scss">
 ```
 
 ```scss
-// styles/_vars.scss — design tokens
-$color-primary: #3b82f6;
-$color-text:    #1a1a1a;
-$space-md:      1rem;
-$radius:        4px;
-
+// styles/_tokens.scss — design tokens declared directly as CSS custom properties
 :root {
-  --color-primary: #{$color-primary};
-  --color-text:    #{$color-text};
-  --space-md:      #{$space-md};
-  --radius:        #{$radius};
+  --color-primary: #2563eb;
+  --color-text:    #1a1a1a;
+  --space-md:      1rem;
+  --radius-md:     4px;
+  // …
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-text: #f5f5f5;
+    // …only color tokens override in dark mode
+  }
 }
 ```
 
 ```scss
 // styles/app.scss — entry stylesheet
-@use 'vars';
-
-body {
-  color: var(--color-text);
-  padding: vars.$space-md * 2;
-}
+@use 'tokens';
+@use 'base';
+@use 'layout';
+@use 'utilities';
 
 .btn {
-  border-radius: vars.$radius;
-  &.btn-primary { background: vars.$color-primary; }
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  &.btn-primary {
+    background: var(--color-primary);
+    color: var(--color-primary-fg);
+  }
 }
 ```
 
@@ -819,6 +824,33 @@ function Button(props: { variant: string, children: any }) {
 ```
 
 The only thing `zero build` does with CSS — compiled or not — is hash it, copy it to `<out>/assets/`, and rewrite source-side `<link>` hrefs to the hashed URL.
+
+### 7.1 Design system
+
+The scaffold ships a built-in design-system layer in `styles/`: five files (`_tokens.scss`, `_base.scss`, `_layout.scss`, `_utilities.scss`, `app.scss`) that establish a stable foundation for the future component library. After `zero init`, the files are user-owned — editable, deletable, or wholesale replaceable. There is no upgrade path; the framework never patches scaffolded files in-place.
+
+**Token categories.** Seven categories live in `_tokens.scss`, all declared as CSS custom properties on `:root`:
+
+| Category | Tokens |
+| --- | --- |
+| Spacing | `--space-xs`, `--space-sm`, `--space-md`, `--space-lg`, `--space-xl` |
+| Colors | `--color-bg`, `--color-surface`, `--color-text`, `--color-text-muted`, `--color-primary`, `--color-primary-fg`, `--color-border` |
+| Radius | `--radius-sm`, `--radius-md`, `--radius-lg` |
+| Font size | `--font-sm`, `--font-md`, `--font-lg`, `--font-xl` |
+| Font weight | `--weight-normal`, `--weight-bold` |
+| Line height | `--leading-tight`, `--leading-normal` |
+| Shadow | `--shadow-sm`, `--shadow-md`, `--shadow-lg` |
+| Border width | `--border-thin`, `--border-md`, `--border-thick` |
+
+Dark-mode variants override only the seven color tokens.
+
+**Layout primitives.** Six classes in `_layout.scss`: `cluster`, `stack`, `frame`, `split`, `flank`, `grid`. Each is a single CSS rule; layout primitives never use `margin` for spacing.
+
+**Utility families.** Three families in `_utilities.scss`: `gap-{step}` (5 classes), `pad-{step}` (5 classes), `border` / `border-{t,r,b,l}` (5 classes). No `!important`; override is by class-list order.
+
+**Theme switching.** `prefers-color-scheme: dark` selects dark mode by default. Set `data-theme="light"` or `data-theme="dark"` on `<html>` (or any ancestor) to override the system preference. There is no JavaScript theme-toggle helper.
+
+**Distribution model.** `zero init` writes the partials and leaves them alone. Users own them after init. The future `zero` component library assumes these classes and tokens exist; users who delete the design system accept that downstream components won't render correctly.
 
 ---
 
@@ -1163,6 +1195,7 @@ State machines as a first-class primitive are deferred indefinitely. See Section
 | Reactivity | Signals with auto-tracking | No dependency arrays, no re-render, granular updates |
 | DOM strategy | Direct DOM creation, no virtual DOM | Smaller runtime, no diffing algorithm needed |
 | CSS | SCSS authoring layer; CSS variables for runtime theming | Variables and nesting are table stakes; runtime theming stays in plain CSS for zero-cost dynamism |
+| Design system | Built-in scaffold layer with tokens, themes, layout primitives | Common patterns shouldn't be hand-rolled per project; future component library has a stable foundation |
 | Entry point | Developer-owned index.html | No magic, no hidden HTML generation, full control |
 | Boot | `app.run("#app")` in index.html | Explicit, visible, debuggable |
 | Routing | Explicit `app.route()` calls | No file-system conventions, ordered matching, readable |

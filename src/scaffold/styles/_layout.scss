@@ -1,0 +1,60 @@
+// Layout primitives. No margin properties — spacing uses gap, padding, flex, or grid only.
+
+// Cluster — horizontal flex row that wraps
+.cluster {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-md); // default gap; override with gap-* utility
+}
+
+// Stack — vertical flex column
+.stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md); // default gap; override with gap-* utility
+}
+
+// Frame — fixed aspect-ratio media box
+.frame {
+    aspect-ratio: var(
+        --frame-ratio,
+        16 / 9
+    ); // override per-instance: style="--frame-ratio: 1 / 1"
+    overflow: hidden;
+    display: grid;
+    place-items: center;
+}
+
+// two equal-width columns, no wrapping
+.split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-md); // default gap; override with gap-* utility
+}
+
+// first child content-sized, second fills remainder
+.flank {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-md); // default gap; override with gap-* utility
+}
+
+.flank > :first-child {
+    flex: 0 0 auto;
+}
+
+.flank > :nth-child(2) {
+    flex: 1 1 0;
+    min-width: 0; // required: allows fill child to shrink below intrinsic min before wrapping
+}
+
+// Grid — auto-fitting equal columns
+.grid {
+    display: grid;
+    grid-template-columns: repeat(
+        auto-fit,
+        minmax(min(100%, var(--grid-min, 16rem)), 1fr)
+    ); // override per-instance: style="--grid-min: 20rem"
+    gap: var(--space-md); // default gap; override with gap-* utility
+}

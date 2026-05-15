@@ -37,8 +37,11 @@ The generated project layout:
 │       ├── home.ts          # default route component
 │       └── home.test.ts     # unit test for the home route
 └── styles/
-    ├── _vars.scss           # SCSS partial — design tokens
-    └── app.scss             # entry stylesheet — @use 'vars';
+    ├── _tokens.scss        # SCSS partial — design tokens + theme variants
+    ├── _base.scss          # SCSS partial — minimal reset, token-bound body
+    ├── _layout.scss        # SCSS partial — six layout primitives
+    ├── _utilities.scss     # SCSS partial — gap-*, pad-*, border-* utilities
+    └── app.scss            # entry stylesheet — @use 'tokens'; ... 'utilities';
 ```
 
 ### JavaScript projects
@@ -499,10 +502,66 @@ The scaffold authors styles in SCSS. `zero dev` compiles `.scss` on the fly; `ze
 
 - `index.html` links to the SCSS entry: `<link rel="stylesheet" href="/styles/app.scss">`. The build rewrites this href to the hashed output.
 - Partials use the standard underscore prefix: `styles/_buttons.scss` is consumed via `@use 'buttons';` from a sibling file. Files whose name starts with `_` are not addressable as standalone stylesheets.
-- Design tokens live in `styles/_vars.scss` and are bridged to `:root` CSS custom properties so plain CSS can read them via `var(--name)`. Use `vars.$token` inside SCSS, `var(--token)` outside.
+- Design tokens are CSS custom properties declared in `styles/_tokens.scss`. Read them everywhere with `var(--name)` — there is no SCSS-variable bridge layer in v1.
 - Plain `.css` still works — the dev server and build serve and hash `.css` files unchanged. Rename to `.scss` to opt in.
 
 The framework forbids scoped styles, CSS modules, and CSS-in-JS. SCSS gives you variables and nesting; class names are still plain strings.
+
+### Design system
+
+The scaffold ships a built-in CSS design system: tokens, theme switching, layout primitives, and utility classes. The system lives in four partials, all `@use`-d from `app.scss`:
+
+| Partial | What it declares |
+| --- | --- |
+| `_tokens.scss` | CSS custom properties for spacing, colors, radius, type, line height, shadow, and border widths; light and dark theme variants. |
+| `_base.scss` | Box-sizing reset and a token-bound `body` rule. No heading or paragraph styling. |
+| `_layout.scss` | Six layout primitive classes: `cluster`, `stack`, `frame`, `split`, `flank`, `grid`. |
+| `_utilities.scss` | Fifteen utility classes: `gap-{xs,sm,md,lg,xl}`, `pad-{xs,sm,md,lg,xl}`, `border`, `border-{t,r,b,l}`. |
+
+After `zero init`, the partials are normal project files. Edit them, delete them, or replace them. The framework does not regenerate or upgrade them. The future `zero` component library assumes the classes and tokens declared here exist — deleting layers downstream of `_tokens.scss` (e.g. `_utilities.scss`) is safe; deleting `_tokens.scss` itself will break components that read `--color-primary`, `--space-md`, etc.
+
+#### Layout primitives
+
+| Class | Purpose |
+| --- | --- |
+| `cluster` | Horizontal flex row that wraps. Default `gap: var(--space-md)`. |
+| `stack` | Vertical flex column. Default `gap: var(--space-md)`. |
+| `frame` | Fixed aspect-ratio box (default `16 / 9`); children centered and clipped. Override per-instance via `--frame-ratio`. |
+| `split` | Two equal-width columns. Default `gap: var(--space-md)`. Does not wrap. |
+| `flank` | First child is content-sized; second fills. Wraps when narrow. Default `gap: var(--space-md)`. |
+| `grid` | Auto-fitting columns of `minmax(min(100%, var(--grid-min, 16rem)), 1fr)`. Default `gap: var(--space-md)`. |
+
+#### Spacing scale
+
+Five steps: `xs`, `sm`, `md`, `lg`, `xl`. Each is a CSS custom property (`--space-xs` … `--space-xl`).
+
+- `gap-{step}` sets `gap: var(--space-{step})` on any flex or grid container.
+- `pad-{step}` sets `padding: var(--space-{step})` on any element.
+
+Composition is by class-list order: `class="cluster gap-lg"` overrides the cluster's default `var(--space-md)` because `gap-lg` follows `.cluster` in the compiled CSS. No `!important`, no axis variants — write `padding-inline` directly when you need axis-specific spacing.
+
+#### Border utilities
+
+- `border` — `1px` solid border on all four sides using `--color-border`.
+- `border-{t,r,b,l}` — same value, single side. Useful for dividers, accents, sidebar edges.
+
+Thicker borders: override `--border-thin` locally (the design-system border utilities all read it). Width variants (`border-md`, `border-thick`) are not shipped.
+
+#### Theme switching
+
+The system honors `prefers-color-scheme: dark` automatically. To override the system preference, set `data-theme="light"` or `data-theme="dark"` on an ancestor element — canonically `<html>`:
+
+```html
+<html data-theme="dark">
+```
+
+The framework ships no theme-toggle helper. Persisting a user choice across reloads is one line of JS the user writes:
+
+```js
+document.documentElement.dataset.theme = "dark"
+```
+
+The dark-mode override applies only to the seven `--color-*` tokens (`--color-bg`, `--color-surface`, `--color-text`, `--color-text-muted`, `--color-primary`, `--color-primary-fg`, `--color-border`). Spacing, radius, type, shadow, and border widths are theme-independent.
 
 ---
 

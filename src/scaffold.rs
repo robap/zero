@@ -16,7 +16,10 @@ const TPL_HOME_TS: &str = include_str!("scaffold/src/routes/home.ts");
 const TPL_HOME_TEST_TS: &str = include_str!("scaffold/src/routes/home.test.ts");
 const TPL_TSCONFIG_JSON: &str = include_str!("scaffold/tsconfig.json");
 const TPL_APP_SCSS: &str = include_str!("scaffold/styles/app.scss");
-const TPL_VARS_SCSS: &str = include_str!("scaffold/styles/_vars.scss");
+const TPL_TOKENS_SCSS: &str = include_str!("scaffold/styles/_tokens.scss");
+const TPL_BASE_SCSS: &str = include_str!("scaffold/styles/_base.scss");
+const TPL_LAYOUT_SCSS: &str = include_str!("scaffold/styles/_layout.scss");
+const TPL_UTILITIES_SCSS: &str = include_str!("scaffold/styles/_utilities.scss");
 const TPL_AGENTS_MD: &str = include_str!("scaffold/AGENTS.md");
 
 /// Write the embedded scaffold into `root_dir`, performing `{{title}}` substitution.
@@ -49,8 +52,20 @@ pub fn write_to(root_dir: &Path, ctx: &ScaffoldContext) -> anyhow::Result<()> {
         root_dir.join("zero-test.d.ts"),
         crate::runtime::ZERO_TEST_TYPES_BODY,
     )?;
+    fs::write(
+        root_dir.join("styles").join("_tokens.scss"),
+        TPL_TOKENS_SCSS,
+    )?;
+    fs::write(root_dir.join("styles").join("_base.scss"), TPL_BASE_SCSS)?;
+    fs::write(
+        root_dir.join("styles").join("_layout.scss"),
+        TPL_LAYOUT_SCSS,
+    )?;
+    fs::write(
+        root_dir.join("styles").join("_utilities.scss"),
+        TPL_UTILITIES_SCSS,
+    )?;
     fs::write(root_dir.join("styles").join("app.scss"), TPL_APP_SCSS)?;
-    fs::write(root_dir.join("styles").join("_vars.scss"), TPL_VARS_SCSS)?;
     fs::write(root_dir.join("AGENTS.md"), TPL_AGENTS_MD)?;
     Ok(())
 }
@@ -77,6 +92,10 @@ mod tests {
 
         let home_ts = fs::read_to_string(root.join("src/routes/home.ts")).unwrap();
         assert!(home_ts.contains("Hello from zero"));
+        assert!(
+            home_ts.contains("class=\"stack pad-xl\""),
+            "home.ts missing design-system classes: {home_ts}"
+        );
 
         let home_test_ts = fs::read_to_string(root.join("src/routes/home.test.ts")).unwrap();
         assert!(!home_test_ts.is_empty());
@@ -94,12 +113,33 @@ mod tests {
         let app_scss = fs::read_to_string(root.join("styles/app.scss")).unwrap();
         assert!(!app_scss.is_empty());
         assert!(
-            app_scss.contains("@use 'vars'"),
-            "app.scss missing @use 'vars'"
+            app_scss.contains("@use 'tokens'"),
+            "app.scss missing @use 'tokens'"
+        );
+        assert!(
+            app_scss.contains("@use 'base'"),
+            "app.scss missing @use 'base'"
+        );
+        assert!(
+            app_scss.contains("@use 'layout'"),
+            "app.scss missing @use 'layout'"
+        );
+        assert!(
+            app_scss.contains("@use 'utilities'"),
+            "app.scss missing @use 'utilities'"
         );
 
-        let vars_scss = fs::read_to_string(root.join("styles/_vars.scss")).unwrap();
-        assert!(!vars_scss.is_empty());
+        let tokens_scss = fs::read_to_string(root.join("styles/_tokens.scss")).unwrap();
+        assert!(!tokens_scss.is_empty());
+
+        let base_scss = fs::read_to_string(root.join("styles/_base.scss")).unwrap();
+        assert!(!base_scss.is_empty());
+
+        let layout_scss = fs::read_to_string(root.join("styles/_layout.scss")).unwrap();
+        assert!(!layout_scss.is_empty());
+
+        let utilities_scss = fs::read_to_string(root.join("styles/_utilities.scss")).unwrap();
+        assert!(!utilities_scss.is_empty());
 
         let agents = fs::read_to_string(root.join("AGENTS.md")).unwrap();
         assert!(!agents.is_empty());
@@ -179,21 +219,33 @@ mod tests {
     }
 
     #[test]
-    fn vars_scss_bridges_tokens_to_root() {
+    fn tokens_scss_declares_tokens_directly() {
         let dir = tempdir().unwrap();
         let root = dir.path().join("web");
         let ctx = ScaffoldContext {
             title: "Tokens app".to_string(),
         };
         write_to(&root, &ctx).unwrap();
-        let vars = fs::read_to_string(root.join("styles/_vars.scss")).unwrap();
+        let tokens = fs::read_to_string(root.join("styles/_tokens.scss")).unwrap();
         assert!(
-            vars.contains("$color-primary:"),
-            "vars.scss missing $color-primary: {vars}"
+            tokens.contains("--color-primary:"),
+            "_tokens.scss missing --color-primary: {tokens}"
         );
         assert!(
-            vars.contains("--color-primary: #{$color-primary}"),
-            "vars.scss missing `:root` bridge for --color-primary: {vars}"
+            !tokens.contains("$color-primary"),
+            "_tokens.scss must not contain SCSS variable $color-primary: {tokens}"
+        );
+        assert!(
+            tokens.contains("@media (prefers-color-scheme: dark)"),
+            "_tokens.scss missing system-preference dark block: {tokens}"
+        );
+        assert!(
+            tokens.contains("[data-theme=\"dark\"]"),
+            "_tokens.scss missing [data-theme=\"dark\"] override: {tokens}"
+        );
+        assert!(
+            tokens.contains("[data-theme=\"light\"]"),
+            "_tokens.scss missing [data-theme=\"light\"] override: {tokens}"
         );
     }
 }

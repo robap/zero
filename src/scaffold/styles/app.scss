@@ -1,12 +1,4 @@
-@use 'vars';
-
-body {
-  font-family: system-ui, sans-serif;
-  padding: vars.$space-md * 2;
-  color: var(--color-text);
-  background: var(--color-bg);
-}
-
-h1 {
-  color: vars.$color-primary;
-}
+@use 'tokens';
+@use 'base';
+@use 'layout';
+@use 'utilities';
