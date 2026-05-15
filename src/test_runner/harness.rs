@@ -120,7 +120,7 @@ pub fn run_file(project_root: &Path, file_abs: &Path) -> FileResult {
 
     // Load, link, and evaluate the module; drive the job queue to completion.
     let eval_promise = module.load_link_evaluate(&mut context);
-    context.run_jobs();
+    let _ = context.run_jobs();
 
     if let PromiseState::Rejected(reason) = eval_promise.state() {
         return FileResult {
@@ -198,7 +198,7 @@ fn walk_describe(
     };
 
     // Run beforeAll hooks for this describe.
-    let before_all = js_get_array(obj, "beforeAll", ctx);
+    let before_all = js_get_array(&obj, "beforeAll", ctx);
     let mut before_all_failed: Option<String> = None;
     for hook in &before_all {
         if let Err(msg) = call_and_drain(hook, ctx) {
@@ -208,7 +208,7 @@ fn walk_describe(
     }
 
     // Walk children.
-    let children = js_get_array(obj, "children", ctx);
+    let children = js_get_array(&obj, "children", ctx);
     for child in &children {
         let child_obj = match child.as_object() {
             Some(o) => o,
@@ -290,7 +290,7 @@ fn walk_describe(
     }
 
     // Run afterAll hooks.
-    let after_all = js_get_array(obj, "afterAll", ctx);
+    let after_all = js_get_array(&obj, "afterAll", ctx);
     for hook in &after_all {
         let _ = call_and_drain(hook, ctx);
     }
@@ -300,7 +300,7 @@ fn walk_describe(
 /// — ancestor hooks are composed by the walk at call time).
 fn collect_hooks(node: &JsValue, hook_name: &str, ctx: &mut Context) -> Vec<JsValue> {
     node.as_object()
-        .map(|obj| js_get_array(obj, hook_name, ctx))
+        .map(|obj| js_get_array(&obj, hook_name, ctx))
         .unwrap_or_default()
 }
 
@@ -319,7 +319,7 @@ fn call_and_drain(fn_val: &JsValue, ctx: &mut Context) -> Result<(), String> {
                 && let Ok(promise) = JsPromise::from_object(obj.clone())
             {
                 loop {
-                    ctx.run_jobs();
+                    let _ = ctx.run_jobs();
                     match promise.state() {
                         PromiseState::Pending => continue,
                         PromiseState::Fulfilled(_) => break,

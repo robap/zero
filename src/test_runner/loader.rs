@@ -149,52 +149,54 @@ impl ZeroModuleLoader {
 
 impl ModuleLoader for ZeroModuleLoader {
     fn load_imported_module(
-        &self,
+        self: std::rc::Rc<Self>,
         referrer: Referrer,
         specifier: JsString,
-        finish_load: Box<dyn FnOnce(JsResult<Module>, &mut Context)>,
-        context: &mut Context,
-    ) {
+        context: &std::cell::RefCell<&mut Context>,
+    ) -> impl std::future::Future<Output = JsResult<Module>> {
         let spec = specifier.to_std_string_escaped();
 
-        // Check cache for well-known keys first.
-        if let Some(m) = self.module_cache.borrow().get(&spec).cloned() {
-            finish_load(Ok(m), context);
-            return;
-        }
+        let result: JsResult<Module> = (|| {
+            if let Some(m) = self.module_cache.borrow().get(&spec).cloned() {
+                return Ok(m);
+            }
 
-        let result: JsResult<Module> = match spec.as_str() {
-            "zero" => {
-                let m = Module::parse(
-                    Source::from_bytes(self.runtime_src.as_bytes()),
-                    None,
-                    context,
-                );
-                if let Ok(ref module) = m {
+            match spec.as_str() {
+                "zero" => {
+                    let mut ctx = context.borrow_mut();
+                    let m = Module::parse(
+                        Source::from_bytes(self.runtime_src.as_bytes()),
+                        None,
+                        &mut ctx,
+                    )?;
                     self.module_cache
                         .borrow_mut()
-                        .insert("zero".to_string(), module.clone());
+                        .insert("zero".to_string(), m.clone());
+                    Ok(m)
                 }
-                m
-            }
-            "zero/test" => {
-                let m = Module::parse(Source::from_bytes(self.test_src.as_bytes()), None, context);
-                if let Ok(ref module) = m {
+                "zero/test" => {
+                    let mut ctx = context.borrow_mut();
+                    let m = Module::parse(
+                        Source::from_bytes(self.test_src.as_bytes()),
+                        None,
+                        &mut ctx,
+                    )?;
                     self.module_cache
                         .borrow_mut()
-                        .insert("zero/test".to_string(), module.clone());
+                        .insert("zero/test".to_string(), m.clone());
+                    Ok(m)
                 }
-                m
+                s if s.starts_with("./") || s.starts_with("../") => {
+                    let mut ctx = context.borrow_mut();
+                    self.resolve_relative(s, &referrer, &mut ctx)
+                }
+                _ => Err(JsError::from_native(JsNativeError::error().with_message(
+                    format!("unsupported module specifier: \"{spec}\""),
+                ))),
             }
-            s if s.starts_with("./") || s.starts_with("../") => {
-                self.resolve_relative(s, &referrer, context)
-            }
-            _ => Err(JsError::from_native(JsNativeError::error().with_message(
-                format!("unsupported module specifier: \"{spec}\""),
-            ))),
-        };
+        })();
 
-        finish_load(result, context);
+        async { result }
     }
 }
 
@@ -234,7 +236,7 @@ mod tests {
         .expect("failed to parse module");
 
         let promise = m.load_link_evaluate(&mut ctx);
-        ctx.run_jobs();
+        let _ = ctx.run_jobs();
 
         // Promise should be fulfilled (not rejected).
         let state = promise.state();
@@ -261,7 +263,7 @@ mod tests {
         .expect("failed to parse");
 
         let promise = m.load_link_evaluate(&mut ctx);
-        ctx.run_jobs();
+        let _ = ctx.run_jobs();
         let state = promise.state();
         assert!(
             !matches!(
@@ -297,7 +299,7 @@ mod tests {
         )
         .expect("failed to parse entry");
         let promise = m.load_link_evaluate(&mut ctx);
-        ctx.run_jobs();
+        let _ = ctx.run_jobs();
         let state = promise.state();
         assert!(
             !matches!(
@@ -328,7 +330,7 @@ mod tests {
         )
         .expect("failed to parse entry");
         let promise = m.load_link_evaluate(&mut ctx);
-        ctx.run_jobs();
+        let _ = ctx.run_jobs();
         let state = promise.state();
         assert!(
             !matches!(
@@ -355,7 +357,7 @@ mod tests {
         )
         .expect("entry parse ok");
         let promise = m.load_link_evaluate(&mut ctx);
-        ctx.run_jobs();
+        let _ = ctx.run_jobs();
         let state = promise.state();
         assert!(
             matches!(
@@ -375,7 +377,7 @@ mod tests {
         let m = Module::parse(Source::from_bytes(b"import 'lodash';"), None, &mut ctx)
             .expect("parsed ok");
         let promise = m.load_link_evaluate(&mut ctx);
-        ctx.run_jobs();
+        let _ = ctx.run_jobs();
         let state = promise.state();
         assert!(
             matches!(
