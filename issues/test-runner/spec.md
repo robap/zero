@@ -221,10 +221,11 @@ The runner catches and records.
   system inserts; returning the first element matches what
   `find`/`text` callers expect.)
 - `find(el, selector)` — wrapper over `el.querySelector(selector)`.
-  The dom-shim currently supports tag-name and `#id` selectors;
-  anything else throws from the shim. That limitation is inherited
-  by this slice — the plan should not silently extend the shim's
-  selector grammar.
+  The dom-shim now supports compound selectors composed of tag, `#id`,
+  `.class`, `[attr]`, and `[attr=value]` (quoted or unquoted) parts
+  against a single element (e.g. `button.btn[type=submit]`). Combinators
+  (descendant, child, sibling), pseudo-classes, and attribute operators
+  beyond `=` are still deferred; see `issues/test-helpers/spec.md`.
 - `findAll(el, selector)` — wrapper over `el.querySelectorAll`.
 - `text(el, selector?)` — if `selector` is omitted, returns the
   concatenated text content of all `nodeType === 3` descendants of
@@ -441,7 +442,7 @@ can complete and the developer sees all the wreckage.
 - A `--only` / `.only` mechanism. Easy to add later; the scaffold
   doesn't need it yet.
 - A `--skip` / `.skip` mechanism. Same.
-- Mocking utilities (spies, stubs, module mocks).
+- Mocking utilities (module mocks, deep stubs). Spies ship in the `zero/test` selector-grammar + spy slice; see `issues/test-helpers/spec.md`.
 - A `vi`-like global test API (Vitest-style globals). Imports only.
 - IDE/editor protocol integration (running a single test from a
   VS Code lens, etc.).

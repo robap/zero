@@ -56,6 +56,7 @@ pub const ZERO_TEST_EXPORTS: &[&str] = &[
     "text",
     "fire",
     "cleanup",
+    "spy",
     "__getTestTree__",
     "__resetTestTree__",
 ];

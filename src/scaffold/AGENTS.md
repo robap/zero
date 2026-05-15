@@ -65,7 +65,7 @@ import {
 import {
   describe, it, expect,
   beforeAll, afterAll, beforeEach, afterEach,
-  render, find, findAll, text, fire, cleanup,
+  render, find, findAll, text, fire, cleanup, spy,
 } from "zero/test";
 ```
 
@@ -670,7 +670,7 @@ it("renders and reacts to clicks", () => {
 ```
 
 - `render(templateResult, { state? })` — commits the template into a fresh container and returns it. The optional `state` map plays the role of `app.state` for the duration of the render; `inject(key)` resolves against this map.
-- `find(el, selector)` / `findAll(el, selector)` — `querySelector` / `querySelectorAll` on the lightweight DOM.
+- `find(el, selector)` / `findAll(el, selector)` — `querySelector` / `querySelectorAll` on the lightweight DOM. Selectors compose tag, `#id`, `.class`, `[attr]`, and `[attr=value]` (quoted or unquoted) parts against a single element (e.g. `button.btn[type=submit]`). Combinators (descendant, child, sibling), pseudo-classes, and attribute operators beyond `=` are not supported.
 - `text(el, selector?)` — concatenated text content. With a selector, queries from `el` first and throws if nothing matches.
 - `fire(el, type, data?)` — dispatches a synthetic event. The synthetic event object provides `preventDefault`, `stopPropagation`, and `defaultPrevented`; merge in extra fields (`key`, `target`, etc.) via `data`.
 - `cleanup()` — disposes every scope created by `render` since the last `cleanup` and unregisters the test's state map. Wire it into `afterEach`.
@@ -686,6 +686,10 @@ it("renders and reacts to clicks", () => {
 - `.toContain(item)` — substring (for strings) or element membership (for arrays).
 - `.toThrow(message?)` — `actual` must be a function. Asserts it throws; if `message` is given, the thrown error's message must contain it.
 - `.toBeTemplateResult()` — value has the shape of a `TemplateResult` (returned by `html\`\``).
+- `.toHaveBeenCalled()` — `actual` must be a spy. Passes if the spy recorded at least one call.
+- `.toHaveBeenCalledTimes(n)` — passes if the spy was called exactly `n` times. Failure message includes recorded `callCount` and the full call log.
+- `.toHaveBeenCalledWith(...args)` — passes if any recorded call's args deep-equal `args` (same algorithm as `.toEqual`).
+- `.toHaveBeenLastCalledWith(...args)` — passes if only the most recent call's args deep-equal `args`.
 
 `expect().toMatchSnapshot()` is **not implemented yet** — it currently throws.
 
@@ -714,6 +718,42 @@ describe("Home", () => {
 ```
 
 The scaffold's `src/routes/home.test.ts` is the canonical shape — start from there.
+
+### Spies
+
+`spy(impl?)` returns a callable that records every invocation. Pass it as a prop, callback, or argument anywhere a function is expected; assertions about how it was called use the `toHaveBeenCalled*` matchers above.
+
+```js
+import { it, expect, spy, render, find, fire, cleanup, afterEach } from "zero/test";
+import Button from "./Button.ts";
+
+afterEach(cleanup);
+
+it("calls onSelect on click", () => {
+  const onSelect = spy();
+  const el = render(Button({ label: "Go", onSelect }));
+  fire(find(el, "button"), "click");
+  expect(onSelect).toHaveBeenCalledTimes(1);
+  expect(onSelect).toHaveBeenLastCalledWith();
+});
+```
+
+Properties on a spy (all live, read every call):
+
+- `.calls` — array of argument-arrays, one per invocation.
+- `.callCount` — `calls.length`.
+- `.results` — array of `{ type: "return" | "throw", value }`, one per invocation.
+- `.instances` — array of `this`-bindings observed.
+
+Methods (all return the spy for chaining):
+
+- `.mockReturnValue(v)` — subsequent calls return `v`.
+- `.mockResolvedValue(v)` — subsequent calls return `Promise.resolve(v)`.
+- `.mockRejectedValue(e)` — subsequent calls return `Promise.reject(e)`.
+- `.mockImplementation(fn)` — replace the underlying impl.
+- `.reset()` — clear `.calls`, `.results`, `.instances`. The implementation is preserved; if you need a fresh impl too, construct a new spy.
+
+Spies are plain values, not registered resources. `cleanup()` does **not** reset them — wire a `beforeEach` if a spy is shared across tests in a `describe`.
 
 ### Testing reactivity directly
 

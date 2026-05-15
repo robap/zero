@@ -871,7 +871,7 @@ zero test --update-snapshots # refresh snapshots
 ### Test API
 
 ```ts
-import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from "z/test"
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, spy } from "z/test"
 ```
 
 ### DOM Helpers
@@ -913,6 +913,19 @@ it("increments on click", () => {
   expect(text(el, "p")).toBe("Count: 0")
   fire(find(el, "button"), "click")
   expect(text(el, "p")).toBe("Count: 1")
+})
+```
+
+### Spies
+
+`spy(impl?)` records every call. Pass it as a prop or callback; assert with `toHaveBeenCalled*` matchers.
+
+```ts
+it("calls onSelect on click", () => {
+  const onSelect = spy()
+  const el = render(Button({ onSelect }))
+  fire(find(el, "button"), "click")
+  expect(onSelect).toHaveBeenCalledTimes(1)
 })
 ```
 
@@ -1169,6 +1182,8 @@ State machines as a first-class primitive are deferred indefinitely. See Section
 - [x] `describe`, `it`, `expect` API
 - [x] Lightweight DOM implementation
 - [x] `render()`, `find()`, `text()`, `fire()`, `cleanup()`
+- [x] Compound selector grammar in dom-shim
+- [x] `spy()` primitive + spy matchers (`toHaveBeenCalled`, `toHaveBeenCalledTimes`, `toHaveBeenCalledWith`, `toHaveBeenLastCalledWith`)
 - [ ] `--watch` mode
 - [ ] `--coverage`
 - [ ] Snapshot testing

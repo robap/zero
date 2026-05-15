@@ -206,6 +206,55 @@ export function cleanup() {
   _setCurrentApp(null);
 }
 
+/** @internal */
+const _SPY = Symbol("zero/test:spy");
+
+/**
+ * Create a spy function. Records every call (args, result, thrown error, this-binding)
+ * and optionally forwards to `impl`.
+ * @template {(...args: any[]) => any} T
+ * @param {T} [impl]
+ * @returns {T & { calls: any[][], callCount: number, results: Array<{type: "return"|"throw", value: unknown}>, instances: unknown[], mockReturnValue(v: unknown): any, mockResolvedValue(v: unknown): any, mockRejectedValue(e: unknown): any, mockImplementation(fn: Function): any, reset(): any }}
+ */
+export function spy(impl) {
+  let _impl = impl;
+  function fn(...args) {
+    fn.calls.push(args);
+    fn.instances.push(this);
+    if (_impl == null) {
+      fn.results.push({ type: "return", value: undefined });
+      return undefined;
+    }
+    try {
+      const value = _impl.apply(this, args);
+      fn.results.push({ type: "return", value });
+      return value;
+    } catch (e) {
+      fn.results.push({ type: "throw", value: e });
+      throw e;
+    }
+  }
+  fn.calls = [];
+  fn.results = [];
+  fn.instances = [];
+  Object.defineProperty(fn, "callCount", {
+    get() { return fn.calls.length; },
+    enumerable: true,
+  });
+  Object.defineProperty(fn, _SPY, { value: true });
+  fn.mockReturnValue = v => { _impl = () => v; return fn; };
+  fn.mockResolvedValue = v => { _impl = () => Promise.resolve(v); return fn; };
+  fn.mockRejectedValue = e => { _impl = () => Promise.reject(e); return fn; };
+  fn.mockImplementation = newImpl => { _impl = newImpl; return fn; };
+  fn.reset = () => {
+    fn.calls.length = 0;
+    fn.results.length = 0;
+    fn.instances.length = 0;
+    return fn;
+  };
+  return fn;
+}
+
 // ---------------------------------------------------------------------------
 // Assertions
 // ---------------------------------------------------------------------------
@@ -271,9 +320,10 @@ function _deepEqual(a, b) {
 /**
  * Create a matcher object for `actual`.
  * @param {unknown} actual
- * @returns {{ toBe(expected: unknown): void, toEqual(expected: unknown): void, toBeTruthy(): void, toBeFalsy(): void, toBeNull(): void, toContain(item: unknown): void, toThrow(message?: string): void, toBeTemplateResult(): void, toMatchSnapshot(): void }}
+ * @returns {{ toBe(expected: unknown): void, toEqual(expected: unknown): void, toBeTruthy(): void, toBeFalsy(): void, toBeNull(): void, toContain(item: unknown): void, toThrow(message?: string): void, toBeTemplateResult(): void, toMatchSnapshot(): void, toHaveBeenCalled(): void, toHaveBeenCalledTimes(n: number): void, toHaveBeenCalledWith(...args: unknown[]): void, toHaveBeenLastCalledWith(...args: unknown[]): void }}
  */
 export function expect(actual) {
+  const _isSpy = v => v != null && typeof v === "function" && Array.isArray(v.calls);
   return {
     toBe(expected) {
       if (actual !== expected) {
@@ -359,6 +409,52 @@ export function expect(actual) {
     },
     toMatchSnapshot() {
       throw new Error("toMatchSnapshot: snapshot testing is not in this slice yet");
+    },
+    toHaveBeenCalled() {
+      if (!_isSpy(actual)) {
+        throw new Error(`expect(...).toHaveBeenCalled: value is not a spy`);
+      }
+      if (actual.callCount === 0) {
+        throw new Error(`expect(spy).toHaveBeenCalled(): spy was not called`);
+      }
+    },
+    toHaveBeenCalledTimes(n) {
+      if (!_isSpy(actual)) {
+        throw new Error(`expect(...).toHaveBeenCalledTimes: value is not a spy`);
+      }
+      if (actual.callCount !== n) {
+        throw new Error(
+          `expect(spy).toHaveBeenCalledTimes(${n}): spy was called ${actual.callCount} time(s)\n` +
+          `  calls: ${_pretty(actual.calls)}`,
+        );
+      }
+    },
+    toHaveBeenCalledWith(...expectedArgs) {
+      if (!_isSpy(actual)) {
+        throw new Error(`expect(...).toHaveBeenCalledWith: value is not a spy`);
+      }
+      const hit = actual.calls.some(args => _deepEqual(args, expectedArgs));
+      if (!hit) {
+        throw new Error(
+          `expect(spy).toHaveBeenCalledWith(${expectedArgs.map(a => _pretty(a)).join(", ")}): no recorded call matched\n` +
+          `  recorded calls (${actual.callCount}): ${_pretty(actual.calls)}`,
+        );
+      }
+    },
+    toHaveBeenLastCalledWith(...expectedArgs) {
+      if (!_isSpy(actual)) {
+        throw new Error(`expect(...).toHaveBeenLastCalledWith: value is not a spy`);
+      }
+      if (actual.callCount === 0) {
+        throw new Error(`expect(spy).toHaveBeenLastCalledWith(...): spy was never called`);
+      }
+      const lastArgs = actual.calls[actual.callCount - 1];
+      if (!_deepEqual(lastArgs, expectedArgs)) {
+        throw new Error(
+          `expect(spy).toHaveBeenLastCalledWith(${expectedArgs.map(a => _pretty(a)).join(", ")}): last call did not match\n` +
+          `  last call args: ${_pretty(lastArgs)}`,
+        );
+      }
     },
   };
 }

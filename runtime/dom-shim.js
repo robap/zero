@@ -3,14 +3,120 @@ const TEXT_NODE = 3;
 const COMMENT_NODE = 8;
 const DOCUMENT_FRAGMENT_NODE = 11;
 
+/**
+ * Parse a compound selector string into a descriptor object.
+ * @param {string} selector
+ * @returns {{ tag: string|null, id: string|null, classes: string[], attrs: Array<{name: string, value: string|null}> }}
+ */
+function _parseSelector(selector) {
+  if (selector === "") throw new Error("dom-shim: empty selector");
+  const result = { tag: null, id: null, classes: [], attrs: [] };
+  let i = 0;
+
+  /** @param {number} pos @param {string} reason */
+  function malformed(pos, reason) {
+    throw new Error(`dom-shim: malformed selector "${selector}" at position ${pos} (${reason})`);
+  }
+
+  if (i < selector.length && /[a-zA-Z]/.test(selector[i])) {
+    const start = i++;
+    while (i < selector.length && /[a-zA-Z0-9]/.test(selector[i])) i++;
+    result.tag = selector.slice(start, i).toLowerCase();
+  }
+
+  while (i < selector.length) {
+    const ch = selector[i];
+    if (ch === '#') {
+      const pos = i++;
+      if (result.id !== null) malformed(pos, "duplicate id");
+      const start = i;
+      while (i < selector.length && /[a-zA-Z0-9_-]/.test(selector[i])) i++;
+      if (i === start) malformed(pos, "expected id after #");
+      result.id = selector.slice(start, i);
+    } else if (ch === '.') {
+      const pos = i++;
+      const start = i;
+      while (i < selector.length && /[a-zA-Z0-9_-]/.test(selector[i])) i++;
+      if (i === start) malformed(pos, "expected class name after .");
+      result.classes.push(selector.slice(start, i));
+    } else if (ch === '[') {
+      const pos = i++;
+      if (i >= selector.length || !/[a-zA-Z]/.test(selector[i])) {
+        malformed(pos, "expected attribute name after [");
+      }
+      const nameStart = i++;
+      while (i < selector.length && /[a-zA-Z0-9_:-]/.test(selector[i])) i++;
+      const name = selector.slice(nameStart, i).toLowerCase();
+      if (i >= selector.length) malformed(pos, "unclosed attribute bracket");
+      if (selector[i] === ']') {
+        i++;
+        result.attrs.push({ name, value: null });
+      } else if (selector[i] === '=') {
+        i++;
+        if (i >= selector.length) malformed(i - 1, "expected value after =");
+        let value;
+        if (selector[i] === '"') {
+          i++;
+          const valStart = i;
+          while (i < selector.length && selector[i] !== '"') i++;
+          if (i >= selector.length) malformed(pos, "unclosed attribute bracket");
+          value = selector.slice(valStart, i);
+          i++;
+          if (i >= selector.length || selector[i] !== ']') malformed(i, "expected ] after attribute value");
+          i++;
+        } else if (selector[i] === "'") {
+          i++;
+          const valStart = i;
+          while (i < selector.length && selector[i] !== "'") i++;
+          if (i >= selector.length) malformed(pos, "unclosed attribute bracket");
+          value = selector.slice(valStart, i);
+          i++;
+          if (i >= selector.length || selector[i] !== ']') malformed(i, "expected ] after attribute value");
+          i++;
+        } else {
+          const valStart = i;
+          while (i < selector.length && selector[i] !== ']') i++;
+          if (i >= selector.length) malformed(pos, "unclosed attribute bracket");
+          value = selector.slice(valStart, i);
+          i++;
+        }
+        result.attrs.push({ name, value });
+      } else {
+        malformed(i, `unexpected character '${selector[i]}' in attribute selector`);
+      }
+    } else {
+      malformed(i, `unexpected character '${ch}'`);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * @param {object} node
+ * @param {string} selector
+ * @returns {boolean}
+ */
 function _matchSelector(node, selector) {
-  if (selector.startsWith('#')) {
-    return node.getAttribute != null && node.getAttribute('id') === selector.slice(1);
+  const parsed = _parseSelector(selector);
+  if (node.nodeType !== ELEMENT_NODE) return false;
+  if (parsed.tag != null) {
+    if (node.tagName == null || node.tagName.toLowerCase() !== parsed.tag) return false;
   }
-  if (/^[a-z][a-z0-9]*$/.test(selector)) {
-    return node.tagName != null && node.tagName.toLowerCase() === selector;
+  if (parsed.id != null) {
+    if (!node.getAttribute || node.getAttribute('id') !== parsed.id) return false;
   }
-  throw new Error(`dom-shim: unsupported selector "${selector}"`);
+  if (parsed.classes.length > 0) {
+    const cls = node.getAttribute ? node.getAttribute('class') : null;
+    if (cls == null) return false;
+    const tokens = cls.split(/\s+/).filter(Boolean);
+    for (const c of parsed.classes) if (!tokens.includes(c)) return false;
+  }
+  for (const { name, value } of parsed.attrs) {
+    if (!node.hasAttribute || !node.hasAttribute(name)) return false;
+    if (value != null && node.getAttribute(name) !== value) return false;
+  }
+  return true;
 }
 
 function _walkDescendants(root, fn) {
@@ -171,6 +277,13 @@ function createElement(tagName) {
     insertBefore(child, ref) { return _insertBefore(this, child, ref); },
     removeChild(child) { return _removeChild(this, child); },
     cloneNode(deep = false) { return _cloneNode(this, deep); },
+
+    // No-ops present on real HTMLElement; component code routinely calls these
+    // after DOM mutations and they must not throw under the test shim.
+    focus() {},
+    blur() {},
+    click() {},
+    scrollIntoView() {},
   };
   _applySiblingGetters(el, () => el.parentNode);
   return el;

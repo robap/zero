@@ -7,6 +7,19 @@ declare module "zero/test" {
   export type TestFn = () => void | Promise<void>;
   export type HookFn = () => void | Promise<void>;
 
+  export interface SpyFn<T extends (...args: any[]) => any = (...args: any[]) => any> {
+    (...args: Parameters<T>): ReturnType<T>;
+    calls: Array<Parameters<T>>;
+    callCount: number;
+    results: Array<{ type: "return" | "throw"; value: unknown }>;
+    instances: unknown[];
+    mockReturnValue(value: unknown): SpyFn<T>;
+    mockResolvedValue(value: unknown): SpyFn<T>;
+    mockRejectedValue(error: unknown): SpyFn<T>;
+    mockImplementation(fn: (...args: any[]) => any): SpyFn<T>;
+    reset(): SpyFn<T>;
+  }
+
   export function describe(name: string, fn: () => void): void;
   export function it(name: string, fn: TestFn): void;
   export function beforeEach(fn: HookFn): void;
@@ -24,6 +37,10 @@ declare module "zero/test" {
     toBeDefined(): void;
     toContain(expected: unknown): void;
     toThrow(expected?: unknown): void;
+    toHaveBeenCalled(): void;
+    toHaveBeenCalledTimes(n: number): void;
+    toHaveBeenCalledWith(...args: unknown[]): void;
+    toHaveBeenLastCalledWith(...args: unknown[]): void;
   }
 
   export function expect(actual: unknown): Matcher;
@@ -45,4 +62,6 @@ declare module "zero/test" {
     data?: Record<string, unknown>,
   ): void;
   export function cleanup(): void;
+  export function spy(): SpyFn;
+  export function spy<T extends (...args: any[]) => any>(impl: T): SpyFn<T>;
 }
