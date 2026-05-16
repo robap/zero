@@ -61,11 +61,15 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
         .canonicalize()
         .unwrap_or_else(|_| cwd.join(&config.project.root));
 
-    if let Err(e) = std::fs::write(root.join("zero.d.ts"), ZERO_TYPES_BODY) {
-        eprintln!("zero dev: failed to write zero.d.ts: {e}");
+    let dot_zero = root.join(".zero");
+    if let Err(e) = std::fs::create_dir_all(&dot_zero) {
+        eprintln!("zero dev: failed to create .zero/: {e}");
     }
-    if let Err(e) = std::fs::write(root.join("zero-test.d.ts"), ZERO_TEST_TYPES_BODY) {
-        eprintln!("zero dev: failed to write zero-test.d.ts: {e}");
+    if let Err(e) = std::fs::write(dot_zero.join("zero.d.ts"), ZERO_TYPES_BODY) {
+        eprintln!("zero dev: failed to write .zero/zero.d.ts: {e}");
+    }
+    if let Err(e) = std::fs::write(dot_zero.join("zero-test.d.ts"), ZERO_TEST_TYPES_BODY) {
+        eprintln!("zero dev: failed to write .zero/zero-test.d.ts: {e}");
     }
 
     let proxy = config

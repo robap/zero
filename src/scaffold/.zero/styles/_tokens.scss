@@ -4,10 +4,9 @@
 // override the system preference per-subtree, set `data-theme="light"` or
 // `data-theme="dark"` on an ancestor element — canonically `<html>`.
 //
-// This file is user-owned after `zero init`. Edit, delete, or replace it
-// freely. The future `zero` component library assumes the tokens declared
-// here exist; removing `_tokens.scss` will break components that read
-// `--color-primary`, `--space-md`, etc.
+// This file lives under `.zero/` and is framework-owned — it is rewritten
+// by `zero update`. Do not edit. To override a token, re-declare the
+// custom property in your `styles/app.scss` after the `@use` line.
 
 :root {
   // Spacing

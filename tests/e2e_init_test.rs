@@ -9,6 +9,7 @@ fn scaffold_temp_project() -> tempfile::TempDir {
     Command::cargo_bin("zero")
         .unwrap()
         .arg("init")
+        .arg("--yes")
         .current_dir(tmp.path())
         .assert()
         .success();

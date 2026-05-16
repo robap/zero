@@ -1,7 +1,7 @@
 //! Interactive prompts for `zero init`.
 
-use dialoguer::Input;
 use dialoguer::theme::ColorfulTheme;
+use dialoguer::{Confirm, Input};
 
 /// Settings gathered by the `zero init` wizard.
 #[derive(Debug, Clone)]
@@ -76,6 +76,24 @@ pub fn prompt_user() -> anyhow::Result<Answers> {
         proxy,
         out,
     })
+}
+
+/// Prompt the user with `prompt_text` followed by ` [Y/n] `. Defaults to
+/// Yes on empty input. Returns `Ok(true)` if the user accepts, `Ok(false)`
+/// if the user declines.
+///
+/// # Parameters
+/// - `prompt_text`: the question to ask (e.g. `"Proceed?"`).
+///
+/// # Returns
+/// `Ok(true)` if accepted, `Ok(false)` if declined, an error on I/O failure.
+pub fn confirm_default_yes(prompt_text: &str) -> anyhow::Result<bool> {
+    let theme = ColorfulTheme::default();
+    let accepted = Confirm::with_theme(&theme)
+        .with_prompt(prompt_text)
+        .default(true)
+        .interact()?;
+    Ok(accepted)
 }
 
 /// Reject path segments that contain separators or escape constructs.

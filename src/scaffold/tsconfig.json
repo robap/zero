@@ -10,5 +10,5 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["src", "zero.d.ts", "zero-test.d.ts"]
+  "include": ["src", ".zero/zero.d.ts", ".zero/zero-test.d.ts"]
 }

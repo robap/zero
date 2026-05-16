@@ -25,6 +25,7 @@ Usage: zer <command> [options]
 
 Commands:
   zero new <name>             Scaffold a new project
+  zero update                 Refresh framework files in .zero/
   zero dev                    Start dev server with HMR
   zero build                  Production build
   zero test [pattern]         Run tests
@@ -46,13 +47,14 @@ Global Options:
 
 ### Subcommand Details
 
-#### `zero new <name>`
+#### `zero new <name>` / `zero init`
 
-Scaffolds a new project. No interactive prompts, no template selection. One structure, one convention.
+Scaffolds a new project. `zero init` is the implemented entry point today; it walks an interactive prompt for `zero.toml`, then prints a plan of the files it will create and waits for confirmation. Pass `--yes` / `-y` to skip the prompt — intended for scripts and CI.
 
 ```
 zero new my-app       → Create in ./my-app
 zero new .            → Scaffold in current directory
+zero init --yes       → Scaffold non-interactively in the current zero.toml's project root
 ```
 
 Generated structure:
@@ -70,6 +72,32 @@ my-app/
     ├── vars.css            # CSS custom properties
     └── app.css             # application styles
 ```
+
+#### `zero update`
+
+Refreshes framework files in `.zero/` from the embedded binary. Compares
+each file under `.zero/` against what the current CLI version would emit
+and produces an Add / Update / Remove plan. Prints the plan, asks for
+confirmation, and applies the operations the user accepts. Never writes
+outside `.zero/`.
+
+```
+zero update              Print plan, prompt [Y/n/i], then apply
+zero update --yes, -y    Skip the top-level prompt and apply everything
+```
+
+At the top-level `Apply all? [Y/n/i]` prompt:
+
+- `Y` (default): apply every operation.
+- `n`: abort, no changes made.
+- `i`: enter interactive mode — `y`/`n` per operation, followed by a
+  final `Apply? [Y/n]` re-confirm on the filtered plan.
+
+If `.zero/` is already byte-identical to the binary's manifest, `zero
+update` prints `"zero update: .zero/ is already up to date."` and exits
+0. Declined operations are not an error: exit code is always 0 whether
+the user accepted everything, nothing, or some subset. CI scripts that
+want strictness should use `--yes`.
 
 #### `zero dev`
 
@@ -827,7 +855,7 @@ The only thing `zero build` does with CSS — compiled or not — is hash it, co
 
 ### 7.1 Design system
 
-The scaffold ships a built-in design-system layer in `styles/`: five files (`_tokens.scss`, `_base.scss`, `_layout.scss`, `_utilities.scss`, `app.scss`) that establish a stable foundation for the future component library. After `zero init`, the files are user-owned — editable, deletable, or wholesale replaceable. There is no upgrade path; the framework never patches scaffolded files in-place.
+The scaffold ships a built-in design-system layer in `.zero/styles/`: four partials (`_tokens.scss`, `_base.scss`, `_layout.scss`, `_utilities.scss`) plus an aggregate (`zero.scss`) that `@use`'s them. The user's `styles/app.scss` is a one-shot, user-owned entry that imports the aggregate via `@use '../.zero/styles/zero';`. The four partials are framework-owned — they live under the hidden, `.gitignore`-d `.zero/` directory and refresh via `zero update`.
 
 **Token categories.** Seven categories live in `_tokens.scss`, all declared as CSS custom properties on `:root`:
 
@@ -850,7 +878,7 @@ Dark-mode variants override only the seven color tokens.
 
 **Theme switching.** `prefers-color-scheme: dark` selects dark mode by default. Set `data-theme="light"` or `data-theme="dark"` on `<html>` (or any ancestor) to override the system preference. There is no JavaScript theme-toggle helper.
 
-**Distribution model.** `zero init` writes the partials and leaves them alone. Users own them after init. The future `zero` component library assumes these classes and tokens exist; users who delete the design system accept that downstream components won't render correctly.
+**Distribution model.** Framework-owned and regenerable. `zero init` writes the partials into `.zero/styles/`; `zero update` refreshes them when the CLI ships new content. Users override tokens by re-declaring CSS custom properties in `styles/app.scss` after the framework `@use` line — overriding by re-declaration is preserved, just no longer by editing the file that declares the tokens.
 
 ---
 
@@ -1187,6 +1215,7 @@ State machines as a first-class primitive are deferred indefinitely. See Section
 - [ ] `--watch` mode
 - [ ] `--coverage`
 - [ ] Snapshot testing
+- [ ] Mutation testing
 
 ### Phase 6 — CLI & Dev Server
 - [x] `zero init` scaffolding
@@ -1199,6 +1228,44 @@ State machines as a first-class primitive are deferred indefinitely. See Section
 - [ ] `zero gen` code generation
 - [ ] `zero preview` static server
 
+### Phase 7 — Framework Files & Upgrade Path (next; specified in `issues/update/spec.md`)
+- [x] `.zero/` directory: hidden, gitignored, framework-owned
+- [x] Move `zero.d.ts`, `zero-test.d.ts`, `_tokens.scss`, `_base.scss`, `_layout.scss`, `_utilities.scss`, and the framework SCSS aggregate (`zero.scss`) into `.zero/`
+- [x] User's `styles/app.scss` becomes the one-shot, user-owned entry that imports the framework aggregate via relative path
+- [x] `zero update` command: rewrites `.zero/` from the embedded binary; never touches user files
+- [x] Pre-flight plan + confirmation on `zero init` and `zero update`
+- [x] Per-operation accept/reject in `zero update` interactive mode (`Y/n/i`)
+- [x] `--yes` / `-y` flag on both commands for scripts/CI
+
+### Phase 8 — Design System Expansion
+- [ ] Alignment utilities: `align-start`, `align-center`, `align-end`, `align-stretch`, `align-baseline` (sets `align-items`)
+- [ ] Justify utilities: `justify-start`, `justify-center`, `justify-end`, `justify-between`, `justify-around`, `justify-evenly` (sets `justify-content`)
+- [ ] Audit for other primitive utilities the layout primitives commonly need (text alignment, flex-direction overrides) and add only the ones with clear demand
+- [ ] Distribution rides on Phase 7: new partials land under `.zero/styles/`, refresh via `zero update`
+
+### Phase 9 — Component Library
+- [ ] Set of ready-to-use components built on the design system (buttons, inputs, etc. — exact roster TBD in a dedicated spec)
+- [ ] Components are plain function components and consume only `var(--*)` tokens — they never embed colors, spacing, or radii directly
+- [ ] Distribution model decided in the component-library spec — likely also under `.zero/` so component code is regenerable
+- [ ] Documented in `AGENTS.md` and `zero-framework-spec.md`
+- [ ] Tested with `zero test`
+
+### Phase 10 — Internal Quality
+- [ ] Identify oversized functions across the Rust codebase (target: any function above ~80 lines, or with high cyclomatic complexity)
+- [ ] Refactor into smaller units with named intermediate steps; cover the seams with unit tests
+- [ ] Candidates to investigate first: `src/scaffold.rs::write_to` (will be split as part of Phase 7), `src/build/bundler.rs`, `src/dev/server.rs`, anything inside `src/test_runner/`
+- [ ] No behavioral changes — purely structural
+
+### Phase 11 - Decorators
+- [ ] Defining Routes
+- [ ] Injecting Signals
+- [ ] other?
+
+### Phase 12 - Best Practices
+- [ ] Add many more examples of a well architeced applicatiop which uses Zero.
+- [ ] Establish best practices for managing data using signals (organization, enums for key names, etc).
+- [ ] Establish best practices for file structure and Route organization.
+
 ---
 
 ## 13. Key Design Decisions Summary
@@ -1210,7 +1277,8 @@ State machines as a first-class primitive are deferred indefinitely. See Section
 | Reactivity | Signals with auto-tracking | No dependency arrays, no re-render, granular updates |
 | DOM strategy | Direct DOM creation, no virtual DOM | Smaller runtime, no diffing algorithm needed |
 | CSS | SCSS authoring layer; CSS variables for runtime theming | Variables and nesting are table stakes; runtime theming stays in plain CSS for zero-cost dynamism |
-| Design system | Built-in scaffold layer with tokens, themes, layout primitives | Common patterns shouldn't be hand-rolled per project; future component library has a stable foundation |
+| Design system | Built-in scaffold layer with tokens, themes, layout primitives | Framework-owned regenerable layer under `.zero/`, refreshed by `zero update` |
+| Framework-file boundary | Hidden `.zero/` directory, regenerated by `zero update` | Prevents accidental edits to framework-shipped files; gives projects a versioned upgrade path |
 | Entry point | Developer-owned index.html | No magic, no hidden HTML generation, full control |
 | Boot | `app.run("#app")` in index.html | Explicit, visible, debuggable |
 | Routing | Explicit `app.route()` calls | No file-system conventions, ordered matching, readable |

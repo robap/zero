@@ -16,6 +16,7 @@ fn js_project_after_renaming_scaffold_files() {
     assert_cmd::Command::cargo_bin("zero")
         .unwrap()
         .arg("init")
+        .arg("--yes")
         .current_dir(tmp.path())
         .assert()
         .success();

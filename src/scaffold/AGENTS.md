@@ -27,9 +27,17 @@ The generated project layout:
 ```
 .
 ├── AGENTS.md                # this file
+├── .gitignore               # ignores .zero/ and dist/
 ├── tsconfig.json            # editor-only TS config; the CLI ignores it
-├── zero.d.ts                # type surface for `"zero"` (auto-managed)
-├── zero-test.d.ts           # type surface for `"zero/test"` (auto-managed)
+├── .zero/                   # framework-owned, refreshed by `zero update` — do not edit
+│   ├── zero.d.ts            # type surface for `"zero"`
+│   ├── zero-test.d.ts       # type surface for `"zero/test"`
+│   └── styles/
+│       ├── _tokens.scss     # design tokens + theme variants
+│       ├── _base.scss       # minimal reset, token-bound body
+│       ├── _layout.scss     # six layout primitives
+│       ├── _utilities.scss  # gap-*, pad-*, border-* utilities
+│       └── zero.scss        # aggregate that @use's the four partials
 ├── index.html               # entry HTML; <script> tags are injected automatically
 ├── src/
 │   ├── app.ts               # builds and starts the App
@@ -37,11 +45,7 @@ The generated project layout:
 │       ├── home.ts          # default route component
 │       └── home.test.ts     # unit test for the home route
 └── styles/
-    ├── _tokens.scss        # SCSS partial — design tokens + theme variants
-    ├── _base.scss          # SCSS partial — minimal reset, token-bound body
-    ├── _layout.scss        # SCSS partial — six layout primitives
-    ├── _utilities.scss     # SCSS partial — gap-*, pad-*, border-* utilities
-    └── app.scss            # entry stylesheet — @use 'tokens'; ... 'utilities';
+    └── app.scss            # @use '../.zero/styles/zero'; — add your styles here
 ```
 
 ### JavaScript projects
@@ -509,7 +513,7 @@ The framework forbids scoped styles, CSS modules, and CSS-in-JS. SCSS gives you 
 
 ### Design system
 
-The scaffold ships a built-in CSS design system: tokens, theme switching, layout primitives, and utility classes. The system lives in four partials, all `@use`-d from `app.scss`:
+The scaffold ships a built-in CSS design system: tokens, theme switching, layout primitives, and utility classes. The system lives in four partials plus an aggregate, all framework-owned in `.zero/styles/`, brought in by your `styles/app.scss` via `@use '../.zero/styles/zero';`:
 
 | Partial | What it declares |
 | --- | --- |
@@ -518,7 +522,7 @@ The scaffold ships a built-in CSS design system: tokens, theme switching, layout
 | `_layout.scss` | Six layout primitive classes: `cluster`, `stack`, `frame`, `split`, `flank`, `grid`. |
 | `_utilities.scss` | Fifteen utility classes: `gap-{xs,sm,md,lg,xl}`, `pad-{xs,sm,md,lg,xl}`, `border`, `border-{t,r,b,l}`. |
 
-After `zero init`, the partials are normal project files. Edit them, delete them, or replace them. The framework does not regenerate or upgrade them. The future `zero` component library assumes the classes and tokens declared here exist — deleting layers downstream of `_tokens.scss` (e.g. `_utilities.scss`) is safe; deleting `_tokens.scss` itself will break components that read `--color-primary`, `--space-md`, etc.
+These partials live under `.zero/styles/` and are framework-owned — `zero update` refreshes them; do not edit them. To override a token, re-declare the CSS custom property in your `styles/app.scss` after the `@use` line. To add new utility classes, write them in `styles/app.scss` directly.
 
 #### Layout primitives
 
@@ -562,6 +566,38 @@ document.documentElement.dataset.theme = "dark"
 ```
 
 The dark-mode override applies only to the seven `--color-*` tokens (`--color-bg`, `--color-surface`, `--color-text`, `--color-text-muted`, `--color-primary`, `--color-primary-fg`, `--color-border`). Spacing, radius, type, shadow, and border widths are theme-independent.
+
+---
+
+## The .zero/ directory
+
+`.zero/` is the framework's regenerable file boundary. It is hidden from
+git (added to `.gitignore` by `zero init`) and is owned by the `zero`
+CLI — `zero update` is the only command that writes there. Do not edit
+files under `.zero/`. To pick up new framework assets when you upgrade
+the CLI, run `zero update`.
+
+Files currently shipped under `.zero/`:
+
+| Path | What it is |
+| --- | --- |
+| `.zero/zero.d.ts` | TypeScript declarations for the `"zero"` import. |
+| `.zero/zero-test.d.ts` | TypeScript declarations for the `"zero/test"` import. |
+| `.zero/styles/_tokens.scss` | Design tokens and theme variants. |
+| `.zero/styles/_base.scss` | Minimal reset and token-bound `body` rule. |
+| `.zero/styles/_layout.scss` | Six layout primitives (`cluster`, `stack`, `frame`, `split`, `flank`, `grid`). |
+| `.zero/styles/_utilities.scss` | Gap, padding, and border utility classes. |
+| `.zero/styles/zero.scss` | Aggregate that `@use`'s the four partials above. |
+
+### Updating
+
+```bash
+zero update             # prints a plan, asks to confirm, refreshes .zero/
+zero update --yes       # apply without prompting (CI)
+```
+
+In interactive mode (`i` at the top-level prompt) you can accept or
+reject each operation one at a time.
 
 ---
 

@@ -103,6 +103,7 @@ fn no_proxy_fallback_injects_scripts_and_serves_no_cache() {
     assert_cmd::Command::cargo_bin("zero")
         .unwrap()
         .arg("init")
+        .arg("--yes")
         .current_dir(tmp.path())
         .assert()
         .success();

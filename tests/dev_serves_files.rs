@@ -47,6 +47,7 @@ fn serves_src_and_styles_with_correct_types_and_no_cache() {
     assert_cmd::Command::cargo_bin("zero")
         .unwrap()
         .arg("init")
+        .arg("--yes")
         .current_dir(tmp.path())
         .assert()
         .success();

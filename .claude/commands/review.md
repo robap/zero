@@ -62,8 +62,7 @@ Also check the **Constraints** and **Out of Scope** sections:
 
 Evaluate the implementation on:
 
-- **Correctness** — does the logic match the domain model in `CLAUDE.md` and
-  `how-leases-work.md`? Are calculations accurate?
+- **Correctness** — does the logic match the domain model in `CLAUDE.md`?
 - **Test quality** — do the tests verify behavior meaningfully, or are they
   tautological? Do they cover edge cases relevant to the spec?
 - **Idiomatic Rust** — appropriate use of types, error handling, ownership, and

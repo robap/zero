@@ -10,6 +10,7 @@ fn write_scss_project(tmp: &std::path::Path) {
     assert_cmd::Command::cargo_bin("zero")
         .unwrap()
         .arg("init")
+        .arg("--yes")
         .current_dir(tmp)
         .assert()
         .success();
@@ -167,6 +168,7 @@ fn build_plain_css_project_still_works() {
     assert_cmd::Command::cargo_bin("zero")
         .unwrap()
         .arg("init")
+        .arg("--yes")
         .current_dir(tmp.path())
         .assert()
         .success();

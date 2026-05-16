@@ -47,6 +47,7 @@ fn init_then_dev_serves_all_expected_urls() {
     assert_cmd::Command::cargo_bin("zero")
         .unwrap()
         .arg("init")
+        .arg("--yes")
         .current_dir(tmp.path())
         .assert()
         .success();

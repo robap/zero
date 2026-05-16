@@ -11,6 +11,7 @@ fn ts_scaffold_round_trip() {
     assert_cmd::Command::cargo_bin("zero")
         .unwrap()
         .arg("init")
+        .arg("--yes")
         .current_dir(tmp.path())
         .assert()
         .success();
@@ -20,8 +21,8 @@ fn ts_scaffold_round_trip() {
     assert!(web.join("src/routes/home.ts").exists());
     assert!(web.join("src/routes/home.test.ts").exists());
     assert!(web.join("tsconfig.json").exists());
-    assert!(web.join("zero.d.ts").exists());
-    assert!(web.join("zero-test.d.ts").exists());
+    assert!(web.join(".zero/zero.d.ts").exists());
+    assert!(web.join(".zero/zero-test.d.ts").exists());
 
     // `zero test` runs the TS test and passes 2 assertions.
     assert_cmd::Command::cargo_bin("zero")

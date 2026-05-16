@@ -102,6 +102,8 @@ may contradict the spec.
 After all steps are complete, run one final check:
 
 ```
+cargo fmt
+cargo clippy
 cargo test
 ```
 

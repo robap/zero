@@ -1,5 +1,5 @@
-//! Integration test: `zero dev` writes `zero.d.ts` and `zero-test.d.ts` into
-//! the project root every time it starts.
+//! Integration test: `zero dev` writes `.zero/zero.d.ts` and
+//! `.zero/zero-test.d.ts` into the project root every time it starts.
 
 use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
@@ -64,10 +64,10 @@ fn dev_writes_dts_files_on_startup() {
 
     assert!(wait_for_port(port, Duration::from_secs(5)));
 
-    let zero_dts = web.join("zero.d.ts");
-    let zero_test_dts = web.join("zero-test.d.ts");
-    assert!(zero_dts.is_file(), "zero.d.ts should exist");
-    assert!(zero_test_dts.is_file(), "zero-test.d.ts should exist");
+    let zero_dts = web.join(".zero/zero.d.ts");
+    let zero_test_dts = web.join(".zero/zero-test.d.ts");
+    assert!(zero_dts.is_file(), ".zero/zero.d.ts should exist");
+    assert!(zero_test_dts.is_file(), ".zero/zero-test.d.ts should exist");
     let dts = std::fs::read_to_string(&zero_dts).unwrap();
     assert!(dts.contains(r#"declare module "zero""#));
     let test_dts = std::fs::read_to_string(&zero_test_dts).unwrap();

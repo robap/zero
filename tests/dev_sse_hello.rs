@@ -71,6 +71,7 @@ fn sse_endpoint_emits_hello_on_connect() {
     assert_cmd::Command::cargo_bin("zero")
         .unwrap()
         .arg("init")
+        .arg("--yes")
         .current_dir(tmp.path())
         .assert()
         .success();

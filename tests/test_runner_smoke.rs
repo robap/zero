@@ -14,6 +14,7 @@ fn scaffold_with_runtime_test(content: &str) -> tempfile::TempDir {
     Command::cargo_bin("zero")
         .unwrap()
         .arg("init")
+        .arg("--yes")
         .current_dir(tmp.path())
         .assert()
         .success();

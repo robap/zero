@@ -1,5 +1,13 @@
 # Spec: Built-in CSS design system
 
+> **Note:** This spec captured the design system as of the
+> design-system issue. Requirements 19–20 (scaffold file paths) are
+> superseded by `issues/update/spec.md`: `_tokens.scss`, `_base.scss`,
+> `_layout.scss`, `_utilities.scss`, and the aggregate `zero.scss` now
+> live under `.zero/styles/` and are framework-owned and regenerable
+> via `zero update`. The user's `styles/app.scss` remains user-owned
+> and is the place to add styles or override tokens.
+
 ## Problem Statement
 
 `zero` ships SCSS as the canonical authoring layer (see `issues/scss/spec.md`), but the scaffold's CSS surface is intentionally tiny: `styles/_vars.scss` defines six SCSS tokens and bridges them to CSS custom properties; `styles/app.scss` declares one `body` rule and one `h1` rule. There is no layout vocabulary, no theme story, and no base layer that makes the tokens visible on the page.

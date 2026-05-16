@@ -11,7 +11,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Scaffold a new zero app in the current directory
-    Init,
+    Init {
+        /// Skip the pre-flight confirmation prompt.
+        #[arg(long, short = 'y', default_value_t = false)]
+        yes: bool,
+    },
     /// Run the development server
     Dev,
     /// Produce a production build
@@ -28,13 +32,19 @@ enum Commands {
         /// Optional file path or substring filter
         target: Option<String>,
     },
+    /// Refresh framework files in .zero/
+    Update {
+        /// Skip the pre-flight confirmation prompt.
+        #[arg(long, short = 'y', default_value_t = false)]
+        yes: bool,
+    },
 }
 
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
     let result = match cli.command {
-        Commands::Init => cmd::init::run().await,
+        Commands::Init { yes } => cmd::init::run(yes).await,
         Commands::Dev => cmd::dev::run().await,
         Commands::Build {
             sourcemap,
@@ -52,6 +62,7 @@ async fn main() {
             cmd::build::run(override_flag).await
         }
         Commands::Test { target } => cmd::test::run(target).await,
+        Commands::Update { yes } => cmd::update::run(yes).await,
     };
     if let Err(err) = result {
         eprintln!("error: {err}");
