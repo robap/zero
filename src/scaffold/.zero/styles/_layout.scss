@@ -26,10 +26,10 @@
     place-items: center;
 }
 
-// two equal-width columns, no wrapping
+// Split — flex row with end-anchored groups; growing space distributes between them.
 .split {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
+    display: flex;
+    justify-content: space-between;
     gap: var(--space-md); // default gap; override with gap-* utility
 }
 

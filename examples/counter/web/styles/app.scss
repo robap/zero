@@ -1,0 +1,24 @@
+@use '../.zero/styles/zero';
+
+// App header — thin wrapper over design-system tokens. No bespoke
+// colors or spacing; everything cascades through the existing layer.
+.app-header {
+  background: var(--color-surface);
+  border-bottom: var(--border-thin) solid var(--color-border);
+}
+
+.app-header-brand {
+  color: var(--color-text);
+  text-decoration: none;
+  font-weight: var(--weight-bold);
+}
+
+.app-header-title {
+  font-size: var(--font-lg);
+}
+
+.app-main {
+  display: block;
+  color: var(--color-text);
+  background: var(--color-bg);
+}

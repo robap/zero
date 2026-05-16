@@ -48,16 +48,34 @@ fn copy_inner(src_root: &Path, dst_root: &Path, src_cur: &Path, skip_top_level: 
 ///
 /// `showcase/.zero/` is gitignored, so it never participates in the copy;
 /// the framework manifest is the single source of truth.
+#[allow(dead_code)]
 pub fn prepare_showcase() -> tempfile::TempDir {
     let tmp = tempfile::tempdir().unwrap();
     let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
     let src = repo.join("showcase");
     copy_dir_filtered(&src, tmp.path(), &[".zero", "dist", "node_modules"]);
 
-    // `zero update` requires an existing `.zero/` (otherwise the project
-    // is treated as predating the `.zero/` layout). Create it empty so
-    // update populates it from the manifest.
-    std::fs::create_dir_all(tmp.path().join(".zero")).unwrap();
+    assert_cmd::Command::cargo_bin("zero")
+        .unwrap()
+        .arg("update")
+        .arg("--yes")
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+
+    tmp
+}
+
+/// Copy the in-repo `examples/<name>/` user files into a fresh tempdir and
+/// run `zero update --yes` to materialize the framework manifest into
+/// `<tempdir>/.zero/`. Mirrors `prepare_showcase`; the difference is the
+/// source subdirectory.
+#[allow(dead_code)]
+pub fn prepare_example(name: &str) -> tempfile::TempDir {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let src = repo.join("examples").join(name);
+    copy_dir_filtered(&src, tmp.path(), &[".zero", "dist", "node_modules"]);
 
     assert_cmd::Command::cargo_bin("zero")
         .unwrap()

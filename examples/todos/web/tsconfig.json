@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": [
+    "src",
+    ".zero/zero.d.ts",
+    ".zero/zero-test.d.ts",
+    ".zero/zero-http.d.ts",
+    ".zero/components.d.ts"
+  ]
+}

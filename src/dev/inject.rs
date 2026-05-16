@@ -10,7 +10,7 @@
 pub fn dev_scripts(app_entry_href: &str) -> String {
     let mut s = String::new();
     s.push_str(
-        r#"<script type="importmap">{"imports":{"zero":"/zero.js","zero/components":"/.zero/components/index.ts"}}</script>"#,
+        r#"<script type="importmap">{"imports":{"zero":"/zero.js","zero/http":"/zero-http.js","zero/components":"/.zero/components/index.ts"}}</script>"#,
     );
     s.push('\n');
     s.push_str(&format!(
@@ -22,8 +22,10 @@ pub fn dev_scripts(app_entry_href: &str) -> String {
     s.push_str("  var es = new EventSource(\"/_zero/events\");\n");
     s.push_str("  es.addEventListener(\"reload\", function(e){\n");
     s.push_str("    try { console.log(\"[zero] reloading: \" + (e.data || \"\")); } catch(_) {}\n");
+    s.push_str("    es.close();\n");
     s.push_str("    location.reload();\n");
     s.push_str("  });\n");
+    s.push_str("  addEventListener(\"pagehide\", function(){ es.close(); });\n");
     s.push_str("})();\n");
     s.push_str("</script>");
     s
@@ -116,6 +118,15 @@ mod tests {
     }
 
     #[test]
+    fn dev_scripts_importmap_contains_zero_http() {
+        let s = dev_scripts("/src/app.ts");
+        assert!(
+            s.contains(r#""zero/http":"/zero-http.js""#),
+            "importmap missing zero/http entry: {s}"
+        );
+    }
+
+    #[test]
     fn injects_reload_client_alongside_other_scripts() {
         let s = default_scripts();
         assert!(s.contains(r#"new EventSource("/_zero/events")"#));
@@ -123,6 +134,30 @@ mod tests {
         assert!(s.contains("location.reload()"));
         assert!(s.contains(r#"type="importmap""#));
         assert!(s.contains(r#"src="/src/app.js""#));
+    }
+
+    #[test]
+    fn reload_client_closes_sse_before_reloading() {
+        let s = default_scripts();
+        let close_idx = s
+            .find("es.close()")
+            .expect("reload handler must call es.close() before reload");
+        let reload_idx = s
+            .find("location.reload()")
+            .expect("reload handler must call location.reload()");
+        assert!(
+            close_idx < reload_idx,
+            "es.close() must run before location.reload() to avoid Firefox 'interrupted' warning: {s}"
+        );
+    }
+
+    #[test]
+    fn reload_client_closes_sse_on_pagehide() {
+        let s = default_scripts();
+        assert!(
+            s.contains(r#"addEventListener("pagehide""#),
+            "reload client must register a pagehide listener to close the SSE cleanly: {s}"
+        );
     }
 
     #[test]

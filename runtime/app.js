@@ -13,6 +13,44 @@ import {
 let _currentApp = null;
 
 /**
+ * Compose two `AbortSignal`s into a single signal that aborts when either
+ * input aborts. Prefers `AbortSignal.any` when available; otherwise wires up
+ * a fresh controller listening to both inputs.
+ * @internal
+ * @param {AbortSignal} a
+ * @param {AbortSignal} b
+ * @returns {AbortSignal}
+ */
+function _composeSignals(a, b) {
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.any === "function") {
+    return AbortSignal.any([a, b]);
+  }
+  const ctrl = new AbortController();
+  const onAbort = (src) => () => { ctrl.abort(src.reason); };
+  if (a.aborted) ctrl.abort(a.reason);
+  else a.addEventListener("abort", onAbort(a));
+  if (b.aborted) ctrl.abort(b.reason);
+  else b.addEventListener("abort", onAbort(b));
+  return ctrl.signal;
+}
+
+/**
+ * Build a route-scoped `fetch` wrapper that threads `navSignal` into every
+ * request. Caller-supplied signals are composed with the nav signal so an
+ * abort on either aborts the request.
+ * @internal
+ * @param {AbortSignal} navSignal
+ * @returns {(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>}
+ */
+function _makeRouteFetch(navSignal) {
+  return (input, init = {}) => {
+    const callerSignal = init.signal;
+    const signal = callerSignal ? _composeSignals(navSignal, callerSignal) : navSignal;
+    return globalThis.fetch(input, { ...init, signal });
+  };
+}
+
+/**
  * @internal
  * @returns {App | null}
  */
@@ -361,6 +399,11 @@ export class App {
     }
     this._navScope = _createScope();
 
+    const navController = new AbortController();
+    this._navScope.onCleanup(() => navController.abort());
+
+    const routeFetch = _makeRouteFetch(navController.signal);
+
     const app = this;
     (async () => {
       const state = app._stateProxy;
@@ -427,7 +470,7 @@ export class App {
 
           // Run load() (data hydration, separate from component).
           if (desc.opts.load) {
-            await desc.opts.load({ params: m.params, query: m.query, state, fetch: globalThis.fetch?.bind(globalThis), route: routeCtx });
+            await desc.opts.load({ params: m.params, query: m.query, state, fetch: routeFetch, route: routeCtx });
             if (token !== app._navToken) { clearTimeout(loadingTimer); return; }
           }
         }
@@ -496,6 +539,12 @@ export class App {
         _applyActiveLinks(app._mountEl, m.pathname, m.search);
       } catch (err) {
         if (token !== app._navToken) return;
+        // Silently drop AbortError when this navigation's controller fired it.
+        // Caller-supplied aborts (where our controller is still live) flow through.
+        if (err && err.name === 'AbortError' && navController.signal.aborted) {
+          clearTimeout(loadingTimer);
+          return;
+        }
         clearTimeout(loadingTimer);
         if (app._error) {
           app._navScope.dispose();

@@ -33,6 +33,8 @@ const CLOSING_TAG = 'CLOSING_TAG';
  * @param {TemplateStringsArray} strings
  * @returns {Template}
  */
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
 function _parseTemplate(strings) {
   const frag = document.createDocumentFragment();
   const parts = [];
@@ -46,6 +48,17 @@ function _parseTemplate(strings) {
   let currentTagName = '';
   let currentCloseTagName = '';
   let currentTextData = '';
+  // Count of currently-open SVG-namespaced ancestors. When > 0, newly
+  // created elements use createElementNS so the browser renders them as
+  // SVG (HTML-namespaced <svg>/<circle>/<path>/... are not painted).
+  let svgDepth = 0;
+
+  function createEl(tagName) {
+    if (svgDepth > 0 || tagName.toLowerCase() === 'svg') {
+      return document.createElementNS(SVG_NS, tagName);
+    }
+    return document.createElement(tagName);
+  }
 
   function flushText() {
     if (currentTextData) {
@@ -103,23 +116,25 @@ function _parseTemplate(strings) {
           if (/[a-zA-Z0-9\-]/.test(ch)) {
             currentTagName += ch;
           } else if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
-            const el = document.createElement(currentTagName);
+            const el = createEl(currentTagName);
+            if (el.namespaceURI === SVG_NS) svgDepth++;
             parent.appendChild(el);
-            elementStack.push({ el, pathIdx: parent.childNodes.length - 1 });
+            elementStack.push({ el, pathIdx: parent.childNodes.length - 1, svg: el.namespaceURI === SVG_NS });
             parentPath.push(parent.childNodes.length - 1);
             parent = el;
             state = IN_TAG;
           } else if (ch === '>') {
-            const el = document.createElement(currentTagName);
+            const el = createEl(currentTagName);
+            if (el.namespaceURI === SVG_NS) svgDepth++;
             parent.appendChild(el);
-            elementStack.push({ el, pathIdx: parent.childNodes.length - 1 });
+            elementStack.push({ el, pathIdx: parent.childNodes.length - 1, svg: el.namespaceURI === SVG_NS });
             parentPath.push(parent.childNodes.length - 1);
             parent = el;
             state = TEXT;
           } else if (ch === '/' && next === '>') {
-            const el = document.createElement(currentTagName);
+            const el = createEl(currentTagName);
             parent.appendChild(el);
-            // self-closing: do not push to element stack
+            // self-closing: do not push to element stack; svgDepth unchanged.
             ci++; // skip '>'
             state = TEXT;
           } else {
@@ -210,7 +225,8 @@ function _parseTemplate(strings) {
 
         case CLOSING_TAG:
           if (ch === '>') {
-            elementStack.pop();
+            const popped = elementStack.pop();
+            if (popped && popped.svg) svgDepth--;
             parentPath.pop();
             parent = elementStack.length > 0 ? elementStack[elementStack.length - 1].el : frag;
             currentCloseTagName = '';

@@ -314,6 +314,124 @@ describe('router', () => {
     });
   });
 
+  describe('route-scoped fetch', () => {
+    beforeEach(resetEnv);
+
+    it('aborts pending fetch when navigation supersedes', async () => {
+      freshMount('app');
+      const origFetch = globalThis.fetch;
+      /** @type {AbortSignal[]} */
+      const seenSignals = [];
+      globalThis.fetch = (_input, init = {}) => {
+        const signal = init.signal;
+        if (signal) seenSignals.push(signal);
+        return new Promise((_resolve, reject) => {
+          if (signal) {
+            signal.addEventListener('abort', () => {
+              const err = new Error('aborted');
+              err.name = 'AbortError';
+              reject(err);
+            });
+          }
+        });
+      };
+      try {
+        const app = new App()
+          .route('/', () => html`<span>home</span>`)
+          .route('/slow', () => html`<span>slow</span>`, {
+            load: ({ fetch }) => fetch('/data'),
+          })
+          .route('/other', () => html`<span>other</span>`);
+        app.run('#app');
+        await Promise.resolve();
+        // Navigate to /slow — load() awaits a never-resolving fetch
+        window.history.pushState(null, '', '/slow');
+        window.dispatchEvent({ type: 'popstate' });
+        await Promise.resolve();
+        assert.equal(seenSignals.length, 1);
+        assert.equal(seenSignals[0].aborted, false);
+        // Supersede with /other — should abort /slow's pending fetch
+        window.history.pushState(null, '', '/other');
+        window.dispatchEvent({ type: 'popstate' });
+        await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        assert.equal(seenSignals[0].aborted, true);
+      } finally {
+        globalThis.fetch = origFetch;
+      }
+    });
+
+    it('composes caller-supplied signal: caller abort surfaces as error', async () => {
+      freshMount('app');
+      const origFetch = globalThis.fetch;
+      let abortReason = null;
+      globalThis.fetch = (_input, init = {}) => {
+        const signal = init.signal;
+        return new Promise((_resolve, reject) => {
+          if (signal) {
+            signal.addEventListener('abort', () => {
+              const err = new Error('aborted');
+              err.name = 'AbortError';
+              reject(err);
+            });
+          }
+        });
+      };
+      try {
+        const callerController = new AbortController();
+        const errorCalls = [];
+        const app = new App()
+          .error(({ error }) => { errorCalls.push(error); return html`<span>err</span>`; })
+          .route('/', () => html`<span>home</span>`)
+          .route('/x', () => html`<span>x</span>`, {
+            load: ({ fetch }) => fetch('/data', { signal: callerController.signal })
+              .catch((e) => { abortReason = e; throw e; }),
+          });
+        app.run('#app');
+        await Promise.resolve();
+        window.history.pushState(null, '', '/x');
+        window.dispatchEvent({ type: 'popstate' });
+        await Promise.resolve();
+        callerController.abort();
+        await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        // The caller-aborted error must reach the error UI (not be silently dropped).
+        assert.ok(abortReason, 'caller-aborted error should have propagated');
+        assert.equal(abortReason.name, 'AbortError');
+        assert.equal(errorCalls.length, 1);
+      } finally {
+        globalThis.fetch = origFetch;
+      }
+    });
+
+    it('post-navigation: each nav gets a fresh non-aborted signal', async () => {
+      freshMount('app');
+      const origFetch = globalThis.fetch;
+      const seenSignals = [];
+      globalThis.fetch = (_input, init = {}) => {
+        if (init.signal) seenSignals.push(init.signal);
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      };
+      try {
+        const app = new App()
+          .route('/', () => html`<span>home</span>`, {
+            load: ({ fetch }) => fetch('/a'),
+          })
+          .route('/b', () => html`<span>b</span>`, {
+            load: ({ fetch }) => fetch('/b'),
+          });
+        app.run('#app');
+        await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        window.history.pushState(null, '', '/b');
+        window.dispatchEvent({ type: 'popstate' });
+        await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        assert.equal(seenSignals.length, 2);
+        assert.notStrictEqual(seenSignals[0], seenSignals[1]);
+        assert.equal(seenSignals[1].aborted, false);
+      } finally {
+        globalThis.fetch = origFetch;
+      }
+    });
+  });
+
   describe('_parseQuery', () => {
     it('empty string returns {}', () => {
       assert.deepEqual(_parseQuery(''), {});

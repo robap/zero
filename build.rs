@@ -39,6 +39,14 @@ fn main() {
         "cargo:rerun-if-changed={}",
         runtime_dir.join("zero-test.d.ts").display()
     );
+    println!(
+        "cargo:rerun-if-changed={}",
+        runtime_dir.join("http.js").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        runtime_dir.join("zero-http.d.ts").display()
+    );
     println!("cargo:rerun-if-changed=build.rs");
 
     let single_line_import =
@@ -132,6 +140,28 @@ fn main() {
     let raw = fs::read_to_string(runtime_dir.join("zero-test.d.ts"))
         .unwrap_or_else(|e| panic!("failed to read zero-test.d.ts: {e}"));
     let out_path = out_dir.join("zero_test_types_body.d.ts");
+    fs::write(&out_path, &raw)
+        .unwrap_or_else(|e| panic!("failed to write {}: {e}", out_path.display()));
+
+    // --- zero_http_body.js ---
+    let raw = fs::read_to_string(runtime_dir.join("http.js"))
+        .unwrap_or_else(|e| panic!("failed to read http.js: {e}"));
+    let (cleaned, alias_lines) = strip(&raw);
+    let mut http_body = cleaned;
+    if !http_body.ends_with('\n') {
+        http_body.push('\n');
+    }
+    if !alias_lines.is_empty() {
+        http_body.push_str(&alias_lines);
+    }
+    let out_path = out_dir.join("zero_http_body.js");
+    fs::write(&out_path, &http_body)
+        .unwrap_or_else(|e| panic!("failed to write {}: {e}", out_path.display()));
+
+    // --- zero_http_types_body.d.ts ---
+    let raw = fs::read_to_string(runtime_dir.join("zero-http.d.ts"))
+        .unwrap_or_else(|e| panic!("failed to read zero-http.d.ts: {e}"));
+    let out_path = out_dir.join("zero_http_types_body.d.ts");
     fs::write(&out_path, &raw)
         .unwrap_or_else(|e| panic!("failed to write {}: {e}", out_path.display()));
 }

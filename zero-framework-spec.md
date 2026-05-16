@@ -99,6 +99,10 @@ update` prints `"zero update: .zero/ is already up to date."` and exits
 the user accepted everything, nothing, or some subset. CI scripts that
 want strictness should use `--yes`.
 
+`zero update` bootstraps a missing `.zero/` automatically — the
+directory is created on demand when the first framework file is
+written. The only hard precondition is that `zero.toml` exists.
+
 #### `zero dev`
 
 ```
@@ -614,6 +618,8 @@ If a concrete application later demands phase-bounded action legality that signa
 
 Until then: model lifecycle state as a plain signal whose value carries a `status` field.
 
+> For the canonical `signal({ status, ... })` pattern in working code, see `BEST_PRACTICES.md` and `examples/tracker/src/stores/auth.ts`.
+
 ---
 
 ## 6. Router
@@ -789,6 +795,17 @@ Click <a href="/users/42">
   → run enter transition
   → pushState to browser history
 ```
+
+### Route-scoped fetch
+
+The `fetch` injected into `load()` is a thin wrapper around `globalThis.fetch` that threads a navigation-scoped `AbortSignal` into every request. The contract:
+
+- Each navigation owns an `AbortController`. The route scope's disposal hook calls `controller.abort()` so navigating away aborts every in-flight request automatically.
+- If `init.signal` is also supplied by the caller, the wrapper composes the two signals — an abort on either signal aborts the request.
+- Behavior outside `load()` is unchanged. `globalThis.fetch` is not monkey-patched; components that call `fetch` directly receive no route-scoped signal.
+- Aborts surface as the standard `AbortError` from `fetch`. The router catches `AbortError` thrown during a `load()` belonging to a controller it owns and silently drops the result — `app.error()` is not invoked for navigation-driven aborts. Caller-supplied aborts (where the caller's controller fired but the navigation controller did not) propagate to `app.error()` so the developer's own catch still sees the error.
+
+`zero/http`'s per-call `init.fetch` override is the canonical bridge: pass `{ fetch: ctx.fetch }` from `load()` so the underlying request inherits the route abort signal. See §11 for the API and `BEST_PRACTICES.md` for worked examples.
 
 ---
 
@@ -1121,7 +1138,11 @@ html``                               // tagged template → TemplateResult
 // Components
 each(signal, renderFn, keyFn)        // keyed list rendering
 ref()                                // DOM element reference
-inject(key)                          // access app-level state
+
+// State injection (typed-registry overload, then fallback)
+interface StateTypes {}              // empty by default; user-augmented
+inject<K extends keyof StateTypes>(key: K): StateTypes[K]
+inject<T = unknown>(key: string): T  // fallback for un-registered keys
 
 // Router
 navigate(path, opts?)                // programmatic navigation
@@ -1154,6 +1175,31 @@ cleanup()
 // Async
 settled()                            // wait for pending effects/transitions
 ```
+
+### From `"zero/http"`
+
+```ts
+// Factory
+createHttp(opts?)                    // { fetch?: typeof fetch } → HttpClient
+
+// Client methods
+client.use(mw)                       // register middleware; returns client
+client.get<T>(url, init?)            // and post / put / patch / delete
+client.request<T>(input, init?)      // generic (Request | URL | string)
+
+// Per-call options (HttpInit extends RequestInit)
+init.fetch?: typeof fetch            // override the constructor-time fetch
+                                     // (canonical use: thread route-scoped
+                                     //  fetch inside load() — see §6)
+
+// Errors
+HttpError                            // class — status, statusText, body
+                                     // (non-2xx responses reject with this)
+```
+
+Middlewares run outermost-first on the way down, innermost-first on the way back up — `(req, next) => Promise<Response>`. They may short-circuit (return without calling `next`), wrap (transform the response), or rethrow. JSON request bodies that are plain objects are `JSON.stringify`'d with `Content-Type: application/json`; JSON responses are parsed; other content types return the raw `Response` as an escape hatch.
+
+> For organization patterns (one client per backend, middleware idioms, the 401-redirect example), see `BEST_PRACTICES.md`.
 
 ### From `"zero/components"`
 
@@ -1242,10 +1288,6 @@ State machines as a first-class primitive are deferred indefinitely. See Section
 - [x] `render()`, `find()`, `text()`, `fire()`, `cleanup()`
 - [x] Compound selector grammar in dom-shim
 - [x] `spy()` primitive + spy matchers (`toHaveBeenCalled`, `toHaveBeenCalledTimes`, `toHaveBeenCalledWith`, `toHaveBeenLastCalledWith`)
-- [ ] `--watch` mode
-- [ ] `--coverage`
-- [ ] Snapshot testing
-- [ ] Mutation testing
 
 ### Phase 6 — CLI & Dev Server
 - [x] `zero init` scaffolding
@@ -1287,15 +1329,26 @@ State machines as a first-class primitive are deferred indefinitely. See Section
 - [ ] Candidates to investigate first: `src/scaffold.rs::write_to` (will be split as part of Phase 7), `src/build/bundler.rs`, `src/dev/server.rs`, anything inside `src/test_runner/`
 - [ ] No behavioral changes — purely structural
 
-### Phase 11 - Decorators
-- [ ] Defining Routes
-- [ ] Injecting Signals
-- [ ] other?
+### Phase 11 — Decorators (deferred indefinitely)
 
-### Phase 12 - Best Practices
-- [ ] Add many more examples of a well architeced applicatiop which uses Zero.
-- [ ] Establish best practices for managing data using signals (organization, enums for key names, etc).
-- [ ] Establish best practices for file structure and Route organization.
+Phase 11 was originally scoped to layer a decorator-driven authoring surface — `@Route("/issues/:id")`, `@State("auth")`, `@Meta({ title: ... })` — on top of the framework's function-first model, with the intent of reaching terser route registration, type-inferred state access, and co-located metadata. The blocker is structural: JS/TS decorators only attach to classes and class members, and the framework's route components, stores, and middleware are plain functions. Adopting decorators would force the framework off its function-first stance for a DX payoff that materializes more cleanly as patterns. Same shape as the state-machines deferral in §5: slot reserved, no implementation work planned.
+
+The DX wins Phase 11 chased are delivered by Phase 12 instead:
+- Co-located `load`/`meta`/`default` in the route file — no decorator needed; the registration site imports them by name.
+- Typed `inject` via the `StateTypes` registry — no generic argument at the call site; module augmentation pins the shape.
+- A `BEST_PRACTICES.md` reference plus three shipped example apps that encode the layout decisions.
+
+(The original "Test Improvements" content — better error messages, coverage, mutation testing, watch mode — was a placeholder under this slot; those items are unaffected by the decorator deferral and can be tracked under a future phase if and when scheduled.)
+
+### Phase 12 — Best Practices & Example Applications
+- [x] Three shipped example projects under `examples/`: `counter` (~50 LOC), `todos` (mid-size, structured signal + localStorage), `tracker` (full app — auth, routes, guards, HTTP, comments)
+- [x] `StateTypes` interface + typed `inject` overload (type-surface only; runtime unchanged)
+- [x] Route-scoped `fetch` in `load()` with composable abort signals (§6)
+- [x] New `"zero/http"` module shipped on equal footing with `"zero/components"` and `"zero/test"`; `runtime/http.js` + `runtime/http.test.js` + `runtime/zero-http.d.ts` wired through bundler, dev server, test runner, and scaffold manifest
+- [x] `BEST_PRACTICES.md` at the repo root — project structure, state organization, stores, status-tagged signals, routes, HTTP, component usage, testing, performance
+- [x] `## Best practices` section appended to `src/scaffold/AGENTS.md`
+- [x] `public/` asset copying in `zero build` (used by `examples/tracker/public/data.json`)
+- [x] Integration tests: `tests/examples_build.rs` and `tests/examples_tests.rs` exercise all three examples
 
 ---
 
@@ -1316,3 +1369,4 @@ State machines as a first-class primitive are deferred indefinitely. See Section
 | Testing | Built-in with lightweight DOM | No jsdom, no browser, possible because components are plain functions |
 | Distribution | Single CLI binary | Zero npm dependencies, one install, everything included |
 | Component library | 14 components shipped under `.zero/components/`; CSS wrapped in `@layer components` | Real apps shouldn't rebuild the same primitives; `@layer` keeps user overrides predictable without prefixing |
+| HTTP client | `"zero/http"` module with middleware (onion model) and per-call `init.fetch` override | Every real app fetches; shipping one obvious wrapper avoids divergent conventions across adopters and threads cleanly with the route-scoped abort signal |

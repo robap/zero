@@ -214,6 +214,7 @@ function createElement(tagName) {
   const el = {
     nodeType: ELEMENT_NODE,
     tagName: tagName.toUpperCase(),
+    namespaceURI: 'http://www.w3.org/1999/xhtml',
     get nodeName() { return this.tagName; },
     attributes: new Map(),
     childNodes: [],
@@ -362,9 +363,16 @@ function _makeEventTarget() {
   };
 }
 
+function createElementNS(ns, tagName) {
+  const el = createElement(tagName);
+  el.namespaceURI = ns;
+  return el;
+}
+
 export const document = Object.assign(
   {
     createElement,
+    createElementNS,
     createTextNode,
     createComment,
     createDocumentFragment,

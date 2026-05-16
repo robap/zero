@@ -1,0 +1,89 @@
+{
+  "issues": [
+    {
+      "id": "ZRO-101",
+      "title": "Hot reload drops module state",
+      "status": "open",
+      "assignee": "Robin",
+      "comments": [
+        { "author": "Sam", "body": "Repro: edit any store, watch the signal reset.", "createdAt": "2026-04-12T09:15:00Z" },
+        { "author": "Robin", "body": "Tracking via the dev server's swap path. Likely the HMR boundary.", "createdAt": "2026-04-12T11:42:00Z" }
+      ]
+    },
+    {
+      "id": "ZRO-102",
+      "title": "`zero test` reporter swallows nested describe names",
+      "status": "open",
+      "assignee": "Sam",
+      "comments": [
+        { "author": "Jo", "body": "Output shows only the innermost suite. Hard to grep.", "createdAt": "2026-04-13T14:20:00Z" }
+      ]
+    },
+    {
+      "id": "ZRO-103",
+      "title": "Document the route-scoped `fetch` abort contract",
+      "status": "closed",
+      "assignee": "Robin",
+      "comments": [
+        { "author": "Robin", "body": "Landed in §6 of the framework spec.", "createdAt": "2026-04-09T16:00:00Z" }
+      ]
+    },
+    {
+      "id": "ZRO-104",
+      "title": "Toggle component should expose `name` for native forms",
+      "status": "open",
+      "assignee": "Jo",
+      "comments": []
+    },
+    {
+      "id": "ZRO-105",
+      "title": "Bundler emits duplicate CSS when a route imports a styled component",
+      "status": "open",
+      "assignee": "Sam",
+      "comments": [
+        { "author": "Sam", "body": "Confirmed on multi-route apps. Single-route apps unaffected.", "createdAt": "2026-04-15T08:05:00Z" }
+      ]
+    },
+    {
+      "id": "ZRO-106",
+      "title": "Add a `<Spinner inline />` variant",
+      "status": "closed",
+      "assignee": "Robin",
+      "comments": [
+        { "author": "Jo", "body": "Shipped in 0.9.2.", "createdAt": "2026-04-10T12:30:00Z" }
+      ]
+    },
+    {
+      "id": "ZRO-107",
+      "title": "Each() leaks listeners on rapid re-renders",
+      "status": "open",
+      "assignee": "Robin",
+      "comments": []
+    },
+    {
+      "id": "ZRO-108",
+      "title": "Showcase: dark theme palette is too low-contrast on `Card`",
+      "status": "closed",
+      "assignee": "Jo",
+      "comments": [
+        { "author": "Jo", "body": "Bumped surface contrast token; cards now meet WCAG AA.", "createdAt": "2026-04-08T18:11:00Z" }
+      ]
+    },
+    {
+      "id": "ZRO-109",
+      "title": "Route `meta.title` ignored for nested routes",
+      "status": "open",
+      "assignee": "Sam",
+      "comments": []
+    },
+    {
+      "id": "ZRO-110",
+      "title": "`createHttp()` should accept a base URL",
+      "status": "open",
+      "assignee": "Jo",
+      "comments": [
+        { "author": "Robin", "body": "Out of scope for Phase 12 — track for the next milestone.", "createdAt": "2026-04-16T10:00:00Z" }
+      ]
+    }
+  ]
+}

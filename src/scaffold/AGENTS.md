@@ -16,12 +16,15 @@ Any identifier whose name begins with `_` or `__` is internal — do not import 
 
 ```bash
 zero init     # scaffold a project (already run — this is how AGENTS.md got here)
+zero update   # refresh framework-owned files under <root>/.zero/ (auto-creates .zero/ when missing)
 zero dev      # start the dev server with file watching and full-page reload
 zero test     # run all *.test.ts / *.test.js / *.spec.ts / *.spec.js under the project root
 zero build    # produce a production build into the configured output directory
 ```
 
 `zero init` is interactive on first run and writes a `zero.toml`. Re-running it in a non-empty project root is refused — to reset, delete the project directory and run again.
+
+`zero update` refreshes the framework-owned files under `<root>/.zero/`. If `.zero/` does not yet exist, `zero update` creates it — fresh clones of an existing zero project are made runnable with `zero update --yes` followed by `zero dev`.
 
 The generated project layout:
 
@@ -534,7 +537,7 @@ These partials live under `.zero/styles/` and are framework-owned — `zero upda
 | `cluster` | Horizontal flex row that wraps. Default `gap: var(--space-md)`. |
 | `stack` | Vertical flex column. Default `gap: var(--space-md)`. |
 | `frame` | Fixed aspect-ratio box (default `16 / 9`); children centered and clipped. Override per-instance via `--frame-ratio`. |
-| `split` | Two equal-width columns. Default `gap: var(--space-md)`. Does not wrap. |
+| `split` | Horizontal flex with end-anchored groups; `justify-content: space-between` distributes growing space between children. Default `gap: var(--space-md)`. |
 | `flank` | First child is content-sized; second fills. Wraps when narrow. Default `gap: var(--space-md)`. |
 | `grid` | Auto-fitting columns of `minmax(min(100%, var(--grid-min, 16rem)), 1fr)`. Default `gap: var(--space-md)`. |
 
@@ -1001,3 +1004,25 @@ export default function Home() {
 - **`navigate`/`back`/`forward`/`route()`/`inject()` require a running app.** They throw outside of `app.run` and outside of `render(...)`.
 - **Same-origin `<a>` clicks are intercepted by default.** Opt out with `target="_blank"`, `download`, or `data-external` on the anchor.
 - **`.throttle` and `.debounce` use a fixed 100ms interval.** Not configurable today.
+
+---
+
+## Best practices
+
+Real apps benefit from a small, predictable layout — a `state.ts`, a `stores/` directory, a `components/` directory, a `routes/` directory, and a `lib/` directory for non-UI helpers. Keep route components, their `load()`, and their `meta` co-located in one file per route.
+
+- **Use `zero/components` for every interactive primitive.** `Button`, `Input`, `Checkbox`, `Toggle`, `Select`, `Radio`, `TextArea`, `Dialog`, `Tabs`, `Card`, `Avatar`, `Badge`, `Spinner`, `Toast`. Drop to raw `<button>` / `<input>` / `<select>` only when the shipped component cannot express the behavior (leave a `//` comment naming the missing capability) or when you are building a new presentational component the library does not ship (the per-app `Header` is the canonical case). Plain containers (`<main>`, `<section>`, `<form>`, `<ul>`, `<li>`, `<label>`, `<a>`, `<svg>`, …) are not "components" under this rule — use them freely.
+- **When building your own presentational component, wrap shipped primitives** rather than re-implementing them. A `ThemeToggle` wraps the shipped `Toggle`; it does not start from a raw `<input type="checkbox">`.
+- **Reach for `inject` via the `Keys` registry, not bare strings.** Declare keys in `src/state.ts` and augment `interface StateTypes` from `"zero"` so reads infer their value type without a generic argument.
+- **Mutate store signals only via the store's exported mutators.** Components never call `signal.set()` on a store signal. The store module is the one place behavior changes are authored.
+- **Co-locate `load` / `meta` / `default` in the route file.** Import them at the registration site:
+
+  ```ts
+  import IssuePage, { load, meta } from "./routes/issues/issue.ts";
+  app.route("/issues/:id", IssuePage, { load, meta, guard: requireAuth });
+  ```
+
+  `load()` is side-effect-only — its return value is awaited but not piped into the component. Use it to hydrate a store; have the component read via `inject`.
+- **Use `zero/http` for HTTP, not raw `fetch`, in `load()` and elsewhere.** Middleware (auth headers, 401 redirect, retry) attaches once at the client and applies to every call. Inside `load()`, thread the injected route-scoped fetch via `init.fetch` so navigation aborts cancel in-flight requests. Construct the client once in `src/lib/api.ts` with no middleware; register middleware in `src/app.ts` before `app.run()` so cross-cutting policy lives at the composition root rather than inside a domain store.
+
+For longer rationale and worked examples, see `BEST_PRACTICES.md` at the framework repo root.

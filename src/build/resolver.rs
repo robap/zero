@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 pub enum ModuleId {
     /// The embedded zero runtime.
     Runtime,
+    /// The embedded `zero/http` module.
+    Http,
     /// A user module at the given path, relative to the project root.
     User(PathBuf),
 }
@@ -27,6 +29,9 @@ pub enum ModuleId {
 pub fn resolve(specifier: &str, importer_dir: &Path, root: &Path) -> anyhow::Result<ModuleId> {
     if specifier == "zero" {
         return Ok(ModuleId::Runtime);
+    }
+    if specifier == "zero/http" {
+        return Ok(ModuleId::Http);
     }
     if specifier == "zero/components" {
         return Ok(ModuleId::User(PathBuf::from("./.zero/components/index.ts")));
@@ -65,6 +70,13 @@ mod tests {
         let dir = tempdir().unwrap();
         let r = resolve("zero", dir.path(), dir.path()).unwrap();
         assert_eq!(r, ModuleId::Runtime);
+    }
+
+    #[test]
+    fn zero_http_resolves_to_synthetic() {
+        let dir = tempdir().unwrap();
+        let r = resolve("zero/http", dir.path(), dir.path()).unwrap();
+        assert_eq!(r, ModuleId::Http);
     }
 
     #[test]

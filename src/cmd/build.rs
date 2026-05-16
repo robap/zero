@@ -1,5 +1,7 @@
 //! `zero build` subcommand entry point.
 
+use std::path::Path;
+
 use sha2::{Digest, Sha256};
 
 use crate::build::bundler::bundle;
@@ -61,12 +63,41 @@ pub async fn run(sourcemap_override: Option<bool>) -> anyhow::Result<()> {
     // 4. Render static index.html.
     render(&root, &out_dir, &manifest_entries)?;
 
+    // 5. Copy static `public/` assets, if any, mirroring the dev server's
+    //    `/public/*` route so URLs resolve identically across dev and prod.
+    let public_dir = root.join("public");
+    let public_copied = if public_dir.is_dir() {
+        copy_public(&public_dir, &out_dir.join("public"))?
+    } else {
+        0
+    };
+
     println!(
-        "zero build — {} bytes JS, {} CSS file(s); output in {}/",
+        "zero build — {} bytes JS, {} CSS file(s), {} public asset(s); output in {}/",
         bundle_src.len(),
         css_pairs.len(),
+        public_copied,
         out_dir.display()
     );
 
     Ok(())
+}
+
+/// Recursively copy every file under `src` into `dst`, preserving the
+/// relative tree. Returns the total file count copied.
+fn copy_public(src: &Path, dst: &Path) -> anyhow::Result<usize> {
+    std::fs::create_dir_all(dst)?;
+    let mut count = 0usize;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let path = entry.path();
+        let target = dst.join(entry.file_name());
+        if path.is_dir() {
+            count += copy_public(&path, &target)?;
+        } else if path.is_file() {
+            std::fs::copy(&path, &target)?;
+            count += 1;
+        }
+    }
+    Ok(count)
 }

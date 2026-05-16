@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use boa_engine::module::{ModuleLoader, Referrer};
 use boa_engine::{Context, JsError, JsNativeError, JsResult, JsString, Module, Source};
 
-use crate::runtime::{runtime_module, test_module};
+use crate::runtime::{http_module, runtime_module, test_module};
 use crate::transpile::{TranspileOptions, transpile_typescript};
 
 /// Module loader for the `zero test` harness.
@@ -20,6 +20,7 @@ pub struct ZeroModuleLoader {
     root: PathBuf,
     runtime_src: String,
     test_src: String,
+    http_src: String,
     /// Cache: canonical path string → parsed Module (avoids double-parse within one context).
     module_cache: RefCell<HashMap<String, Module>>,
     /// Side table: module path string → absolute PathBuf (used to resolve relative imports).
@@ -36,6 +37,7 @@ impl ZeroModuleLoader {
             root: root.to_path_buf(),
             runtime_src: runtime_module(),
             test_src: test_module(),
+            http_src: http_module(),
             module_cache: RefCell::new(HashMap::new()),
             path_map: RefCell::new(HashMap::new()),
         }
@@ -247,6 +249,18 @@ impl ModuleLoader for ZeroModuleLoader {
                     self.module_cache
                         .borrow_mut()
                         .insert("zero/test".to_string(), m.clone());
+                    Ok(m)
+                }
+                "zero/http" => {
+                    let mut ctx = context.borrow_mut();
+                    let m = Module::parse(
+                        Source::from_bytes(self.http_src.as_bytes()),
+                        None,
+                        &mut ctx,
+                    )?;
+                    self.module_cache
+                        .borrow_mut()
+                        .insert("zero/http".to_string(), m.clone());
                     Ok(m)
                 }
                 "zero/components" => {
@@ -469,6 +483,36 @@ mod tests {
         assert!(
             loader_rc.get_cached("zero/components").is_some(),
             "zero/components not in cache after load"
+        );
+    }
+
+    #[test]
+    fn resolves_zero_http_module() {
+        let dir = make_root();
+        let loader = ZeroModuleLoader::new(dir.path());
+        let (mut ctx, loader_rc) = make_context_with_loader(loader);
+
+        let m = Module::parse(
+            Source::from_bytes(b"import { createHttp } from 'zero/http';"),
+            None,
+            &mut ctx,
+        )
+        .expect("failed to parse");
+
+        let promise = m.load_link_evaluate(&mut ctx);
+        let _ = ctx.run_jobs();
+        let state = promise.state();
+        assert!(
+            !matches!(
+                state,
+                boa_engine::builtins::promise::PromiseState::Rejected(_)
+            ),
+            "zero/http rejected: {state:?}"
+        );
+
+        assert!(
+            loader_rc.get_cached("zero/http").is_some(),
+            "zero/http not in cache after load"
         );
     }
 

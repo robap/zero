@@ -93,13 +93,7 @@ pub fn run_with(cwd: &Path, yes: bool, confirmer: &mut dyn Confirmer) -> anyhow:
         .map_err(|e| anyhow::anyhow!("zero update: failed to read zero.toml: {e}"))?;
     let config = crate::config::Config::from_toml_str(&toml_text)?;
     let project_root = cwd.join(&config.project.root);
-
-    if !project_root.join(".zero").is_dir() {
-        anyhow::bail!(
-            "zero update: no .zero/ directory found at {} — this project predates the .zero layout; re-run 'zero init' in a fresh directory or create .zero/ manually",
-            project_root.display()
-        );
-    }
+    let bootstrapped = !project_root.join(".zero").is_dir();
 
     let plan = compute_plan(&project_root)?;
     if plan.is_empty() {
@@ -142,10 +136,17 @@ pub fn run_with(cwd: &Path, yes: bool, confirmer: &mut dyn Confirmer) -> anyhow:
 
     apply(&project_root, &to_apply)?;
     let (a, u, r) = count_kinds(&to_apply);
-    println!(
-        "zero update: applied {} operations ({a} added, {u} updated, {r} removed).",
-        to_apply.len()
-    );
+    if bootstrapped {
+        println!(
+            "zero update: bootstrapped .zero/ — applied {} operations ({a} added, {u} updated, {r} removed).",
+            to_apply.len()
+        );
+    } else {
+        println!(
+            "zero update: applied {} operations ({a} added, {u} updated, {r} removed).",
+            to_apply.len()
+        );
+    }
     Ok(())
 }
 
@@ -380,7 +381,7 @@ impl Confirmer for StdinConfirmer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scaffold::{ScaffoldContext, write_initial_project};
+    use crate::scaffold::{ScaffoldContext, write_initial_project, write_user_files};
     use tempfile::tempdir;
 
     fn scaffold() -> (tempfile::TempDir, std::path::PathBuf) {
@@ -492,20 +493,44 @@ mod tests {
     }
 
     #[test]
-    fn update_refuses_when_no_dot_zero_dir() {
+    fn update_bootstraps_missing_dot_zero() {
         let dir = tempdir().unwrap();
         let root = dir.path().to_path_buf();
-        fs::write(root.join("zero.toml"), "[project]\nroot = \".\"\n").unwrap();
+        fs::write(
+            root.join("zero.toml"),
+            "[project]\nroot = \".\"\n\n[build]\nout = \"dist\"\n",
+        )
+        .unwrap();
+        // Write user files only — no `.zero/` on entry.
+        write_user_files(
+            &root,
+            &ScaffoldContext {
+                title: "T".to_string(),
+            },
+        )
+        .unwrap();
+        assert!(
+            !root.join(".zero").is_dir(),
+            "precondition: .zero/ must not exist before run_with"
+        );
+
         let mut stub = StubConfirmer {
             top: TopDecision::ApplyAll,
             per_op: Vec::new(),
             final_apply: true,
         };
-        let err = run_with(&root, true, &mut stub).expect_err("should fail without .zero/");
+        run_with(&root, true, &mut stub).expect("update should bootstrap a missing .zero/");
+
         assert!(
-            err.to_string().contains("no .zero/ directory found"),
-            "unexpected error: {err}"
+            root.join(".zero").is_dir(),
+            ".zero/ should exist after bootstrap"
         );
+        for (rel, _) in framework_manifest() {
+            assert!(
+                root.join(rel).exists(),
+                "expected manifest path {rel} to be materialized on disk"
+            );
+        }
     }
 
     #[test]

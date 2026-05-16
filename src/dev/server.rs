@@ -20,13 +20,17 @@ use crate::dev::local::serve_local_index;
 use crate::dev::proxy::{ProxyState, proxy_request};
 use crate::dev::sse::{ReloadBus, sse_handler};
 use crate::dev::watch;
-use crate::runtime::{ZERO_TEST_TYPES_BODY, ZERO_TYPES_BODY, runtime_module};
+use crate::runtime::{
+    ZERO_HTTP_TYPES_BODY, ZERO_TEST_TYPES_BODY, ZERO_TYPES_BODY, http_module, runtime_module,
+};
 
 /// Shared state passed to dev-server handlers.
 #[derive(Clone)]
 pub struct AppState {
     /// Precomputed runtime module text (built once at server start).
     pub runtime: String,
+    /// Precomputed `zero/http` module text.
+    pub http: String,
     /// Canonicalized path to `<project-root>/<config.project.root>`.
     pub root: PathBuf,
     /// Proxy state; `None` in no-proxy (static SPA) mode.
@@ -71,6 +75,9 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
     if let Err(e) = std::fs::write(dot_zero.join("zero-test.d.ts"), ZERO_TEST_TYPES_BODY) {
         eprintln!("zero dev: failed to write .zero/zero-test.d.ts: {e}");
     }
+    if let Err(e) = std::fs::write(dot_zero.join("zero-http.d.ts"), ZERO_HTTP_TYPES_BODY) {
+        eprintln!("zero dev: failed to write .zero/zero-http.d.ts: {e}");
+    }
 
     let proxy = config
         .dev
@@ -85,6 +92,7 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
     let (shutdown_tx, shutdown_rx) = shutdown_watch::channel(false);
     let state = Arc::new(AppState {
         runtime: runtime_module(),
+        http: http_module(),
         root,
         proxy,
         bus,
@@ -96,6 +104,7 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/_zero/events", get(sse_handler))
         .route("/zero.js", get(serve_runtime))
+        .route("/zero-http.js", get(serve_http_runtime))
         .route(
             "/src/*path",
             get(
@@ -228,5 +237,18 @@ async fn serve_runtime(State(state): State<Arc<AppState>>) -> impl IntoResponse 
             "application/javascript; charset=utf-8",
         )],
         state.runtime.clone(),
+    )
+}
+
+/// `GET /zero-http.js` handler: respond with the precomputed `zero/http`
+/// module body.
+async fn serve_http_runtime(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        [(
+            header::CONTENT_TYPE,
+            "application/javascript; charset=utf-8",
+        )],
+        state.http.clone(),
     )
 }

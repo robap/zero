@@ -123,6 +123,26 @@ describe('html tagged template', () => {
     assert.equal(r._template.parts.length, 1);
     assert.equal(r._template.parts[0].type, 'ref');
   });
+
+  it('creates <svg> in the SVG namespace', () => {
+    const r = html`<svg viewBox="0 0 24 24"></svg>`;
+    const svg = r._template.fragment.childNodes[0];
+    assert.equal(svg.namespaceURI, 'http://www.w3.org/2000/svg');
+  });
+
+  it('creates descendants of <svg> in the SVG namespace', () => {
+    const r = html`<svg><circle cx="12" cy="12" r="9"></circle></svg>`;
+    const svg = r._template.fragment.childNodes[0];
+    const circle = svg.childNodes[0];
+    assert.equal(circle.namespaceURI, 'http://www.w3.org/2000/svg');
+  });
+
+  it('returns to the HTML namespace after </svg>', () => {
+    const r = html`<div><svg></svg><span></span></div>`;
+    const div = r._template.fragment.childNodes[0];
+    const span = div.childNodes[1];
+    assert.equal(span.namespaceURI, 'http://www.w3.org/1999/xhtml');
+  });
 });
 
 describe('commit() — attr parts', () => {

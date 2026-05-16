@@ -1,0 +1,106 @@
+@use "../.zero/styles/zero";
+
+// App header — thin wrapper over design-system tokens. No bespoke colors
+// or spacing; everything cascades through the existing layer.
+.app-header {
+    background: var(--color-surface);
+    border-bottom: var(--border-thin) solid var(--color-border);
+}
+
+.app-header-brand {
+    color: var(--color-text);
+    text-decoration: none;
+    font-weight: var(--weight-bold);
+}
+
+.app-header-title {
+    font-size: var(--font-lg);
+}
+
+.app-main {
+    display: block;
+    color: var(--color-text);
+    background: var(--color-bg);
+}
+
+// Login surface — small affordance for the error message; uses the danger
+// foreground token so the message stays legible in either theme.
+.login-error {
+    color: var(--color-danger);
+    font-size: var(--font-sm);
+}
+
+// Dashboard shell — sidebar nav + content panel. The sidebar uses the
+// surface token so it reads as a chrome layer; nav links inherit text
+// color and add a subtle hover state via the link token.
+.dashboard-shell {
+    align-items: stretch;
+    min-height: calc(100vh - 4rem);
+}
+
+.dashboard-nav {
+    background: var(--color-surface);
+    border-right: var(--border-thin) solid var(--color-border);
+    min-width: 12rem;
+
+    a {
+        color: var(--color-text);
+        text-decoration: none;
+    }
+
+    a:hover {
+        color: var(--color-link);
+    }
+}
+
+.dashboard-content {
+    flex: 1 1 auto;
+}
+
+// Issue list — keep rows readable: title takes the available width, meta
+// is muted, the status badge stays compact.
+.issue-row {
+    align-items: center;
+    border-bottom: var(--border-thin) solid var(--color-border);
+}
+
+.issue-row-title {
+    color: var(--color-text);
+    text-decoration: none;
+    flex: 1 1 auto;
+}
+
+.issue-row-title:hover {
+    color: var(--color-link);
+}
+
+.issue-row-meta {
+    color: var(--color-text-muted);
+    font-size: var(--font-sm);
+}
+
+.issue-detail-meta {
+    color: var(--color-text-muted);
+    font-size: var(--font-sm);
+}
+
+// Comment thread — soft surfaces; date stamp muted.
+.comment {
+    background: var(--color-surface);
+    padding: var(--pad-sm);
+    border-radius: var(--radius-sm);
+}
+
+.comment-date {
+    color: var(--color-text-muted);
+    font-size: var(--font-sm);
+}
+
+.comment-thread-empty {
+    color: var(--color-text-muted);
+    font-style: italic;
+}
+
+.comment-form {
+    margin-top: var(--gap-md);
+}

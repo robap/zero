@@ -100,6 +100,7 @@ pub fn framework_manifest() -> Vec<(&'static str, &'static str)> {
     vec![
         (".zero/zero.d.ts", crate::runtime::ZERO_TYPES_BODY),
         (".zero/zero-test.d.ts", crate::runtime::ZERO_TEST_TYPES_BODY),
+        (".zero/zero-http.d.ts", crate::runtime::ZERO_HTTP_TYPES_BODY),
         (".zero/styles/_tokens.scss", TPL_TOKENS_SCSS),
         (".zero/styles/_base.scss", TPL_BASE_SCSS),
         (".zero/styles/_layout.scss", TPL_LAYOUT_SCSS),
@@ -166,7 +167,7 @@ pub fn framework_manifest() -> Vec<(&'static str, &'static str)> {
 ///
 /// # Returns
 /// `Ok(())` on success, an error otherwise.
-fn write_user_files(root_dir: &Path, ctx: &ScaffoldContext) -> anyhow::Result<()> {
+pub(crate) fn write_user_files(root_dir: &Path, ctx: &ScaffoldContext) -> anyhow::Result<()> {
     fs::create_dir_all(root_dir.join("src").join("routes"))?;
     fs::create_dir_all(root_dir.join("styles"))?;
 
@@ -248,6 +249,43 @@ mod tests {
         };
         write_initial_project(&root, &ctx).unwrap();
         (dir, root)
+    }
+
+    /// Return the `{ ... }` body of the first CSS rule whose selector
+    /// line begins with `selector`. Newlines preserved. Returns `None`
+    /// if the selector is not found or the braces are unbalanced.
+    fn extract_rule_block(css: &str, selector: &str) -> Option<String> {
+        let head_idx = css.lines().enumerate().find_map(|(i, line)| {
+            if line.trim_start().starts_with(selector) {
+                Some(i)
+            } else {
+                None
+            }
+        })?;
+        let mut byte_start = css
+            .lines()
+            .take(head_idx)
+            .map(|l| l.len() + 1)
+            .sum::<usize>();
+        let after_brace = css[byte_start..].find('{')?;
+        byte_start += after_brace + 1;
+        let mut depth = 1usize;
+        let mut byte_end = byte_start;
+        for (i, ch) in css[byte_start..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        byte_end = byte_start + i;
+                        return Some(css[byte_start..byte_end].to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+        let _ = byte_end;
+        None
     }
 
     #[test]
@@ -388,6 +426,9 @@ mod tests {
         let zero_test_dts = fs::read_to_string(root.join(".zero/zero-test.d.ts")).unwrap();
         assert!(zero_test_dts.contains("declare module \"zero/test\""));
 
+        let zero_http_dts = fs::read_to_string(root.join(".zero/zero-http.d.ts")).unwrap();
+        assert!(zero_http_dts.contains("declare module \"zero/http\""));
+
         let tokens_scss = fs::read_to_string(root.join(".zero/styles/_tokens.scss")).unwrap();
         assert!(tokens_scss.contains("--color-primary:"));
 
@@ -396,6 +437,21 @@ mod tests {
 
         let layout_scss = fs::read_to_string(root.join(".zero/styles/_layout.scss")).unwrap();
         assert!(!layout_scss.is_empty());
+
+        let split_block = extract_rule_block(&layout_scss, ".split")
+            .expect("_layout.scss must declare a .split rule");
+        assert!(
+            split_block.contains("display: flex;"),
+            ".split must be a flex container, got:\n{split_block}"
+        );
+        assert!(
+            split_block.contains("justify-content: space-between;"),
+            ".split must use justify-content: space-between, got:\n{split_block}"
+        );
+        assert!(
+            !split_block.contains("grid-template-columns"),
+            ".split must not retain its previous grid definition, got:\n{split_block}"
+        );
 
         let utilities_scss = fs::read_to_string(root.join(".zero/styles/_utilities.scss")).unwrap();
         assert!(!utilities_scss.is_empty());
@@ -445,6 +501,7 @@ mod tests {
             "## Testing",
             "## JSDoc conventions",
             "## Common pitfalls",
+            "## Best practices",
         ] {
             assert!(
                 agents.contains(sentinel),
@@ -608,6 +665,16 @@ mod tests {
     }
 
     #[test]
+    fn tsconfig_include_contains_zero_http_dts() {
+        let (_dir, root) = fresh_scaffold();
+        let tsconfig = fs::read_to_string(root.join("tsconfig.json")).unwrap();
+        assert!(
+            tsconfig.contains(".zero/zero-http.d.ts"),
+            "tsconfig.json missing .zero/zero-http.d.ts in include: {tsconfig}"
+        );
+    }
+
+    #[test]
     fn framework_manifest_matches_expected_path_set() {
         let manifest = framework_manifest();
         let actual: BTreeSet<&str> = manifest.iter().map(|(p, _)| *p).collect();
@@ -615,6 +682,7 @@ mod tests {
             // Type declarations + style aggregate.
             ".zero/zero.d.ts",
             ".zero/zero-test.d.ts",
+            ".zero/zero-http.d.ts",
             ".zero/components.d.ts",
             ".zero/components/index.ts",
             // Design-system SCSS partials + aggregate.

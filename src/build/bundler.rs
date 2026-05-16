@@ -7,7 +7,7 @@ use regex::Regex;
 
 use crate::build::resolver::{ModuleId, resolve};
 use crate::config::Config;
-use crate::runtime::{ZERO_RUNTIME_BODY, ZERO_RUNTIME_EXPORTS};
+use crate::runtime::{ZERO_HTTP_BODY, ZERO_HTTP_EXPORTS, ZERO_RUNTIME_BODY, ZERO_RUNTIME_EXPORTS};
 use crate::transpile::{TranspileOptions, transpile_typescript};
 
 /// Bundle product: the JS source and optional sourcemap JSON.
@@ -57,6 +57,7 @@ pub fn bundle(config: &Config, emit_sourcemap: bool) -> anyhow::Result<BundleOut
     // BFS to collect modules in visit order (dependencies first via post-order).
     let mut sources: HashMap<ModuleId, String> = HashMap::new();
     sources.insert(ModuleId::Runtime, ZERO_RUNTIME_BODY.to_string());
+    sources.insert(ModuleId::Http, ZERO_HTTP_BODY.to_string());
     let mut order: Vec<ModuleId> = Vec::new();
     let mut visited: HashSet<ModuleId> = HashSet::new();
     let mut queue: VecDeque<(ModuleId, PathBuf)> = VecDeque::new();
@@ -70,6 +71,7 @@ pub fn bundle(config: &Config, emit_sourcemap: bool) -> anyhow::Result<BundleOut
 
         let src = match &id {
             ModuleId::Runtime => ZERO_RUNTIME_BODY.to_string(),
+            ModuleId::Http => ZERO_HTTP_BODY.to_string(),
             ModuleId::User(rel) => {
                 let raw = std::fs::read_to_string(&path)
                     .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
@@ -92,7 +94,7 @@ pub fn bundle(config: &Config, emit_sourcemap: bool) -> anyhow::Result<BundleOut
         };
         sources.insert(id.clone(), src.clone());
 
-        let importer_dir = if id == ModuleId::Runtime {
+        let importer_dir = if matches!(id, ModuleId::Runtime | ModuleId::Http) {
             root.to_path_buf()
         } else {
             path.parent().unwrap_or(&root).to_path_buf()
@@ -103,7 +105,7 @@ pub fn bundle(config: &Config, emit_sourcemap: bool) -> anyhow::Result<BundleOut
             let dep_id = resolve(&specifier, &importer_dir, &root)?;
             if !visited.contains(&dep_id) {
                 match &dep_id {
-                    ModuleId::Runtime => {
+                    ModuleId::Runtime | ModuleId::Http => {
                         queue.push_front((dep_id, PathBuf::new()));
                     }
                     ModuleId::User(rel) => {
@@ -119,8 +121,12 @@ pub fn bundle(config: &Config, emit_sourcemap: bool) -> anyhow::Result<BundleOut
     // Emit the bundle.
     let mut out = String::from(PREAMBLE);
 
-    // Emit in order (Runtime first if present, then user modules in dependency order).
+    // Emit in order (synthetic modules first, then user modules in dependency order).
     let mut emit_order = order.clone();
+    if emit_order.contains(&ModuleId::Http) {
+        emit_order.retain(|id| *id != ModuleId::Http);
+        emit_order.insert(0, ModuleId::Http);
+    }
     if emit_order.contains(&ModuleId::Runtime) {
         emit_order.retain(|id| *id != ModuleId::Runtime);
         emit_order.insert(0, ModuleId::Runtime);
@@ -138,7 +144,7 @@ pub fn bundle(config: &Config, emit_sourcemap: bool) -> anyhow::Result<BundleOut
     // Bootstrap call.
     let bootstrap_id = match &entry_id {
         ModuleId::User(rel) => rel.to_string_lossy().into_owned(),
-        ModuleId::Runtime => unreachable!(),
+        ModuleId::Runtime | ModuleId::Http => unreachable!(),
     };
     out.push_str(&format!("\n__zero_require('{bootstrap_id}');\n"));
 
@@ -168,6 +174,7 @@ fn build_combined_sourcemap(emit_order: &[ModuleId]) -> anyhow::Result<String> {
             builder.add_source(&s);
         }
     }
+    // Runtime and Http synthetic modules are not user files; skip them.
     let sm = builder.into_sourcemap();
     let mut buf: Vec<u8> = Vec::new();
     sm.to_writer(&mut buf)
@@ -179,6 +186,7 @@ fn build_combined_sourcemap(emit_order: &[ModuleId]) -> anyhow::Result<String> {
 fn module_id_string(id: &ModuleId) -> String {
     match id {
         ModuleId::Runtime => "'zero'".to_string(),
+        ModuleId::Http => "'zero/http'".to_string(),
         ModuleId::User(rel) => format!("'{}'", rel.to_str().unwrap_or("?")),
     }
 }
@@ -192,6 +200,9 @@ fn rewrite_module(
 ) -> anyhow::Result<String> {
     if _id == &ModuleId::Runtime {
         return rewrite_runtime_exports(src);
+    }
+    if _id == &ModuleId::Http {
+        return rewrite_http_exports(src);
     }
 
     let single_line_import =
@@ -376,6 +387,7 @@ fn rewrite_module(
             if let Ok(resolved) = resolve(spec, &importer_dir, root) {
                 match resolved {
                     ModuleId::Runtime => "__zero_require('zero')".to_string(),
+                    ModuleId::Http => "__zero_require('zero/http')".to_string(),
                     ModuleId::User(rel) => {
                         format!("__zero_require('{}')", rel.to_str().unwrap_or(spec))
                     }
@@ -394,6 +406,16 @@ fn rewrite_module(
 fn rewrite_runtime_exports(body: &str) -> anyhow::Result<String> {
     let mut out = body.to_string();
     for name in ZERO_RUNTIME_EXPORTS {
+        out.push_str(&format!("\nexports.{name} = {name};\n"));
+    }
+    Ok(out)
+}
+
+/// Rewrite the http body for the CJS factory: append `exports.x = x;` for
+/// each public name.
+fn rewrite_http_exports(body: &str) -> anyhow::Result<String> {
+    let mut out = body.to_string();
+    for name in ZERO_HTTP_EXPORTS {
         out.push_str(&format!("\nexports.{name} = {name};\n"));
     }
     Ok(out)
@@ -543,6 +565,32 @@ const app = new App();
         assert!(
             json.contains("./src/app.ts"),
             "sources missing entry: {json}"
+        );
+    }
+
+    #[test]
+    fn bundle_inlines_zero_http_when_imported() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("web");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("src/app.ts"),
+            "import { createHttp } from \"zero/http\";\nconst c = createHttp();\nconsole.log(c);\n",
+        )
+        .unwrap();
+        let result = with_cwd(dir.path(), || bundle(&write_minimal_config(&root), false));
+        let bundled = result.unwrap().code;
+        assert!(
+            bundled.contains("__zero_define('zero/http'"),
+            "missing zero/http module definition: {bundled}"
+        );
+        assert!(
+            bundled.contains("function createHttp("),
+            "createHttp factory not inlined: {bundled}"
+        );
+        assert!(
+            bundled.contains("__zero_require('zero/http')"),
+            "user module did not require zero/http: {bundled}"
         );
     }
 

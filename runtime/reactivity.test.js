@@ -194,6 +194,24 @@ describe('scope (internal)', () => {
     assert.equal(count, 1);
   });
 
+  it('onCleanup() callbacks run on dispose', () => {
+    const scope = _createScope();
+    let cleaned = 0;
+    scope.onCleanup(() => { cleaned++; });
+    assert.equal(cleaned, 0);
+    scope.dispose();
+    assert.equal(cleaned, 1);
+  });
+
+  it('multiple onCleanup() callbacks all run on dispose', () => {
+    const scope = _createScope();
+    const log = [];
+    scope.onCleanup(() => log.push('a'));
+    scope.onCleanup(() => log.push('b'));
+    scope.dispose();
+    assert.deepEqual(log.sort(), ['a', 'b']);
+  });
+
   it('scope.run() restores active scope after completion', () => {
     const s = signal(0);
     let outerCount = 0;

@@ -29,6 +29,10 @@ declare module "zero" {
   export function signal<T>(initial: T): Signal<T>;
   export function computed<T>(fn: () => T): Computed<T>;
   export function effect(fn: () => void | (() => void)): () => void;
+
+  export interface StateTypes {}
+
+  export function inject<K extends keyof StateTypes>(key: K): StateTypes[K];
   export function inject<T = unknown>(key: string): T;
 
   export function html(

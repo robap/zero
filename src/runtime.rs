@@ -20,6 +20,15 @@ pub const ZERO_TYPES_BODY: &str = include_str!(concat!(env!("OUT_DIR"), "/zero_t
 pub const ZERO_TEST_TYPES_BODY: &str =
     include_str!(concat!(env!("OUT_DIR"), "/zero_test_types_body.d.ts"));
 
+/// Cleaned http module body (imports stripped, exports flattened). Synthetic
+/// module served as `/zero-http.js` in dev and inlined by the bundler.
+pub const ZERO_HTTP_BODY: &str = include_str!(concat!(env!("OUT_DIR"), "/zero_http_body.js"));
+
+/// TypeScript declarations for the `"zero/http"` module, embedded verbatim
+/// from `runtime/zero-http.d.ts`.
+pub const ZERO_HTTP_TYPES_BODY: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/zero_http_types_body.d.ts"));
+
 /// Public names re-exported by the concatenated runtime.
 pub const ZERO_RUNTIME_EXPORTS: &[&str] = &[
     "signal",
@@ -40,6 +49,9 @@ pub const ZERO_RUNTIME_EXPORTS: &[&str] = &[
     "_createScope",
     "_getCurrentApp",
 ];
+
+/// Names exported by the `zero/http` module.
+pub const ZERO_HTTP_EXPORTS: &[&str] = &["createHttp", "HttpError"];
 
 /// Names exported by the `zero/test` module.
 pub const ZERO_TEST_EXPORTS: &[&str] = &[
@@ -72,6 +84,22 @@ pub fn runtime_module() -> String {
     }
     s.push_str("export { ");
     s.push_str(&ZERO_RUNTIME_EXPORTS.join(", "));
+    s.push_str(" };\n");
+    s
+}
+
+/// Compose `ZERO_HTTP_BODY` with a trailing `export { ... }` block of the
+/// public names. The module is self-contained — no imports needed.
+///
+/// # Returns
+/// A complete ES module string ready to register under `"zero/http"`.
+pub fn http_module() -> String {
+    let mut s = String::from(ZERO_HTTP_BODY);
+    if !s.ends_with('\n') {
+        s.push('\n');
+    }
+    s.push_str("export { ");
+    s.push_str(&ZERO_HTTP_EXPORTS.join(", "));
     s.push_str(" };\n");
     s
 }
@@ -247,6 +275,18 @@ mod tests {
     }
 
     #[test]
+    fn zero_types_body_declares_state_types_registry() {
+        assert!(
+            ZERO_TYPES_BODY.contains("interface StateTypes"),
+            "zero.d.ts should declare `interface StateTypes` for the typed inject registry"
+        );
+        assert!(
+            ZERO_TYPES_BODY.contains("inject<K extends keyof StateTypes>"),
+            "zero.d.ts should declare the typed inject overload `inject<K extends keyof StateTypes>`"
+        );
+    }
+
+    #[test]
     fn test_module_ends_with_aggregate_export_block_for_test_exports() {
         let m = test_module();
         let last_export = m.rfind("export {").expect("expected an `export {` block");
@@ -256,5 +296,49 @@ mod tests {
                 "trailing export block should mention `{name}`"
             );
         }
+    }
+
+    #[test]
+    fn http_module_contains_create_http_factory() {
+        let m = http_module();
+        assert!(
+            m.contains("function createHttp("),
+            "expected http module to contain `function createHttp(`"
+        );
+        assert!(
+            m.contains("class HttpError"),
+            "expected http module to contain `class HttpError`"
+        );
+    }
+
+    #[test]
+    fn http_module_ends_with_aggregate_export_block() {
+        let m = http_module();
+        let last_export = m.rfind("export {").expect("expected an `export {` block");
+        for name in ZERO_HTTP_EXPORTS {
+            assert!(
+                m[last_export..].contains(name),
+                "trailing http export block should mention `{name}`"
+            );
+        }
+    }
+
+    #[test]
+    fn zero_http_types_body_declares_every_public_export() {
+        for name in ZERO_HTTP_EXPORTS {
+            assert!(
+                ZERO_HTTP_TYPES_BODY.contains(name),
+                "zero-http.d.ts missing declaration for http export `{name}`"
+            );
+        }
+    }
+
+    #[test]
+    fn http_body_has_no_top_level_imports() {
+        let re = regex::Regex::new(r"(?m)^\s*import\s").unwrap();
+        assert!(
+            !re.is_match(ZERO_HTTP_BODY),
+            "ZERO_HTTP_BODY should not contain a top-level `import` statement"
+        );
     }
 }

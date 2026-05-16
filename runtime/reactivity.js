@@ -156,12 +156,25 @@ function createScope() {
   const scope = {
     _effects: new Set(),
     _children: new Set(),
+    _cleanups: [],
     dispose() {
       for (const stop of [...scope._effects]) stop();
       scope._effects.clear();
       for (const child of [...scope._children]) child.dispose();
       scope._children.clear();
+      for (const fn of scope._cleanups) {
+        try { fn(); } catch (_) { /* swallow */ }
+      }
+      scope._cleanups.length = 0;
       if (_parentScope) _parentScope._children.delete(scope);
+    },
+    /**
+     * Register `fn` to run when this scope is disposed. Callbacks run in
+     * registration order after effects and child scopes have been torn down.
+     * @param {() => void} fn
+     */
+    onCleanup(fn) {
+      scope._cleanups.push(fn);
     },
     /** @param {() => *} fn */
     run(fn) {

@@ -1,0 +1,8 @@
+[project]
+root = "web"
+
+[dev]
+port = 5180
+
+[build]
+out = "dist"
