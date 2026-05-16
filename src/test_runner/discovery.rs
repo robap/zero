@@ -93,8 +93,13 @@ fn walk_dir(
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
 
-        // Skip hidden entries.
+        // Skip hidden entries — narrow exception: descend into `.zero/`
+        // but only its `components/` subtree, so framework-shipped
+        // component tests get picked up by `zero test`.
         if name_str.starts_with('.') {
+            if name_str == ".zero" && path.is_dir() {
+                walk_dot_zero(&path, out_dir, out)?;
+            }
             continue;
         }
         // Skip node_modules.
@@ -113,6 +118,21 @@ fn walk_dir(
         }
     }
 
+    Ok(())
+}
+
+/// Walk the `components/` subtree of a `.zero/` directory. All other
+/// subtrees of `.zero/` are framework-owned scaffolding and are not
+/// searched for tests.
+fn walk_dot_zero(
+    dot_zero: &std::path::Path,
+    out_dir: &std::path::Path,
+    out: &mut Vec<PathBuf>,
+) -> anyhow::Result<()> {
+    let components = dot_zero.join("components");
+    if components.is_dir() {
+        walk_dir(&components, out_dir, out)?;
+    }
     Ok(())
 }
 
@@ -227,6 +247,69 @@ mod tests {
             result.files[0]
                 .to_string_lossy()
                 .ends_with("visible.test.js")
+        );
+    }
+
+    #[test]
+    fn walks_into_dot_zero_components() {
+        let dir = make_root();
+        let root = dir.path();
+        let out = root.join("dist");
+
+        fs::create_dir_all(root.join(".zero/components")).unwrap();
+        fs::write(root.join(".zero/components/Foo.test.ts"), "").unwrap();
+        fs::write(root.join("visible.test.ts"), "").unwrap();
+
+        let result = discover(opts(root, &out, None)).unwrap();
+        let names: Vec<String> = result
+            .files
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            names.iter().any(|n| n.ends_with("Foo.test.ts")),
+            "discovery did not pick up .zero/components/Foo.test.ts: {names:?}"
+        );
+    }
+
+    #[test]
+    fn does_not_walk_into_other_dot_zero_subdirs() {
+        let dir = make_root();
+        let root = dir.path();
+        let out = root.join("dist");
+
+        fs::create_dir_all(root.join(".zero/styles")).unwrap();
+        fs::write(root.join(".zero/styles/extra.test.ts"), "").unwrap();
+        fs::write(root.join("visible.test.ts"), "").unwrap();
+
+        let result = discover(opts(root, &out, None)).unwrap();
+        let names: Vec<String> = result
+            .files
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            !names.iter().any(|n| n.contains(".zero/styles")),
+            "discovery wrongly picked up .zero/styles/extra.test.ts: {names:?}"
+        );
+    }
+
+    #[test]
+    fn still_skips_other_hidden_dirs() {
+        let dir = make_root();
+        let root = dir.path();
+        let out = root.join("dist");
+
+        fs::create_dir_all(root.join(".hidden")).unwrap();
+        fs::write(root.join(".hidden/foo.test.ts"), "").unwrap();
+        fs::write(root.join("visible.test.ts"), "").unwrap();
+
+        let result = discover(opts(root, &out, None)).unwrap();
+        assert_eq!(result.files.len(), 1);
+        assert!(
+            result.files[0]
+                .to_string_lossy()
+                .ends_with("visible.test.ts")
         );
     }
 

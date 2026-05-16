@@ -1,0 +1,8 @@
+[project]
+root = "."
+
+[dev]
+port = 5174
+
+[build]
+out = "dist"

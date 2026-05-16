@@ -2,10 +2,11 @@
 
 `zero` is a zero-dependency frontend framework distributed as a single CLI binary. This file is the authoritative API reference for building applications against the version of `zero` that scaffolded this project. Every example here is valid against the framework's current runtime. If a feature is not described here, it is not yet implemented.
 
-The framework exposes two import paths:
+The framework exposes three import paths:
 
 - `"zero"` — the runtime: `App`, reactivity, templates, routing, components.
 - `"zero/test"` — the test runner and DOM helpers.
+- `"zero/components"` — the shipped component library (Button, Input, Dialog, …).
 
 Any identifier whose name begins with `_` or `__` is internal — do not import or rely on it.
 
@@ -586,6 +587,101 @@ The dark-mode override applies only to the seven `--color-*` tokens (`--color-bg
 
 ---
 
+## Component library
+
+`zero` ships a fixed component library under `.zero/components/`. Import via `"zero/components"`. Components are plain function components in zero's once-per-mount style; stateful props accept signals directly, so a parent owns the lifecycle and the component just reads `.val` / writes `.set()`.
+
+```ts
+import { Button, Input, Dialog } from "zero/components";
+```
+
+| Component  | What it is                              | Stateful prop |
+| ---------- | --------------------------------------- | --- |
+| `Avatar`   | Image or initials in a colored circle.  | — |
+| `Badge`    | Small inline label.                     | — |
+| `Button`   | Primary interactive button.             | — |
+| `Card`     | Container with optional title.          | — |
+| `Checkbox` | Native checkbox wired to a signal.      | `checked: Signal<boolean>` |
+| `Dialog`   | Modal overlay with Esc-to-close.        | `open: Signal<boolean>` |
+| `Input`    | Single-line text field wired to signal. | `value: Signal<string>` |
+| `Radio`    | Radio button in a named group.          | `selected: Signal<string>` |
+| `Select`   | Native `<select>` wired to a signal.    | `value: Signal<string>` |
+| `Spinner`  | CSS-only rotating status indicator.     | — |
+| `Tabs`     | Tablist with reactive panel content.    | `active: Signal<string>` |
+| `TextArea` | Multi-line text field wired to signal.  | `value: Signal<string>` |
+| `Toast`    | Fixed-position transient message.       | `open: Signal<boolean>` |
+| `Toggle`   | Visual switch wired to a signal.        | `checked: Signal<boolean>` |
+
+### Form inputs
+
+```ts
+import { html, signal } from "zero";
+import { Input, Button } from "zero/components";
+
+function LoginForm() {
+  const email = signal("");
+  return html`
+    <form>
+      ${Input({ value: email, type: "email", label: "Email" })}
+      ${Button({ children: "Sign in" })}
+    </form>
+  `;
+}
+```
+
+### Display
+
+```ts
+import { Card, Badge } from "zero/components";
+
+Card({
+  title: "Status",
+  children: Badge({ variant: "success", children: "Healthy" }),
+});
+```
+
+### Overlay
+
+```ts
+import { html, signal } from "zero";
+import { Dialog, Button } from "zero/components";
+
+const open = signal(false);
+html`
+  ${Button({ onClick: () => open.set(true), children: "Open" })}
+  ${Dialog({ open, title: "Confirm", children: html`<p>Are you sure?</p>` })}
+`;
+```
+
+### Feedback
+
+```ts
+import { html, signal } from "zero";
+import { Toast, Spinner } from "zero/components";
+
+const open = signal(false);
+html`
+  ${Spinner({ size: "sm" })}
+  ${Toast({ open, message: "Saved", variant: "success" })}
+`;
+```
+
+### Overriding component CSS
+
+Every component partial is wrapped in `@layer components`, so any rule in your `styles/app.scss` automatically overrides framework component rules without `!important` or extra specificity. Override tokens for a sweeping change; override class rules for a targeted one.
+
+```scss
+// styles/app.scss
+@use '../.zero/styles/zero';
+
+// Bump every button's radius.
+.button { border-radius: var(--radius-lg); }
+```
+
+The in-repo `showcase/` project is the canonical live example — every component rendered in its variants and sizes against a theme switcher.
+
+---
+
 ## The .zero/ directory
 
 `.zero/` is the framework's regenerable file boundary. It is hidden from
@@ -600,12 +696,18 @@ Files currently shipped under `.zero/`:
 | --- | --- |
 | `.zero/zero.d.ts` | TypeScript declarations for the `"zero"` import. |
 | `.zero/zero-test.d.ts` | TypeScript declarations for the `"zero/test"` import. |
+| `.zero/components.d.ts` | TypeScript declarations for the `"zero/components"` import. |
+| `.zero/components/index.ts` | Re-exports every shipped component. |
+| `.zero/components/<Name>.ts` | One source file per component (14 total). |
+| `.zero/components/<Name>.test.ts` | One test file per component (14 total). |
 | `.zero/styles/_tokens.scss` | Design tokens and theme variants. |
 | `.zero/styles/_base.scss` | Minimal reset and token-bound `body` rule. |
 | `.zero/styles/_layout.scss` | Six layout primitives (`cluster`, `stack`, `frame`, `split`, `flank`, `grid`). |
 | `.zero/styles/_utilities.scss` | Gap, padding, and border utility classes. |
 | `.zero/styles/_alignment.scss` | Alignment, justify, self, text-align, and flex-direction utility classes. |
-| `.zero/styles/zero.scss` | Aggregate that `@use`'s the five partials above. |
+| `.zero/styles/_components.scss` | Aggregate that `@use`'s every per-component partial. |
+| `.zero/styles/components/_<name>.scss` | One SCSS partial per component (14 total). |
+| `.zero/styles/zero.scss` | Aggregate that `@use`'s every partial above. |
 
 ### Updating
 

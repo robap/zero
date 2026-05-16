@@ -1,0 +1,51 @@
+@layer components {
+  .toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+    cursor: pointer;
+    color: var(--color-text);
+    font-size: var(--font-md);
+    line-height: var(--leading-normal);
+    position: relative;
+  }
+
+  .toggle-input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .toggle-track {
+    display: inline-block;
+    inline-size: var(--space-xl);
+    block-size: var(--space-md);
+    border-radius: var(--radius-lg);
+    background: var(--color-border);
+    position: relative;
+    transition: background-color 150ms;
+  }
+
+  .toggle-thumb {
+    position: absolute;
+    inset-block: 2px;
+    inset-inline-start: 2px;
+    inline-size: calc(var(--space-md) - 4px);
+    aspect-ratio: 1;
+    border-radius: 50%;
+    background: var(--color-bg);
+    transition: inset-inline-start 150ms;
+  }
+
+  .toggle-input:checked ~ .toggle-track {
+    background: var(--color-primary);
+  }
+
+  .toggle-input:checked ~ .toggle-track .toggle-thumb {
+    inset-inline-start: calc(100% - var(--space-md) + 2px);
+  }
+
+  .toggle-label {
+    user-select: none;
+  }
+}

@@ -128,6 +128,69 @@ impl ZeroModuleLoader {
         Ok(module)
     }
 
+    /// Resolve the bare specifier `"zero/components"` to the user-facing
+    /// component index at `<root>/.zero/components/index.ts`. The index file's
+    /// own relative imports (e.g. `./Button.ts`) are resolved by Boa against
+    /// the module's parsed path, so no synthetic referrer is needed.
+    fn resolve_components_index(&self, context: &mut Context) -> JsResult<Module> {
+        let path = self.root.join(".zero").join("components").join("index.ts");
+
+        let canonical = path.canonicalize().map_err(|e| {
+            JsError::from_native(
+                JsNativeError::error()
+                    .with_message(format!("cannot resolve \"zero/components\": {e}")),
+            )
+        })?;
+
+        if !canonical.starts_with(&self.root) {
+            return Err(JsError::from_native(JsNativeError::error().with_message(
+                "path escape: \"zero/components\" resolves outside the project root".to_string(),
+            )));
+        }
+
+        let key = "zero/components".to_string();
+        if let Some(m) = self.module_cache.borrow().get(&key).cloned() {
+            return Ok(m);
+        }
+
+        let raw = fs::read_to_string(&canonical).map_err(|e| {
+            JsError::from_native(
+                JsNativeError::error()
+                    .with_message(format!("cannot read \"{}\": {e}", canonical.display())),
+            )
+        })?;
+
+        let logical = canonical.to_string_lossy().into_owned();
+        let src = match transpile_typescript(
+            &raw,
+            &TranspileOptions {
+                filename: &logical,
+                inline_source_map: false,
+                emit_source_map: false,
+            },
+        ) {
+            Ok(out) => out.code,
+            Err(e) => {
+                return Err(JsError::from_native(JsNativeError::error().with_message(
+                    format!("transpile error in {}: {e}", canonical.display()),
+                )));
+            }
+        };
+
+        let module = Module::parse(
+            Source::from_bytes(src.as_bytes()).with_path(&canonical),
+            None,
+            context,
+        )?;
+
+        self.module_cache
+            .borrow_mut()
+            .insert(key.clone(), module.clone());
+        self.path_map.borrow_mut().insert(key, canonical);
+
+        Ok(module)
+    }
+
     /// Return the directory of the referrer (for resolving relative specifiers).
     fn referrer_dir(&self, referrer: &Referrer) -> PathBuf {
         match referrer {
@@ -185,6 +248,10 @@ impl ModuleLoader for ZeroModuleLoader {
                         .borrow_mut()
                         .insert("zero/test".to_string(), m.clone());
                     Ok(m)
+                }
+                "zero/components" => {
+                    let mut ctx = context.borrow_mut();
+                    self.resolve_components_index(&mut ctx)
                 }
                 s if s.starts_with("./") || s.starts_with("../") => {
                     let mut ctx = context.borrow_mut();
@@ -365,6 +432,43 @@ mod tests {
                 boa_engine::builtins::promise::PromiseState::Rejected(_)
             ),
             "expected rejection on bad TS, got: {state:?}"
+        );
+    }
+
+    #[test]
+    fn resolves_zero_components_module() {
+        let dir = make_root();
+        let components = dir.path().join(".zero").join("components");
+        std::fs::create_dir_all(&components).unwrap();
+        std::fs::write(
+            components.join("index.ts"),
+            b"export const placeholder: number = 1;",
+        )
+        .unwrap();
+
+        let loader = ZeroModuleLoader::new(dir.path());
+        let (mut ctx, loader_rc) = make_context_with_loader(loader);
+
+        let m = Module::parse(
+            Source::from_bytes(b"import { placeholder } from 'zero/components';"),
+            None,
+            &mut ctx,
+        )
+        .expect("failed to parse entry");
+
+        let promise = m.load_link_evaluate(&mut ctx);
+        let _ = ctx.run_jobs();
+        let state = promise.state();
+        assert!(
+            !matches!(
+                state,
+                boa_engine::builtins::promise::PromiseState::Rejected(_)
+            ),
+            "zero/components rejected: {state:?}"
+        );
+        assert!(
+            loader_rc.get_cached("zero/components").is_some(),
+            "zero/components not in cache after load"
         );
     }
 

@@ -1,0 +1,32 @@
+@layer components {
+  .card {
+    display: block;
+    padding: var(--space-md);
+    border-radius: var(--radius-lg);
+    // Break long unbreakable strings (URLs, identifiers) so card content
+    // never overflows its container at narrow widths.
+    overflow-wrap: anywhere;
+  }
+
+  .card-surface {
+    background: var(--color-surface);
+    color: var(--color-text);
+  }
+
+  .card-outlined {
+    background: transparent;
+    color: var(--color-text);
+    border: var(--border-thin) solid var(--color-border);
+  }
+
+  .card-title {
+    margin: 0 0 var(--space-sm);
+    font-size: var(--font-lg);
+    font-weight: var(--weight-bold);
+    line-height: var(--leading-tight);
+  }
+
+  .card-body {
+    color: inherit;
+  }
+}

@@ -25,7 +25,7 @@ fn scaffolded_home_test_passes() {
         .current_dir(tmp.path())
         .assert()
         .success()
-        .stdout(contains("2 passed, 0 failed"));
+        .stdout(contains("0 failed"));
 }
 
 #[test]

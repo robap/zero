@@ -28,6 +28,9 @@ pub fn resolve(specifier: &str, importer_dir: &Path, root: &Path) -> anyhow::Res
     if specifier == "zero" {
         return Ok(ModuleId::Runtime);
     }
+    if specifier == "zero/components" {
+        return Ok(ModuleId::User(PathBuf::from("./.zero/components/index.ts")));
+    }
     if specifier.starts_with("./") || specifier.starts_with("../") {
         let abs = importer_dir.join(specifier);
         let canonical = abs
@@ -96,6 +99,16 @@ mod tests {
         let dir = tempdir().unwrap();
         let err = resolve("lodash", dir.path(), dir.path()).unwrap_err();
         assert!(err.to_string().contains("unsupported"));
+    }
+
+    #[test]
+    fn zero_components_resolves_to_dot_zero_path() {
+        let dir = tempdir().unwrap();
+        let r = resolve("zero/components", dir.path(), dir.path()).unwrap();
+        assert_eq!(
+            r,
+            ModuleId::User(PathBuf::from("./.zero/components/index.ts"))
+        );
     }
 
     #[test]

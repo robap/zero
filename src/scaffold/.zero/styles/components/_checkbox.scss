@@ -1,0 +1,15 @@
+@layer components {
+  .checkbox {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+    cursor: pointer;
+    color: var(--color-text);
+    font-size: var(--font-md);
+    line-height: var(--leading-normal);
+  }
+
+  .checkbox-label {
+    user-select: none;
+  }
+}

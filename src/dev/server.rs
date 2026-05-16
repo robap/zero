@@ -133,6 +133,20 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
             ),
         )
         .route(
+            "/.zero/components/*path",
+            get(
+                |State(s): State<Arc<AppState>>, Path(p): Path<String>| async move {
+                    serve_under_with_transpile(
+                        s.root.join(".zero").join("components"),
+                        "/.zero/components",
+                        &format!("/.zero/components/{p}"),
+                        s.dev_sourcemap,
+                    )
+                    .await
+                },
+            ),
+        )
+        .route(
             "/favicon.ico",
             get(|State(s): State<Arc<AppState>>| async move {
                 serve_root_file(s.root.clone(), "favicon.ico").await

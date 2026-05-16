@@ -1,0 +1,30 @@
+@layer components {
+  .tabs {
+    display: block;
+  }
+
+  .tabs-list {
+    display: inline-flex;
+    gap: var(--space-xs);
+    border-block-end: var(--border-thin) solid var(--color-border);
+  }
+
+  .tabs-tab {
+    padding-inline: var(--space-md);
+    padding-block: var(--space-sm);
+    border: none;
+    background: transparent;
+    color: var(--color-text-muted);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .tabs-tab[aria-selected="true"] {
+    color: var(--color-text);
+    border-block-end: var(--border-md) solid var(--color-primary);
+  }
+
+  .tabs-panel {
+    padding-block: var(--space-md);
+  }
+}

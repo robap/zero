@@ -9,7 +9,9 @@
 /// Concatenated HTML string with importmap, app-entry script, and reload-client.
 pub fn dev_scripts(app_entry_href: &str) -> String {
     let mut s = String::new();
-    s.push_str(r#"<script type="importmap">{"imports":{"zero":"/zero.js"}}</script>"#);
+    s.push_str(
+        r#"<script type="importmap">{"imports":{"zero":"/zero.js","zero/components":"/.zero/components/index.ts"}}</script>"#,
+    );
     s.push('\n');
     s.push_str(&format!(
         "<script type=\"module\" src=\"{app_entry_href}\"></script>\n"
@@ -102,6 +104,15 @@ mod tests {
     fn dev_scripts_uses_js_entry_when_provided() {
         let s = dev_scripts("/src/app.js");
         assert!(s.contains(r#"src="/src/app.js""#));
+    }
+
+    #[test]
+    fn dev_scripts_importmap_contains_zero_components() {
+        let s = dev_scripts("/src/app.ts");
+        assert!(
+            s.contains(r#""zero/components":"/.zero/components/index.ts""#),
+            "importmap missing zero/components entry: {s}"
+        );
     }
 
     #[test]

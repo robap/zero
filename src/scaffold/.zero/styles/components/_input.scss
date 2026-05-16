@@ -1,0 +1,38 @@
+@layer components {
+  .input {
+    display: inline-flex;
+    padding-inline: var(--space-sm);
+    padding-block: var(--space-xs);
+    border: var(--border-thin) solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text);
+    font: inherit;
+    line-height: var(--leading-normal);
+  }
+
+  .input-sm {
+    padding-inline: var(--space-xs);
+    padding-block: var(--space-xs);
+    font-size: var(--font-sm);
+  }
+
+  .input-md {
+    padding-inline: var(--space-sm);
+    padding-block: var(--space-xs);
+    font-size: var(--font-md);
+  }
+
+  .input-lg {
+    padding-inline: var(--space-md);
+    padding-block: var(--space-sm);
+    font-size: var(--font-lg);
+  }
+
+  .input-label {
+    display: block;
+    font-size: var(--font-sm);
+    margin-block-end: var(--space-xs);
+    color: var(--color-text);
+  }
+}

@@ -1,0 +1,43 @@
+@layer components {
+  .dialog-backdrop {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 1000;
+  }
+
+  .dialog {
+    background: var(--color-bg);
+    color: var(--color-text);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    padding: var(--space-lg);
+    max-inline-size: 90vw;
+  }
+
+  .dialog-sm {
+    inline-size: 24rem;
+  }
+
+  .dialog-md {
+    inline-size: 32rem;
+  }
+
+  .dialog-lg {
+    inline-size: 48rem;
+  }
+
+  .dialog-title {
+    margin: 0 0 var(--space-md);
+    font-size: var(--font-xl);
+    font-weight: var(--weight-bold);
+    line-height: var(--leading-tight);
+  }
+
+  .dialog-body {
+    color: inherit;
+  }
+}

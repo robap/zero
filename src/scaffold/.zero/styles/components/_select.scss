@@ -1,0 +1,37 @@
+@layer components {
+  .select {
+    padding-inline: var(--space-sm);
+    padding-block: var(--space-xs);
+    border: var(--border-thin) solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text);
+    font: inherit;
+    line-height: var(--leading-normal);
+  }
+
+  .select-sm {
+    padding-inline: var(--space-xs);
+    padding-block: var(--space-xs);
+    font-size: var(--font-sm);
+  }
+
+  .select-md {
+    padding-inline: var(--space-sm);
+    padding-block: var(--space-xs);
+    font-size: var(--font-md);
+  }
+
+  .select-lg {
+    padding-inline: var(--space-md);
+    padding-block: var(--space-sm);
+    font-size: var(--font-lg);
+  }
+
+  .select-label {
+    display: block;
+    font-size: var(--font-sm);
+    margin-block-end: var(--space-xs);
+    color: var(--color-text);
+  }
+}

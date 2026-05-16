@@ -1,0 +1,21 @@
+@use '../.zero/styles/zero';
+
+// Showcase-only layout helpers. Scoped to explicit classes so showcase
+// styles never leak onto bare elements (matches the design system's
+// class-based convention).
+.showcase-page {
+  max-inline-size: 56rem;
+  margin-inline: auto;
+}
+
+.showcase-nav-link {
+  padding-block: var(--space-xs);
+  padding-inline: var(--space-sm);
+  border-radius: var(--radius-sm);
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+.showcase-nav-link:hover {
+  background: var(--color-surface);
+}

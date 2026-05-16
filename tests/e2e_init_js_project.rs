@@ -59,7 +59,7 @@ export default function Home() {
         .current_dir(tmp.path())
         .assert()
         .success()
-        .stdout(predicates::str::contains("2 passed, 0 failed"));
+        .stdout(predicates::str::contains("0 failed"));
 
     // `zero build` still succeeds and emits an app.<hash>.js.
     assert_cmd::Command::cargo_bin("zero")

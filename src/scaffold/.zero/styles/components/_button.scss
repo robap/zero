@@ -1,0 +1,64 @@
+@layer components {
+  :root {
+    --button-danger-bg: #e03131;
+    --button-danger-fg: #ffffff;
+  }
+
+  .button {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding-inline: var(--space-md);
+    padding-block: var(--space-sm);
+    border: var(--border-thin) solid transparent;
+    border-radius: var(--radius-md);
+    font: inherit;
+    font-weight: var(--weight-bold);
+    line-height: var(--leading-tight);
+    cursor: pointer;
+  }
+
+  .button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .button-sm {
+    padding-inline: var(--space-sm);
+    padding-block: var(--space-xs);
+    font-size: var(--font-sm);
+  }
+
+  .button-md {
+    padding-inline: var(--space-md);
+    padding-block: var(--space-sm);
+    font-size: var(--font-md);
+  }
+
+  .button-lg {
+    padding-inline: var(--space-lg);
+    padding-block: var(--space-md);
+    font-size: var(--font-lg);
+  }
+
+  .button-primary {
+    background: var(--color-primary);
+    color: var(--color-primary-fg);
+  }
+
+  .button-secondary {
+    background: var(--color-surface);
+    color: var(--color-text);
+    border-color: var(--color-border);
+  }
+
+  .button-ghost {
+    background: transparent;
+    color: var(--color-text);
+  }
+
+  .button-danger {
+    background: var(--button-danger-bg);
+    color: var(--button-danger-fg);
+  }
+}

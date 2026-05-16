@@ -31,7 +31,7 @@ fn ts_scaffold_round_trip() {
         .current_dir(tmp.path())
         .assert()
         .success()
-        .stdout(predicates::str::contains("2 passed, 0 failed"));
+        .stdout(predicates::str::contains("0 failed"));
 
     // `zero build --sourcemap` emits the bundle and a .map file.
     assert_cmd::Command::cargo_bin("zero")

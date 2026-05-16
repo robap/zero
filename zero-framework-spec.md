@@ -880,6 +880,8 @@ Dark-mode variants override only the seven color tokens.
 
 **Distribution model.** Framework-owned and regenerable. `zero init` writes the partials into `.zero/styles/`; `zero update` refreshes them when the CLI ships new content. Users override tokens by re-declaring CSS custom properties in `styles/app.scss` after the framework `@use` line — overriding by re-declaration is preserved, just no longer by editing the file that declares the tokens.
 
+**Component layer.** The shipped component library (§11, `"zero/components"`) contributes one SCSS partial per component under `.zero/styles/components/_<name>.scss`, aggregated by `.zero/styles/_components.scss` and pulled into `zero.scss` via `@use 'components';`. Every component rule is wrapped in `@layer components { … }`, so any rule in `styles/app.scss` (which is unlayered) automatically wins on override without specificity tricks or `!important`.
+
 ---
 
 ## 8. Testing
@@ -1153,6 +1155,34 @@ cleanup()
 settled()                            // wait for pending effects/transitions
 ```
 
+### From `"zero/components"`
+
+```ts
+// Form inputs
+Button(props?)                       // primary | secondary | ghost | danger
+Input({ value, type?, size?, ... })  // single-line text input
+TextArea({ value, rows?, ... })      // multi-line text input
+Checkbox({ checked, label?, ... })   // signal-backed checkbox
+Radio({ selected, name, value, ... })// radio button in a named group
+Select({ value, options, ... })      // native select wired to a signal
+Toggle({ checked, label?, ... })     // styled switch (role="switch")
+
+// Display
+Card({ variant?, title?, ... })      // container with optional title
+Spinner({ variant?, size?, ... })    // CSS-only rotating status indicator
+Badge({ variant?, size?, ... })      // small inline label
+Avatar({ alt, src?, initials?, ... })// image or initials in a colored circle
+
+// Overlay
+Dialog({ open, size?, title?, ... }) // modal with backdrop + Esc-to-close
+
+// Feedback
+Toast({ open, message, variant?, ...})// fixed-position transient message
+Tabs({ active, tabs, panels })        // tablist with reactive panel content
+```
+
+All components are plain functions matching `Component<P> = (props?: P) => TemplateResult`. Stateful props accept signals directly (parent owns the lifecycle; component reads `.val` and writes via `.set()`). CSS lives under `.zero/styles/components/_<name>.scss`, wrapped in `@layer components` so user CSS in `styles/app.scss` wins on override without `!important`.
+
 ### Optional: Web Component Interop
 
 ```ts
@@ -1244,12 +1274,12 @@ State machines as a first-class primitive are deferred indefinitely. See Section
 - [x] Distribution rides on Phase 7: new partials land under `.zero/styles/`, refresh via `zero update`
 
 ### Phase 9 — Component Library
-- [ ] Set of ready-to-use components built on the design system (buttons, inputs, etc. — exact roster TBD in a dedicated spec)
-- [ ] Components are plain function components and consume only `var(--*)` tokens — they never embed colors, spacing, or radii directly
-- [ ] A showcase html file. Should show all components. Light/Dark theme switcher. Use our own `zero build` to compile assets.
-- [ ] Distribution model decided in the component-library spec — likely also under `.zero/` so component code is regenerable
-- [ ] Documented in `AGENTS.md` and `zero-framework-spec.md`
-- [ ] Tested with `zero test`
+- [x] Set of ready-to-use components built on the design system (14 shipped: Avatar, Badge, Button, Card, Checkbox, Dialog, Input, Radio, Select, Spinner, Tabs, TextArea, Toast, Toggle)
+- [x] Components are plain function components and consume only `var(--*)` tokens — they never embed colors, spacing, or radii directly
+- [x] A showcase project (`showcase/`) renders every component with a light/dark theme switcher; builds with `zero build`
+- [x] Distribution under `.zero/components/` — sources, tests, and SCSS partials regenerable via `zero update`
+- [x] Documented in `AGENTS.md` (`## Component library`) and this spec (§7.1, §11)
+- [x] Tested with `zero test` — one `*.test.ts` per component, plus framework-side integration tests (`tests/showcase_build.rs`, `tests/showcase_dev.rs`, `tests/component_library.rs`)
 
 ### Phase 10 — Internal Quality
 - [ ] Identify oversized functions across the Rust codebase (target: any function above ~80 lines, or with high cyclomatic complexity)
@@ -1285,3 +1315,4 @@ State machines as a first-class primitive are deferred indefinitely. See Section
 | Routing | Explicit `app.route()` calls | No file-system conventions, ordered matching, readable |
 | Testing | Built-in with lightweight DOM | No jsdom, no browser, possible because components are plain functions |
 | Distribution | Single CLI binary | Zero npm dependencies, one install, everything included |
+| Component library | 14 components shipped under `.zero/components/`; CSS wrapped in `@layer components` | Real apps shouldn't rebuild the same primitives; `@layer` keeps user overrides predictable without prefixing |

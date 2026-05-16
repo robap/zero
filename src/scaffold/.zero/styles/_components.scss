@@ -1,0 +1,18 @@
+// Per-component partials. Populated by per-component steps.
+// Every component partial is wrapped in `@layer components { ... }` so
+// user CSS in styles/app.scss automatically overrides component defaults
+// without specificity tricks or `!important`. Kept alphabetical.
+@use 'components/avatar';
+@use 'components/badge';
+@use 'components/button';
+@use 'components/card';
+@use 'components/checkbox';
+@use 'components/dialog';
+@use 'components/input';
+@use 'components/radio';
+@use 'components/select';
+@use 'components/spinner';
+@use 'components/tabs';
+@use 'components/textarea';
+@use 'components/toast';
+@use 'components/toggle';

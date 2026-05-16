@@ -1,0 +1,40 @@
+@layer components {
+  :root {
+    --toast-success-bg: #2f9e44;
+    --toast-success-fg: #ffffff;
+    --toast-warning-bg: #f59f00;
+    --toast-warning-fg: #1a1a1a;
+    --toast-danger-bg: #e03131;
+    --toast-danger-fg: #ffffff;
+  }
+
+  .toast {
+    position: fixed;
+    inset-block-end: var(--space-lg);
+    inset-inline-end: var(--space-lg);
+    padding: var(--space-sm) var(--space-md);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    z-index: 900;
+  }
+
+  .toast-info {
+    background: var(--color-surface);
+    color: var(--color-text);
+  }
+
+  .toast-success {
+    background: var(--toast-success-bg);
+    color: var(--toast-success-fg);
+  }
+
+  .toast-warning {
+    background: var(--toast-warning-bg);
+    color: var(--toast-warning-fg);
+  }
+
+  .toast-danger {
+    background: var(--toast-danger-bg);
+    color: var(--toast-danger-fg);
+  }
+}
