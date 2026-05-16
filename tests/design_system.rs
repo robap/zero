@@ -79,6 +79,30 @@ fn build_emits_design_system_css() {
         "compiled CSS missing .border-t: {css}"
     );
     assert!(
+        css.contains(".align-start {") || css.contains(".align-start{"),
+        "compiled CSS missing .align-start: {css}"
+    );
+    assert!(
+        css.contains(".justify-between {") || css.contains(".justify-between{"),
+        "compiled CSS missing .justify-between: {css}"
+    );
+    assert!(
+        css.contains(".align-self-stretch {") || css.contains(".align-self-stretch{"),
+        "compiled CSS missing .align-self-stretch: {css}"
+    );
+    assert!(
+        css.contains(".justify-self-center {") || css.contains(".justify-self-center{"),
+        "compiled CSS missing .justify-self-center: {css}"
+    );
+    assert!(
+        css.contains(".text-center {") || css.contains(".text-center{"),
+        "compiled CSS missing .text-center: {css}"
+    );
+    assert!(
+        css.contains(".flex-col-reverse {") || css.contains(".flex-col-reverse{"),
+        "compiled CSS missing .flex-col-reverse: {css}"
+    );
+    assert!(
         css.contains("prefers-color-scheme: dark") || css.contains("prefers-color-scheme:dark"),
         "compiled CSS missing dark mode media query: {css}"
     );
@@ -130,8 +154,8 @@ fn scaffold_home_uses_design_system_classes() {
     let home_ts = std::fs::read_to_string(tmp.path().join("web/src/routes/home.ts")).unwrap();
 
     assert!(
-        home_ts.contains("class=\"stack pad-xl\""),
-        "home.ts missing stack pad-xl: {home_ts}"
+        home_ts.contains("class=\"stack pad-xl align-center\""),
+        "home.ts missing stack pad-xl align-center: {home_ts}"
     );
     assert!(
         home_ts.contains("class=\"cluster gap-md\""),

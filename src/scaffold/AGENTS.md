@@ -37,7 +37,8 @@ The generated project layout:
 │       ├── _base.scss       # minimal reset, token-bound body
 │       ├── _layout.scss     # six layout primitives
 │       ├── _utilities.scss  # gap-*, pad-*, border-* utilities
-│       └── zero.scss        # aggregate that @use's the four partials
+│       ├── _alignment.scss  # align-*, justify-*, text-*, flex-* utilities
+│       └── zero.scss        # aggregate that @use's the five partials
 ├── index.html               # entry HTML; <script> tags are injected automatically
 ├── src/
 │   ├── app.ts               # builds and starts the App
@@ -513,7 +514,7 @@ The framework forbids scoped styles, CSS modules, and CSS-in-JS. SCSS gives you 
 
 ### Design system
 
-The scaffold ships a built-in CSS design system: tokens, theme switching, layout primitives, and utility classes. The system lives in four partials plus an aggregate, all framework-owned in `.zero/styles/`, brought in by your `styles/app.scss` via `@use '../.zero/styles/zero';`:
+The scaffold ships a built-in CSS design system: tokens, theme switching, layout primitives, and utility classes. The system lives in five partials plus an aggregate, all framework-owned in `.zero/styles/`, brought in by your `styles/app.scss` via `@use '../.zero/styles/zero';`:
 
 | Partial | What it declares |
 | --- | --- |
@@ -521,6 +522,7 @@ The scaffold ships a built-in CSS design system: tokens, theme switching, layout
 | `_base.scss` | Box-sizing reset and a token-bound `body` rule. No heading or paragraph styling. |
 | `_layout.scss` | Six layout primitive classes: `cluster`, `stack`, `frame`, `split`, `flank`, `grid`. |
 | `_utilities.scss` | Fifteen utility classes: `gap-{xs,sm,md,lg,xl}`, `pad-{xs,sm,md,lg,xl}`, `border`, `border-{t,r,b,l}`. |
+| `_alignment.scss` | Twenty-seven utility classes across six families: `align-*`, `justify-*`, `align-self-*`, `justify-self-*`, `text-*`, `flex-{row,row-reverse,col,col-reverse}`. |
 
 These partials live under `.zero/styles/` and are framework-owned — `zero update` refreshes them; do not edit them. To override a token, re-declare the CSS custom property in your `styles/app.scss` after the `@use` line. To add new utility classes, write them in `styles/app.scss` directly.
 
@@ -550,6 +552,21 @@ Composition is by class-list order: `class="cluster gap-lg"` overrides the clust
 - `border-{t,r,b,l}` — same value, single side. Useful for dividers, accents, sidebar edges.
 
 Thicker borders: override `--border-thin` locally (the design-system border utilities all read it). Width variants (`border-md`, `border-thick`) are not shipped.
+
+#### Alignment, justification, and direction
+
+Six families of single-property utilities live in `_alignment.scss`. They override the layout primitives' defaults by class-list order: `class="cluster align-stretch"` cancels `.cluster`'s default `align-items: center`.
+
+| Family | Property | Values |
+| --- | --- | --- |
+| `align-*` | `align-items` (on a flex/grid container) | `start`, `center`, `end`, `stretch`, `baseline` |
+| `justify-*` | `justify-content` (on a flex/grid container) | `start`, `center`, `end`, `between`, `around`, `evenly` |
+| `align-self-*` | `align-self` (on a flex/grid child) | `start`, `center`, `end`, `stretch`, `baseline` |
+| `justify-self-*` | `justify-self` (on a grid child) | `start`, `center`, `end`, `stretch` |
+| `text-*` | `text-align` (logical, writing-mode-aware) | `start`, `center`, `end` |
+| `flex-row` / `flex-row-reverse` / `flex-col` / `flex-col-reverse` | `flex-direction` (flip `cluster`, `flank`, etc.) | — |
+
+No `flex-left`/`flex-end`/physical-direction aliases. `text-justify`, `place-*` shorthands, `align-content`, and wrap utilities are intentionally out of v1.
 
 #### Theme switching
 
@@ -587,7 +604,8 @@ Files currently shipped under `.zero/`:
 | `.zero/styles/_base.scss` | Minimal reset and token-bound `body` rule. |
 | `.zero/styles/_layout.scss` | Six layout primitives (`cluster`, `stack`, `frame`, `split`, `flank`, `grid`). |
 | `.zero/styles/_utilities.scss` | Gap, padding, and border utility classes. |
-| `.zero/styles/zero.scss` | Aggregate that `@use`'s the four partials above. |
+| `.zero/styles/_alignment.scss` | Alignment, justify, self, text-align, and flex-direction utility classes. |
+| `.zero/styles/zero.scss` | Aggregate that `@use`'s the five partials above. |
 
 ### Updating
 

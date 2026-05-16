@@ -855,7 +855,7 @@ The only thing `zero build` does with CSS — compiled or not — is hash it, co
 
 ### 7.1 Design system
 
-The scaffold ships a built-in design-system layer in `.zero/styles/`: four partials (`_tokens.scss`, `_base.scss`, `_layout.scss`, `_utilities.scss`) plus an aggregate (`zero.scss`) that `@use`'s them. The user's `styles/app.scss` is a one-shot, user-owned entry that imports the aggregate via `@use '../.zero/styles/zero';`. The four partials are framework-owned — they live under the hidden, `.gitignore`-d `.zero/` directory and refresh via `zero update`.
+The scaffold ships a built-in design-system layer in `.zero/styles/`: five partials (`_tokens.scss`, `_base.scss`, `_layout.scss`, `_utilities.scss`, `_alignment.scss`) plus an aggregate (`zero.scss`) that `@use`'s them. The user's `styles/app.scss` is a one-shot, user-owned entry that imports the aggregate via `@use '../.zero/styles/zero';`. The five partials are framework-owned — they live under the hidden, `.gitignore`-d `.zero/` directory and refresh via `zero update`.
 
 **Token categories.** Seven categories live in `_tokens.scss`, all declared as CSS custom properties on `:root`:
 
@@ -874,7 +874,7 @@ Dark-mode variants override only the seven color tokens.
 
 **Layout primitives.** Six classes in `_layout.scss`: `cluster`, `stack`, `frame`, `split`, `flank`, `grid`. Each is a single CSS rule; layout primitives never use `margin` for spacing.
 
-**Utility families.** Three families in `_utilities.scss`: `gap-{step}` (5 classes), `pad-{step}` (5 classes), `border` / `border-{t,r,b,l}` (5 classes). No `!important`; override is by class-list order.
+**Utility families.** Nine families across two partials, 42 utility classes total. `_utilities.scss`: `gap-{step}` (5), `pad-{step}` (5), `border` / `border-{t,r,b,l}` (5). `_alignment.scss`: `align-{start,center,end,stretch,baseline}` (5), `justify-{start,center,end,between,around,evenly}` (6), `align-self-{start,center,end,stretch,baseline}` (5), `justify-self-{start,center,end,stretch}` (4), `text-{start,center,end}` (3, logical-only), `flex-{row,row-reverse,col,col-reverse}` (4). No `!important`; override is by class-list order, and `_alignment.scss` is `@use`d after `_utilities.scss` in the aggregate so its rules win where they touch the same property.
 
 **Theme switching.** `prefers-color-scheme: dark` selects dark mode by default. Set `data-theme="light"` or `data-theme="dark"` on `<html>` (or any ancestor) to override the system preference. There is no JavaScript theme-toggle helper.
 
@@ -1238,14 +1238,15 @@ State machines as a first-class primitive are deferred indefinitely. See Section
 - [x] `--yes` / `-y` flag on both commands for scripts/CI
 
 ### Phase 8 — Design System Expansion
-- [ ] Alignment utilities: `align-start`, `align-center`, `align-end`, `align-stretch`, `align-baseline` (sets `align-items`)
-- [ ] Justify utilities: `justify-start`, `justify-center`, `justify-end`, `justify-between`, `justify-around`, `justify-evenly` (sets `justify-content`)
-- [ ] Audit for other primitive utilities the layout primitives commonly need (text alignment, flex-direction overrides) and add only the ones with clear demand
-- [ ] Distribution rides on Phase 7: new partials land under `.zero/styles/`, refresh via `zero update`
+- [x] Alignment utilities: `align-start`, `align-center`, `align-end`, `align-stretch`, `align-baseline` (sets `align-items`)
+- [x] Justify utilities: `justify-start`, `justify-center`, `justify-end`, `justify-between`, `justify-around`, `justify-evenly` (sets `justify-content`)
+- [x] Audit for other primitive utilities the layout primitives commonly need (text alignment, flex-direction overrides) and add only the ones with clear demand
+- [x] Distribution rides on Phase 7: new partials land under `.zero/styles/`, refresh via `zero update`
 
 ### Phase 9 — Component Library
 - [ ] Set of ready-to-use components built on the design system (buttons, inputs, etc. — exact roster TBD in a dedicated spec)
 - [ ] Components are plain function components and consume only `var(--*)` tokens — they never embed colors, spacing, or radii directly
+- [ ] A showcase html file. Should show all components. Light/Dark theme switcher. Use our own `zero build` to compile assets.
 - [ ] Distribution model decided in the component-library spec — likely also under `.zero/` so component code is regenerable
 - [ ] Documented in `AGENTS.md` and `zero-framework-spec.md`
 - [ ] Tested with `zero test`

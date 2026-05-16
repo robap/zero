@@ -20,6 +20,7 @@ const TPL_TOKENS_SCSS: &str = include_str!("scaffold/.zero/styles/_tokens.scss")
 const TPL_BASE_SCSS: &str = include_str!("scaffold/.zero/styles/_base.scss");
 const TPL_LAYOUT_SCSS: &str = include_str!("scaffold/.zero/styles/_layout.scss");
 const TPL_UTILITIES_SCSS: &str = include_str!("scaffold/.zero/styles/_utilities.scss");
+const TPL_ALIGNMENT_SCSS: &str = include_str!("scaffold/.zero/styles/_alignment.scss");
 const TPL_ZERO_SCSS: &str = include_str!("scaffold/.zero/styles/zero.scss");
 const TPL_AGENTS_MD: &str = include_str!("scaffold/AGENTS.md");
 // Inlined rather than `include_str!`'d from `src/scaffold/.gitignore` because
@@ -55,6 +56,7 @@ pub fn framework_manifest() -> Vec<(&'static str, &'static str)> {
         (".zero/styles/_base.scss", TPL_BASE_SCSS),
         (".zero/styles/_layout.scss", TPL_LAYOUT_SCSS),
         (".zero/styles/_utilities.scss", TPL_UTILITIES_SCSS),
+        (".zero/styles/_alignment.scss", TPL_ALIGNMENT_SCSS),
         (".zero/styles/zero.scss", TPL_ZERO_SCSS),
     ]
 }
@@ -156,8 +158,12 @@ mod tests {
         let home_ts = fs::read_to_string(root.join("src/routes/home.ts")).unwrap();
         assert!(home_ts.contains("Hello from zero"));
         assert!(
-            home_ts.contains("class=\"stack pad-xl\""),
+            home_ts.contains("class=\"stack pad-xl align-center\""),
             "home.ts missing design-system classes: {home_ts}"
+        );
+        assert!(
+            home_ts.contains("align-center"),
+            "home.ts missing alignment demo class: {home_ts}"
         );
 
         let home_test_ts = fs::read_to_string(root.join("src/routes/home.test.ts")).unwrap();
@@ -195,6 +201,9 @@ mod tests {
 
         let utilities_scss = fs::read_to_string(root.join(".zero/styles/_utilities.scss")).unwrap();
         assert!(!utilities_scss.is_empty());
+
+        let alignment_scss = fs::read_to_string(root.join(".zero/styles/_alignment.scss")).unwrap();
+        assert!(!alignment_scss.is_empty());
 
         let zero_scss = fs::read_to_string(root.join(".zero/styles/zero.scss")).unwrap();
         assert!(!zero_scss.is_empty());
@@ -308,6 +317,7 @@ mod tests {
             "@use 'base'",
             "@use 'layout'",
             "@use 'utilities'",
+            "@use 'alignment'",
         ] {
             assert!(
                 zero_scss.contains(needle),
@@ -343,9 +353,33 @@ mod tests {
     }
 
     #[test]
-    fn framework_manifest_lists_seven_files() {
+    fn alignment_scss_contains_each_family() {
+        let (_dir, root) = fresh_scaffold();
+        let alignment = fs::read_to_string(root.join(".zero/styles/_alignment.scss")).unwrap();
+        assert!(!alignment.is_empty(), "_alignment.scss is empty");
+        for needle in [
+            ".align-start ",
+            ".justify-between ",
+            ".align-self-stretch ",
+            ".justify-self-center ",
+            ".text-center ",
+            ".flex-col-reverse ",
+        ] {
+            assert!(
+                alignment.contains(needle),
+                "_alignment.scss missing {needle}: {alignment}"
+            );
+        }
+        assert!(
+            !alignment.contains("!important"),
+            "_alignment.scss must not use !important: {alignment}"
+        );
+    }
+
+    #[test]
+    fn framework_manifest_lists_eight_files() {
         let manifest = framework_manifest();
-        assert_eq!(manifest.len(), 7, "manifest should have 7 entries");
+        assert_eq!(manifest.len(), 8, "manifest should have 8 entries");
         let paths: BTreeSet<&str> = manifest.iter().map(|(p, _)| *p).collect();
         for expected in [
             ".zero/zero.d.ts",
@@ -354,6 +388,7 @@ mod tests {
             ".zero/styles/_base.scss",
             ".zero/styles/_layout.scss",
             ".zero/styles/_utilities.scss",
+            ".zero/styles/_alignment.scss",
             ".zero/styles/zero.scss",
         ] {
             assert!(paths.contains(expected), "missing {expected} from manifest");

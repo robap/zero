@@ -1,0 +1,44 @@
+// Alignment, justification, per-child self-alignment, text alignment, and
+// flex-direction utilities. Override is by source order — this partial is
+// @use'd after _layout.scss and _utilities.scss in zero.scss, so e.g.
+// `class="cluster align-stretch"` overrides .cluster's default
+// `align-items: center`.
+
+// Cross-axis alignment of children (align-items)
+.align-start    { align-items: start; }
+.align-center   { align-items: center; }
+.align-end      { align-items: end; }
+.align-stretch  { align-items: stretch; }
+.align-baseline { align-items: baseline; }
+
+// Main-axis distribution of children (justify-content)
+.justify-start   { justify-content: start; }
+.justify-center  { justify-content: center; }
+.justify-end     { justify-content: end; }
+.justify-between { justify-content: space-between; }
+.justify-around  { justify-content: space-around; }
+.justify-evenly  { justify-content: space-evenly; }
+
+// Per-child cross-axis alignment (align-self)
+.align-self-start    { align-self: start; }
+.align-self-center   { align-self: center; }
+.align-self-end      { align-self: end; }
+.align-self-stretch  { align-self: stretch; }
+.align-self-baseline { align-self: baseline; }
+
+// Per-child main-axis alignment (justify-self; grid only)
+.justify-self-start   { justify-self: start; }
+.justify-self-center  { justify-self: center; }
+.justify-self-end     { justify-self: end; }
+.justify-self-stretch { justify-self: stretch; }
+
+// Logical text alignment (writing-mode-aware)
+.text-start  { text-align: start; }
+.text-center { text-align: center; }
+.text-end    { text-align: end; }
+
+// Flex-direction overrides
+.flex-row         { flex-direction: row; }
+.flex-row-reverse { flex-direction: row-reverse; }
+.flex-col         { flex-direction: column; }
+.flex-col-reverse { flex-direction: column-reverse; }
