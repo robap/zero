@@ -1,0 +1,74 @@
+// Color palette — framework-internal. Hex values from Open Color
+// (https://yeun.github.io/open-color/, MIT license).
+//
+// This file is framework-owned and rewritten by `zero update`. Do not edit.
+// The user-facing API is the --color-* semantic tokens defined in
+// themes/_light.scss and themes/_dark.scss; palette steps are reserved
+// for framework use and may change between minor versions.
+:root {
+  // gray  (Open Color gray)
+  --gray-50:  #f8f9fa;
+  --gray-100: #f1f3f5;
+  --gray-200: #e9ecef;
+  --gray-300: #dee2e6;
+  --gray-400: #ced4da;
+  --gray-500: #adb5bd;
+  --gray-600: #868e96;
+  --gray-700: #495057;
+  --gray-800: #343a40;
+  --gray-900: #212529;
+  --gray-950: #0e1014;
+
+  // blue  (Open Color blue)
+  --blue-50:  #e7f5ff;
+  --blue-100: #d0ebff;
+  --blue-200: #a5d8ff;
+  --blue-300: #74c0fc;
+  --blue-400: #4dabf7;
+  --blue-500: #339af0;
+  --blue-600: #228be6;
+  --blue-700: #1c7ed6;
+  --blue-800: #1971c2;
+  --blue-900: #1864ab;
+  --blue-950: #0d2a4d;
+
+  // red  (Open Color red)
+  --red-50:  #fff5f5;
+  --red-100: #ffe3e3;
+  --red-200: #ffc9c9;
+  --red-300: #ffa8a8;
+  --red-400: #ff8787;
+  --red-500: #ff6b6b;
+  --red-600: #fa5252;
+  --red-700: #f03e3e;
+  --red-800: #e03131;
+  --red-900: #c92a2a;
+  --red-950: #5c0f0f;
+
+  // green (Open Color green)
+  --green-50:  #ebfbee;
+  --green-100: #d3f9d8;
+  --green-200: #b2f2bb;
+  --green-300: #8ce99a;
+  --green-400: #69db7c;
+  --green-500: #51cf66;
+  --green-600: #40c057;
+  --green-700: #37b24d;
+  --green-800: #2f9e44;
+  --green-900: #2b8a3e;
+  --green-950: #103b1a;
+
+  // amber (Open Color orange — chosen over Open Color yellow for the
+  // visual warmth typical of "warning" semantics)
+  --amber-50:  #fff4e6;
+  --amber-100: #ffe8cc;
+  --amber-200: #ffd8a8;
+  --amber-300: #ffc078;
+  --amber-400: #ffa94d;
+  --amber-500: #ff922b;
+  --amber-600: #fd7e14;
+  --amber-700: #f76707;
+  --amber-800: #e8590c;
+  --amber-900: #d9480f;
+  --amber-950: #5c1e02;
+}

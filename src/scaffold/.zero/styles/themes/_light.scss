@@ -1,0 +1,27 @@
+// Light theme — maps the public --color-* semantic tokens to palette steps.
+//
+// This file is framework-owned and rewritten by `zero update`. To override
+// any of these tokens for your project, re-declare them in `styles/app.scss`
+// after the `@use '../.zero/styles/zero';` line, or under a custom
+// `[data-theme="brand"]` selector.
+@mixin tokens {
+  color-scheme: light;
+
+  --color-bg:          var(--gray-50);
+  --color-surface:     var(--gray-100);
+  --color-text:        var(--gray-900);
+  --color-text-muted:  var(--gray-600);
+  --color-border:      var(--gray-500);
+
+  --color-primary:     var(--blue-600);
+  --color-primary-fg:  var(--gray-50);
+
+  --color-success:     var(--green-700);
+  --color-success-fg:  var(--gray-50);
+
+  --color-warning:     var(--amber-500);
+  --color-warning-fg:  var(--gray-900);
+
+  --color-danger:      var(--red-700);
+  --color-danger-fg:   var(--gray-50);
+}

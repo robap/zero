@@ -14,24 +14,24 @@
   .input-sm {
     padding-inline: var(--space-xs);
     padding-block: var(--space-xs);
-    font-size: var(--font-sm);
+    font-size: var(--font-size-sm);
   }
 
   .input-md {
     padding-inline: var(--space-sm);
     padding-block: var(--space-xs);
-    font-size: var(--font-md);
+    font-size: var(--font-size-md);
   }
 
   .input-lg {
     padding-inline: var(--space-md);
     padding-block: var(--space-sm);
-    font-size: var(--font-lg);
+    font-size: var(--font-size-lg);
   }
 
   .input-label {
     display: block;
-    font-size: var(--font-sm);
+    font-size: var(--font-size-sm);
     margin-block-end: var(--space-xs);
     color: var(--color-text);
   }

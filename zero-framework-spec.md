@@ -893,30 +893,32 @@ The only thing `zero build` does with CSS — compiled or not — is hash it, co
 
 ### 7.1 Design system
 
-The scaffold ships a built-in design-system layer in `.zero/styles/`: five partials (`_tokens.scss`, `_base.scss`, `_layout.scss`, `_utilities.scss`, `_alignment.scss`) plus an aggregate (`zero.scss`) that `@use`'s them. The user's `styles/app.scss` is a one-shot, user-owned entry that imports the aggregate via `@use '../.zero/styles/zero';`. The five partials are framework-owned — they live under the hidden, `.gitignore`-d `.zero/` directory and refresh via `zero update`.
+The scaffold ships a built-in design-system layer in `.zero/styles/`: a color palette (`_palette.scss`), non-color tokens (`_tokens.scss`), a theme aggregator (`_themes.scss`) with one partial per theme under `themes/` (`_light.scss`, `_dark.scss`), plus `_base.scss`, `_layout.scss`, `_utilities.scss`, `_alignment.scss`, and an aggregate (`zero.scss`) that `@use`'s all of them. The user's `styles/app.scss` is a one-shot, user-owned entry that imports the aggregate via `@use '../.zero/styles/zero';`. All partials are framework-owned — they live under the hidden, `.gitignore`-d `.zero/` directory and refresh via `zero update`.
 
-**Token categories.** Seven categories live in `_tokens.scss`, all declared as CSS custom properties on `:root`:
+**Token categories.** Tokens split into a framework-internal color palette, the public semantic color surface, and non-color invariants. All are declared as CSS custom properties on `:root`:
 
 | Category | Tokens |
 | --- | --- |
+| Color palette (framework-internal) | Five families × 11 steps: `--gray-{50…950}`, `--blue-{50…950}`, `--red-{50…950}`, `--green-{50…950}`, `--amber-{50…950}`. Values from Open Color (MIT). Reserved for framework use; consume `--color-*` semantic tokens in app code. |
+| Semantic colors (public) | `--color-bg`, `--color-surface`, `--color-text`, `--color-text-muted`, `--color-border`, `--color-primary`, `--color-primary-fg`, `--color-success`, `--color-success-fg`, `--color-warning`, `--color-warning-fg`, `--color-danger`, `--color-danger-fg` |
 | Spacing | `--space-xs`, `--space-sm`, `--space-md`, `--space-lg`, `--space-xl` |
-| Colors | `--color-bg`, `--color-surface`, `--color-text`, `--color-text-muted`, `--color-primary`, `--color-primary-fg`, `--color-border` |
 | Radius | `--radius-sm`, `--radius-md`, `--radius-lg` |
-| Font size | `--font-sm`, `--font-md`, `--font-lg`, `--font-xl` |
-| Font weight | `--weight-normal`, `--weight-bold` |
+| Font family | `--font-sans`, `--font-mono` |
+| Font size | `--font-size-sm`, `--font-size-md`, `--font-size-lg`, `--font-size-xl` |
+| Font weight | `--weight-normal`, `--weight-medium`, `--weight-bold` |
 | Line height | `--leading-tight`, `--leading-normal` |
 | Shadow | `--shadow-sm`, `--shadow-md`, `--shadow-lg` |
 | Border width | `--border-thin`, `--border-md`, `--border-thick` |
 
-Dark-mode variants override only the seven color tokens.
+Theme variants override only the thirteen semantic `--color-*` tokens; everything else is theme-invariant.
 
 **Layout primitives.** Six classes in `_layout.scss`: `cluster`, `stack`, `frame`, `split`, `flank`, `grid`. Each is a single CSS rule; layout primitives never use `margin` for spacing.
 
 **Utility families.** Nine families across two partials, 42 utility classes total. `_utilities.scss`: `gap-{step}` (5), `pad-{step}` (5), `border` / `border-{t,r,b,l}` (5). `_alignment.scss`: `align-{start,center,end,stretch,baseline}` (5), `justify-{start,center,end,between,around,evenly}` (6), `align-self-{start,center,end,stretch,baseline}` (5), `justify-self-{start,center,end,stretch}` (4), `text-{start,center,end}` (3, logical-only), `flex-{row,row-reverse,col,col-reverse}` (4). No `!important`; override is by class-list order, and `_alignment.scss` is `@use`d after `_utilities.scss` in the aggregate so its rules win where they touch the same property.
 
-**Theme switching.** `prefers-color-scheme: dark` selects dark mode by default. Set `data-theme="light"` or `data-theme="dark"` on `<html>` (or any ancestor) to override the system preference. There is no JavaScript theme-toggle helper.
+**Theme switching.** Each theme lives in its own partial under `.zero/styles/themes/` and defines a single Sass `@mixin tokens` containing its `--color-*` assignments. `_themes.scss` owns the selector strategy. Because every theme selector has the same CSS specificity — `:root` (pseudo-class) and `[data-theme="…"]` (attribute selector) are both `(0,1,0)` — the strategy uses source order to break ties: light is declared first on `:root`, the `@media (prefers-color-scheme: dark)` block emits dark next, and the `[data-theme="light"]` / `[data-theme="dark"]` rules are emitted last so an explicit attribute always wins over both the default and the OS preference. The net behavior: `prefers-color-scheme: dark` selects dark mode by default; set `data-theme="light"` or `data-theme="dark"` on `<html>` (or any ancestor) to override the system preference. Each theme mixin also emits `color-scheme: light` / `color-scheme: dark` so native UI (scrollbars, default form controls) inherits the theme. There is no JavaScript theme-toggle helper. Users authoring a brand theme declare the thirteen `--color-*` tokens in their own SCSS under a `[data-theme="brand"]` selector, then `@use` it from `styles/app.scss`.
 
-**Distribution model.** Framework-owned and regenerable. `zero init` writes the partials into `.zero/styles/`; `zero update` refreshes them when the CLI ships new content. Users override tokens by re-declaring CSS custom properties in `styles/app.scss` after the framework `@use` line — overriding by re-declaration is preserved, just no longer by editing the file that declares the tokens.
+**Distribution model.** Framework-owned and regenerable. `zero init` writes the partials into `.zero/styles/` (`_palette.scss`, `_tokens.scss`, `_themes.scss`, `themes/_light.scss`, `themes/_dark.scss`, plus `_base.scss`, `_layout.scss`, `_utilities.scss`, `_alignment.scss`, `_components.scss`, the per-component partials under `components/`, and `zero.scss`); `zero update` refreshes them when the CLI ships new content. Users override tokens by re-declaring CSS custom properties in `styles/app.scss` after the framework `@use` line — overriding by re-declaration is preserved, just no longer by editing the file that declares the tokens.
 
 **Component layer.** The shipped component library (§11, `"zero/components"`) contributes one SCSS partial per component under `.zero/styles/components/_<name>.scss`, aggregated by `.zero/styles/_components.scss` and pulled into `zero.scss` via `@use 'components';`. Every component rule is wrapped in `@layer components { … }`, so any rule in `styles/app.scss` (which is unlayered) automatically wins on override without specificity tricks or `!important`.
 

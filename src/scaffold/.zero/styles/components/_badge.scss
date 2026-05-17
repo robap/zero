@@ -1,35 +1,22 @@
 @layer components {
-  // Local variant tokens — declared inside the layer so they participate
-  // in cascade normally. The success/warning/danger token names are not
-  // part of the public token surface yet; if they land in `_tokens.scss`
-  // later, swap these locals for the global names.
-  :root {
-    --badge-success-bg: #2f9e44;
-    --badge-success-fg: #ffffff;
-    --badge-warning-bg: #f59f00;
-    --badge-warning-fg: #1a1a1a;
-    --badge-danger-bg: #e03131;
-    --badge-danger-fg: #ffffff;
-  }
-
   .badge {
     display: inline-flex;
     align-items: center;
     padding-inline: var(--space-sm);
     padding-block: var(--space-xs);
     border-radius: var(--radius-sm);
-    font-size: var(--font-sm);
+    font-size: var(--font-size-sm);
     font-weight: var(--weight-bold);
     line-height: var(--leading-tight);
   }
 
   .badge-sm {
-    font-size: var(--font-sm);
+    font-size: var(--font-size-sm);
     padding-inline: var(--space-xs);
   }
 
   .badge-md {
-    font-size: var(--font-md);
+    font-size: var(--font-size-md);
   }
 
   .badge-default {
@@ -43,17 +30,17 @@
   }
 
   .badge-success {
-    background: var(--badge-success-bg);
-    color: var(--badge-success-fg);
+    background: var(--color-success);
+    color: var(--color-success-fg);
   }
 
   .badge-warning {
-    background: var(--badge-warning-bg);
-    color: var(--badge-warning-fg);
+    background: var(--color-warning);
+    color: var(--color-warning-fg);
   }
 
   .badge-danger {
-    background: var(--badge-danger-bg);
-    color: var(--badge-danger-fg);
+    background: var(--color-danger);
+    color: var(--color-danger-fg);
   }
 }

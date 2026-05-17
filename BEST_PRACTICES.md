@@ -373,7 +373,69 @@ Plain DOM containers (`<main>`, `<section>`, `<header>`, `<nav>`,
 
 ---
 
-## 8. Testing
+## 8. Theming
+
+zero ships two themes — light and dark — plus a 13-token public
+`--color-*` semantic surface that every shipped component consumes:
+`--color-bg`, `--color-surface`, `--color-text`, `--color-text-muted`,
+`--color-border`, `--color-primary` / `--color-primary-fg`,
+`--color-success` / `--color-success-fg`, `--color-warning` /
+`--color-warning-fg`, and `--color-danger` / `--color-danger-fg`.
+
+**Override an individual token.** Re-declare it in `styles/app.scss`
+after the `@use '../.zero/styles/zero';` line. The override applies
+globally; place it under a `[data-theme="…"]` selector for a
+per-theme override.
+
+```scss
+@use '../.zero/styles/zero';
+
+:root {
+  --color-primary: #6b46c1;
+}
+```
+
+**Author a brand theme.** Declare the thirteen `--color-*` tokens
+under a `[data-theme="brand"]` selector in your own SCSS partial,
+then `@use` it from `styles/app.scss`. Apply via `<html
+data-theme="brand">`.
+
+```scss
+// styles/_brand.scss
+[data-theme="brand"] {
+  color-scheme: light;
+  --color-bg:          #ffffff;
+  --color-surface:     #f6f3ff;
+  --color-text:        #1a1a1a;
+  --color-text-muted:  #5b5b5b;
+  --color-border:      #e0d6ff;
+  --color-primary:     #6b46c1;
+  --color-primary-fg:  #ffffff;
+  --color-success:     var(--green-700);
+  --color-success-fg:  #ffffff;
+  --color-warning:     var(--amber-500);
+  --color-warning-fg:  #1a1a1a;
+  --color-danger:      var(--red-700);
+  --color-danger-fg:   #ffffff;
+}
+```
+
+```scss
+// styles/app.scss
+@use '../.zero/styles/zero';
+@use 'brand';
+```
+
+**The framework's internal color palette** (`--gray-*`, `--blue-*`,
+`--red-*`, `--green-*`, `--amber-*` — 55 tokens) is reachable as CSS
+custom properties but is *not* part of the public API. Its values and
+step set may change between minor versions. Stick to the `--color-*`
+semantic tokens in app code; reach for palette steps only inside a
+custom theme partial where you're already committed to one.
+
+---
+
+## 9. Testing
 
 Each example ships unit tests for every store, every route, and every
 non-trivial component. The patterns:
@@ -396,7 +458,7 @@ non-trivial component. The patterns:
 
 ---
 
-## 9. Performance
+## 10. Performance
 
 A handful of high-leverage rules:
 

@@ -48,7 +48,7 @@ fn update_restores_modified_recreates_deleted_removes_stray() {
     let tokens_after = fs::read(web.join(".zero/styles/_tokens.scss")).unwrap();
     let tokens_str = std::str::from_utf8(&tokens_after).unwrap();
     assert!(
-        tokens_str.contains("--color-primary:"),
+        tokens_str.contains("--space-md:"),
         "tokens not restored: {tokens_str}"
     );
     assert!(

@@ -16,7 +16,11 @@ const TPL_HOME_TS: &str = include_str!("scaffold/src/routes/home.ts");
 const TPL_HOME_TEST_TS: &str = include_str!("scaffold/src/routes/home.test.ts");
 const TPL_TSCONFIG_JSON: &str = include_str!("scaffold/tsconfig.json");
 const TPL_APP_SCSS: &str = include_str!("scaffold/styles/app.scss");
+const TPL_PALETTE_SCSS: &str = include_str!("scaffold/.zero/styles/_palette.scss");
 const TPL_TOKENS_SCSS: &str = include_str!("scaffold/.zero/styles/_tokens.scss");
+const TPL_THEMES_SCSS: &str = include_str!("scaffold/.zero/styles/_themes.scss");
+const TPL_THEME_LIGHT_SCSS: &str = include_str!("scaffold/.zero/styles/themes/_light.scss");
+const TPL_THEME_DARK_SCSS: &str = include_str!("scaffold/.zero/styles/themes/_dark.scss");
 const TPL_BASE_SCSS: &str = include_str!("scaffold/.zero/styles/_base.scss");
 const TPL_LAYOUT_SCSS: &str = include_str!("scaffold/.zero/styles/_layout.scss");
 const TPL_UTILITIES_SCSS: &str = include_str!("scaffold/.zero/styles/_utilities.scss");
@@ -101,7 +105,11 @@ pub fn framework_manifest() -> Vec<(&'static str, &'static str)> {
         (".zero/zero.d.ts", crate::runtime::ZERO_TYPES_BODY),
         (".zero/zero-test.d.ts", crate::runtime::ZERO_TEST_TYPES_BODY),
         (".zero/zero-http.d.ts", crate::runtime::ZERO_HTTP_TYPES_BODY),
+        (".zero/styles/_palette.scss", TPL_PALETTE_SCSS),
         (".zero/styles/_tokens.scss", TPL_TOKENS_SCSS),
+        (".zero/styles/_themes.scss", TPL_THEMES_SCSS),
+        (".zero/styles/themes/_light.scss", TPL_THEME_LIGHT_SCSS),
+        (".zero/styles/themes/_dark.scss", TPL_THEME_DARK_SCSS),
         (".zero/styles/_base.scss", TPL_BASE_SCSS),
         (".zero/styles/_layout.scss", TPL_LAYOUT_SCSS),
         (".zero/styles/_utilities.scss", TPL_UTILITIES_SCSS),
@@ -430,7 +438,10 @@ mod tests {
         assert!(zero_http_dts.contains("declare module \"zero/http\""));
 
         let tokens_scss = fs::read_to_string(root.join(".zero/styles/_tokens.scss")).unwrap();
-        assert!(tokens_scss.contains("--color-primary:"));
+        assert!(tokens_scss.contains("--space-md:"));
+
+        let light_scss = fs::read_to_string(root.join(".zero/styles/themes/_light.scss")).unwrap();
+        assert!(light_scss.contains("--color-primary:"));
 
         let base_scss = fs::read_to_string(root.join(".zero/styles/_base.scss")).unwrap();
         assert!(!base_scss.is_empty());
@@ -544,28 +555,62 @@ mod tests {
     }
 
     #[test]
-    fn tokens_scss_declares_tokens_directly() {
+    fn tokens_and_themes_split_correctly() {
         let (_dir, root) = fresh_scaffold();
         let tokens = fs::read_to_string(root.join(".zero/styles/_tokens.scss")).unwrap();
         assert!(
-            tokens.contains("--color-primary:"),
-            "_tokens.scss missing --color-primary: {tokens}"
+            tokens.contains("--space-md:"),
+            "_tokens.scss missing --space-md: {tokens}"
+        );
+        assert!(
+            tokens.contains("--font-sans:"),
+            "_tokens.scss missing --font-sans: {tokens}"
+        );
+        assert!(
+            tokens.contains("--font-size-md:"),
+            "_tokens.scss missing --font-size-md: {tokens}"
+        );
+        assert!(
+            !tokens.contains("--color-primary:"),
+            "_tokens.scss must not declare --color-primary (moved to themes): {tokens}"
+        );
+        assert!(
+            !tokens.contains("@media"),
+            "_tokens.scss must not contain @media block (moved to _themes.scss): {tokens}"
+        );
+        assert!(
+            !tokens.contains("--font-md:"),
+            "_tokens.scss must not contain old font-md token name: {tokens}"
         );
         assert!(
             !tokens.contains("$color-primary"),
             "_tokens.scss must not contain SCSS variable $color-primary: {tokens}"
         );
+
+        let light = fs::read_to_string(root.join(".zero/styles/themes/_light.scss")).unwrap();
         assert!(
-            tokens.contains("@media (prefers-color-scheme: dark)"),
-            "_tokens.scss missing system-preference dark block: {tokens}"
+            light.contains("--color-primary:"),
+            "themes/_light.scss missing --color-primary: {light}"
+        );
+
+        let dark = fs::read_to_string(root.join(".zero/styles/themes/_dark.scss")).unwrap();
+        assert!(
+            dark.contains("--color-primary:"),
+            "themes/_dark.scss missing --color-primary: {dark}"
+        );
+
+        let themes = fs::read_to_string(root.join(".zero/styles/_themes.scss")).unwrap();
+        assert!(
+            themes.contains("@media (prefers-color-scheme: dark)"),
+            "_themes.scss missing prefers-color-scheme: dark block: {themes}"
         );
         assert!(
-            tokens.contains("[data-theme=\"dark\"]"),
-            "_tokens.scss missing [data-theme=\"dark\"] override: {tokens}"
+            themes.contains("[data-theme=\"dark\"]"),
+            "_themes.scss missing [data-theme=\"dark\"]: {themes}"
         );
         assert!(
-            tokens.contains("[data-theme=\"light\"]"),
-            "_tokens.scss missing [data-theme=\"light\"] override: {tokens}"
+            themes.contains("[data-theme=\"light\"]"),
+            "_themes.scss missing [data-theme=\"light\"]: {themes}"
         );
     }
 
@@ -584,7 +629,9 @@ mod tests {
         let (_dir, root) = fresh_scaffold();
         let zero_scss = fs::read_to_string(root.join(".zero/styles/zero.scss")).unwrap();
         for needle in [
+            "@use 'palette'",
             "@use 'tokens'",
+            "@use 'themes'",
             "@use 'base'",
             "@use 'layout'",
             "@use 'utilities'",
@@ -701,7 +748,11 @@ mod tests {
             ".zero/components.d.ts",
             ".zero/components/index.ts",
             // Design-system SCSS partials + aggregate.
+            ".zero/styles/_palette.scss",
             ".zero/styles/_tokens.scss",
+            ".zero/styles/_themes.scss",
+            ".zero/styles/themes/_light.scss",
+            ".zero/styles/themes/_dark.scss",
             ".zero/styles/_base.scss",
             ".zero/styles/_layout.scss",
             ".zero/styles/_utilities.scss",

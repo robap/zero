@@ -37,12 +37,17 @@ The generated project layout:
 │   ├── zero.d.ts            # type surface for `"zero"`
 │   ├── zero-test.d.ts       # type surface for `"zero/test"`
 │   └── styles/
-│       ├── _tokens.scss     # design tokens + theme variants
+│       ├── _palette.scss    # 55 framework-internal palette tokens (gray/blue/red/green/amber × 11 steps)
+│       ├── _tokens.scss     # non-color design tokens (spacing, radius, font family/size/weight, line height, shadow, border)
+│       ├── _themes.scss     # theme aggregator + selector strategy (:root, [data-theme], prefers-color-scheme)
+│       ├── themes/
+│       │   ├── _light.scss  # @mixin tokens — light --color-* values
+│       │   └── _dark.scss   # @mixin tokens — dark --color-* values
 │       ├── _base.scss       # minimal reset, token-bound body
 │       ├── _layout.scss     # six layout primitives
 │       ├── _utilities.scss  # gap-*, pad-*, border-* utilities
 │       ├── _alignment.scss  # align-*, justify-*, text-*, flex-* utilities
-│       └── zero.scss        # aggregate that @use's the five partials
+│       └── zero.scss        # aggregate that @use's the partials
 ├── index.html               # entry HTML; <script> tags are injected automatically
 ├── src/
 │   ├── app.ts               # builds and starts the App
@@ -511,18 +516,22 @@ The scaffold authors styles in SCSS. `zero dev` compiles `.scss` on the fly; `ze
 
 - `index.html` links to the SCSS entry: `<link rel="stylesheet" href="/styles/app.scss">`. The build rewrites this href to the hashed output.
 - Partials use the standard underscore prefix: `styles/_buttons.scss` is consumed via `@use 'buttons';` from a sibling file. Files whose name starts with `_` are not addressable as standalone stylesheets.
-- Design tokens are CSS custom properties declared in `styles/_tokens.scss`. Read them everywhere with `var(--name)` — there is no SCSS-variable bridge layer in v1.
+- Design tokens are CSS custom properties: a framework-internal color palette in `.zero/styles/_palette.scss`, non-color tokens (spacing, radius, font family/size/weight, line height, shadow, border) in `.zero/styles/_tokens.scss`, and the public `--color-*` semantic surface defined per-theme under `.zero/styles/themes/`. Read tokens everywhere with `var(--name)` — there is no SCSS-variable bridge layer in v1.
 - Plain `.css` still works — the dev server and build serve and hash `.css` files unchanged. Rename to `.scss` to opt in.
 
 The framework forbids scoped styles, CSS modules, and CSS-in-JS. SCSS gives you variables and nesting; class names are still plain strings.
 
 ### Design system
 
-The scaffold ships a built-in CSS design system: tokens, theme switching, layout primitives, and utility classes. The system lives in five partials plus an aggregate, all framework-owned in `.zero/styles/`, brought in by your `styles/app.scss` via `@use '../.zero/styles/zero';`:
+The scaffold ships a built-in CSS design system: tokens, theme switching, layout primitives, and utility classes. The system lives in several partials plus an aggregate, all framework-owned in `.zero/styles/`, brought in by your `styles/app.scss` via `@use '../.zero/styles/zero';`:
 
 | Partial | What it declares |
 | --- | --- |
-| `_tokens.scss` | CSS custom properties for spacing, colors, radius, type, line height, shadow, and border widths; light and dark theme variants. |
+| `_palette.scss` | 55 framework-internal palette tokens: five families (`gray`, `blue`, `red`, `green`, `amber`) × 11 steps (`50`…`950`). Values from Open Color. Theme-invariant. |
+| `_tokens.scss` | Non-color design tokens (spacing, radius, font family/size/weight, line height, shadow, border). Theme-invariant. |
+| `_themes.scss` | Theme aggregator. Owns the selector strategy that wires light/dark to `:root`, `[data-theme="light"]`, `[data-theme="dark"]`, and `@media (prefers-color-scheme: dark)`. |
+| `themes/_light.scss` | A single Sass `@mixin tokens` mapping the public `--color-*` semantic surface to palette steps for the light theme. |
+| `themes/_dark.scss` | Same as `_light.scss` but for the dark theme. |
 | `_base.scss` | Box-sizing reset and a token-bound `body` rule. No heading or paragraph styling. |
 | `_layout.scss` | Six layout primitive classes: `cluster`, `stack`, `frame`, `split`, `flank`, `grid`. |
 | `_utilities.scss` | Fifteen utility classes: `gap-{xs,sm,md,lg,xl}`, `pad-{xs,sm,md,lg,xl}`, `border`, `border-{t,r,b,l}`. |
@@ -574,7 +583,9 @@ No `flex-left`/`flex-end`/physical-direction aliases. `text-justify`, `place-*` 
 
 #### Theme switching
 
-The system honors `prefers-color-scheme: dark` automatically. To override the system preference, set `data-theme="light"` or `data-theme="dark"` on an ancestor element — canonically `<html>`:
+Each theme lives in its own partial under `.zero/styles/themes/` (`_light.scss`, `_dark.scss`), each defining a single Sass `@mixin tokens` that emits its `--color-*` assignments plus `color-scheme: light|dark`. The aggregator `_themes.scss` includes the light mixin first on `:root` (the default), then the dark mixin inside `@media (prefers-color-scheme: dark) :root`, and finally the `[data-theme="light"]` and `[data-theme="dark"]` overrides last so they always win on source order. All four selectors have equal CSS specificity (`(0,1,0)`), so the source order is what makes the cascade resolve correctly.
+
+The net behavior is unchanged from the user's perspective: `prefers-color-scheme: dark` selects dark mode automatically. To override the system preference, set `data-theme="light"` or `data-theme="dark"` on an ancestor element — canonically `<html>`:
 
 ```html
 <html data-theme="dark">
@@ -586,7 +597,9 @@ The framework ships no theme-toggle helper. Persisting a user choice across relo
 document.documentElement.dataset.theme = "dark"
 ```
 
-The dark-mode override applies only to the seven `--color-*` tokens (`--color-bg`, `--color-surface`, `--color-text`, `--color-text-muted`, `--color-primary`, `--color-primary-fg`, `--color-border`). Spacing, radius, type, shadow, and border widths are theme-independent.
+The override applies only to the thirteen `--color-*` semantic tokens (`--color-bg`, `--color-surface`, `--color-text`, `--color-text-muted`, `--color-border`, `--color-primary`, `--color-primary-fg`, `--color-success`, `--color-success-fg`, `--color-warning`, `--color-warning-fg`, `--color-danger`, `--color-danger-fg`). The 55-token palette (`--gray-*`, `--blue-*`, etc.) is framework-internal and reserved — consume the semantic tokens in app code. Spacing, radius, type, shadow, and border widths are theme-invariant.
+
+To author a brand theme, declare the thirteen `--color-*` tokens under a `[data-theme="brand"]` selector in your own SCSS, then `@use` it from `styles/app.scss`. Apply via `<html data-theme="brand">`.
 
 ---
 
@@ -703,7 +716,11 @@ Files currently shipped under `.zero/`:
 | `.zero/components/index.ts` | Re-exports every shipped component. |
 | `.zero/components/<Name>.ts` | One source file per component (14 total). |
 | `.zero/components/<Name>.test.ts` | One test file per component (14 total). |
-| `.zero/styles/_tokens.scss` | Design tokens and theme variants. |
+| `.zero/styles/_palette.scss` | 55 framework-internal palette tokens (`gray`, `blue`, `red`, `green`, `amber` × 11 steps). |
+| `.zero/styles/_tokens.scss` | Non-color design tokens (spacing, radius, font family/size/weight, line height, shadow, border). |
+| `.zero/styles/_themes.scss` | Theme aggregator: wires `_light` / `_dark` mixins to `:root`, `[data-theme]`, and `prefers-color-scheme`. |
+| `.zero/styles/themes/_light.scss` | `@mixin tokens` mapping the public `--color-*` semantic surface to palette steps for the light theme. |
+| `.zero/styles/themes/_dark.scss` | `@mixin tokens` mapping the public `--color-*` semantic surface to palette steps for the dark theme. |
 | `.zero/styles/_base.scss` | Minimal reset and token-bound `body` rule. |
 | `.zero/styles/_layout.scss` | Six layout primitives (`cluster`, `stack`, `frame`, `split`, `flank`, `grid`). |
 | `.zero/styles/_utilities.scss` | Gap, padding, and border utility classes. |

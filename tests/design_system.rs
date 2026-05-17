@@ -118,6 +118,91 @@ fn build_emits_design_system_css() {
         !css.contains("$color-primary"),
         "SCSS variable leaked into compiled CSS: {css}"
     );
+
+    for needle in [
+        "--button-danger-bg",
+        "--button-danger-fg",
+        "--badge-success-bg",
+        "--badge-warning-bg",
+        "--badge-danger-bg",
+        "--toast-success-bg",
+        "--toast-warning-bg",
+        "--toast-danger-bg",
+    ] {
+        assert!(
+            !css.contains(needle),
+            "compiled CSS contains removed component-private token {needle}: {css}"
+        );
+    }
+
+    for needle in [
+        "--gray-50:",
+        "--gray-950:",
+        "--blue-600:",
+        "--red-700:",
+        "--green-700:",
+        "--amber-500:",
+    ] {
+        assert!(
+            css.contains(needle),
+            "compiled CSS missing palette token {needle}: {css}"
+        );
+    }
+
+    for needle in [
+        "--color-success:",
+        "--color-success-fg:",
+        "--color-warning:",
+        "--color-warning-fg:",
+        "--color-danger:",
+        "--color-danger-fg:",
+        "--font-sans:",
+        "--font-mono:",
+        "--font-size-md:",
+    ] {
+        assert!(
+            css.contains(needle),
+            "compiled CSS missing semantic token {needle}: {css}"
+        );
+    }
+
+    for needle in ["--font-sm:", "--font-md:", "--font-lg:", "--font-xl:"] {
+        assert!(
+            !css.contains(needle),
+            "compiled CSS still declares old size-token {needle}: {css}"
+        );
+    }
+
+    assert!(
+        css.contains("color-scheme: light") || css.contains("color-scheme:light"),
+        "compiled CSS missing color-scheme: light declaration"
+    );
+    assert!(
+        css.contains("color-scheme: dark") || css.contains("color-scheme:dark"),
+        "compiled CSS missing color-scheme: dark declaration"
+    );
+}
+
+#[test]
+fn build_emits_font_family_token() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_scss_project(tmp.path());
+
+    assert_cmd::Command::cargo_bin("zero")
+        .unwrap()
+        .arg("build")
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+
+    let assets_dir = tmp.path().join("dist/assets");
+    let css_file = find_asset(&assets_dir, "app.", ".css").expect("no hashed CSS found");
+    let css = std::fs::read_to_string(assets_dir.join(&css_file)).unwrap();
+    assert!(
+        css.contains("font-family: var(--font-sans)")
+            || css.contains("font-family:var(--font-sans)"),
+        "body font-family does not consume --font-sans: {css}"
+    );
 }
 
 #[test]

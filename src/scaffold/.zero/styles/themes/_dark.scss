@@ -1,0 +1,27 @@
+// Dark theme — maps the public --color-* semantic tokens to palette steps.
+//
+// This file is framework-owned and rewritten by `zero update`. To override
+// any of these tokens for your project, re-declare them in `styles/app.scss`
+// after the `@use '../.zero/styles/zero';` line, or under a custom
+// `[data-theme="brand"]` selector.
+@mixin tokens {
+  color-scheme: dark;
+
+  --color-bg:          var(--gray-950);
+  --color-surface:     var(--gray-900);
+  --color-text:        var(--gray-50);
+  --color-text-muted:  var(--gray-400);
+  --color-border:      var(--gray-800);
+
+  --color-primary:     var(--blue-400);
+  --color-primary-fg:  var(--gray-950);
+
+  --color-success:     var(--green-500);
+  --color-success-fg:  var(--gray-950);
+
+  --color-warning:     var(--amber-400);
+  --color-warning-fg:  var(--gray-950);
+
+  --color-danger:      var(--red-400);
+  --color-danger-fg:   var(--gray-950);
+}

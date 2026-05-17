@@ -13,24 +13,24 @@
   .select-sm {
     padding-inline: var(--space-xs);
     padding-block: var(--space-xs);
-    font-size: var(--font-sm);
+    font-size: var(--font-size-sm);
   }
 
   .select-md {
     padding-inline: var(--space-sm);
     padding-block: var(--space-xs);
-    font-size: var(--font-md);
+    font-size: var(--font-size-md);
   }
 
   .select-lg {
     padding-inline: var(--space-md);
     padding-block: var(--space-sm);
-    font-size: var(--font-lg);
+    font-size: var(--font-size-lg);
   }
 
   .select-label {
     display: block;
-    font-size: var(--font-sm);
+    font-size: var(--font-size-sm);
     margin-block-end: var(--space-xs);
     color: var(--color-text);
   }

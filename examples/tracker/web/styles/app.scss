@@ -14,7 +14,7 @@
 }
 
 .app-header-title {
-    font-size: var(--font-lg);
+    font-size: var(--font-size-lg);
 }
 
 .app-main {
@@ -27,7 +27,7 @@
 // foreground token so the message stays legible in either theme.
 .login-error {
     color: var(--color-danger);
-    font-size: var(--font-sm);
+    font-size: var(--font-size-sm);
 }
 
 // Dashboard shell — sidebar nav + content panel. The sidebar uses the
@@ -76,12 +76,12 @@
 
 .issue-row-meta {
     color: var(--color-text-muted);
-    font-size: var(--font-sm);
+    font-size: var(--font-size-sm);
 }
 
 .issue-detail-meta {
     color: var(--color-text-muted);
-    font-size: var(--font-sm);
+    font-size: var(--font-size-sm);
 }
 
 // Comment thread — soft surfaces; date stamp muted.
@@ -93,7 +93,7 @@
 
 .comment-date {
     color: var(--color-text-muted);
-    font-size: var(--font-sm);
+    font-size: var(--font-size-sm);
 }
 
 .comment-thread-empty {

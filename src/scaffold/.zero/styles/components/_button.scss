@@ -1,19 +1,15 @@
 @layer components {
-  :root {
-    --button-danger-bg: #e03131;
-    --button-danger-fg: #ffffff;
-  }
-
   .button {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: var(--space-xs);
     padding-inline: var(--space-md);
     padding-block: var(--space-sm);
     border: var(--border-thin) solid transparent;
     border-radius: var(--radius-md);
     font: inherit;
-    font-weight: var(--weight-bold);
+    font-weight: var(--weight-medium);
     line-height: var(--leading-tight);
     cursor: pointer;
   }
@@ -26,19 +22,19 @@
   .button-sm {
     padding-inline: var(--space-sm);
     padding-block: var(--space-xs);
-    font-size: var(--font-sm);
+    font-size: var(--font-size-sm);
   }
 
   .button-md {
     padding-inline: var(--space-md);
     padding-block: var(--space-sm);
-    font-size: var(--font-md);
+    font-size: var(--font-size-md);
   }
 
   .button-lg {
     padding-inline: var(--space-lg);
     padding-block: var(--space-md);
-    font-size: var(--font-lg);
+    font-size: var(--font-size-lg);
   }
 
   .button-primary {
@@ -58,7 +54,7 @@
   }
 
   .button-danger {
-    background: var(--button-danger-bg);
-    color: var(--button-danger-fg);
+    background: var(--color-danger);
+    color: var(--color-danger-fg);
   }
 }

@@ -1,13 +1,10 @@
-// Design tokens declared directly as CSS custom properties.
+// Non-color design tokens. All values are theme-invariant. Color tokens
+// live in _palette.scss (framework-internal) and themes/*.scss (public
+// --color-* semantic surface).
 //
-// Dark mode is honored automatically via `prefers-color-scheme: dark`. To
-// override the system preference per-subtree, set `data-theme="light"` or
-// `data-theme="dark"` on an ancestor element — canonically `<html>`.
-//
-// This file lives under `.zero/` and is framework-owned — it is rewritten
-// by `zero update`. Do not edit. To override a token, re-declare the
-// custom property in your `styles/app.scss` after the `@use` line.
-
+// This file is framework-owned and rewritten by `zero update`. To override
+// a token, re-declare the custom property in your `styles/app.scss` after
+// the `@use` line.
 :root {
   // Spacing
   --space-xs: 0.25rem;
@@ -16,28 +13,24 @@
   --space-lg: 1.5rem;
   --space-xl: 3rem;
 
-  // Colors (light theme defaults)
-  --color-bg:          #ffffff;
-  --color-surface:     #f5f5f5;
-  --color-text:        #1a1a1a;
-  --color-text-muted:  #5c5c5c;
-  --color-primary:     #2563eb;
-  --color-primary-fg:  #ffffff;
-  --color-border:      #e5e5e5;
-
   // Radius
   --radius-sm: 2px;
   --radius-md: 4px;
   --radius-lg: 8px;
 
+  // Font family
+  --font-sans: system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
   // Font sizes
-  --font-sm: 0.875rem;
-  --font-md: 1rem;
-  --font-lg: 1.25rem;
-  --font-xl: 1.5rem;
+  --font-size-sm: 0.875rem;
+  --font-size-md: 1rem;
+  --font-size-lg: 1.25rem;
+  --font-size-xl: 1.5rem;
 
   // Font weights
   --weight-normal: 400;
+  --weight-medium: 500;
   --weight-bold:   700;
 
   // Line heights
@@ -53,36 +46,4 @@
   --border-thin:  1px;
   --border-md:    2px;
   --border-thick: 4px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-bg:         #0f1115;
-    --color-surface:    #1a1d23;
-    --color-text:       #f5f5f5;
-    --color-text-muted: #a3a3a3;
-    --color-primary:    #60a5fa;
-    --color-primary-fg: #0f1115;
-    --color-border:     #2a2e35;
-  }
-}
-
-[data-theme="dark"] {
-  --color-bg:         #0f1115;
-  --color-surface:    #1a1d23;
-  --color-text:       #f5f5f5;
-  --color-text-muted: #a3a3a3;
-  --color-primary:    #60a5fa;
-  --color-primary-fg: #0f1115;
-  --color-border:     #2a2e35;
-}
-
-[data-theme="light"] {
-  --color-bg:         #ffffff;
-  --color-surface:    #f5f5f5;
-  --color-text:       #1a1a1a;
-  --color-text-muted: #5c5c5c;
-  --color-primary:    #2563eb;
-  --color-primary-fg: #ffffff;
-  --color-border:     #e5e5e5;
 }
