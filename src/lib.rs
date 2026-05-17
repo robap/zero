@@ -11,3 +11,6 @@ pub mod scaffold;
 pub mod test_runner;
 pub mod toml_writer;
 pub mod transpile;
+
+#[cfg(test)]
+pub(crate) mod test_support;

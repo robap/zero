@@ -15,6 +15,16 @@ node --test runtime/app.test.js
 node --test --test-name-pattern="querySelector" runtime/dom-shim.test.js
 ```
 
+### Coverage
+
+```bash
+# Generate HTML coverage report (Rust)
+cargo llvm-cov --html
+
+# Per-module summary table (Rust)
+cargo llvm-cov --summary-only
+```
+
 ## Code style
 
 ### Rust

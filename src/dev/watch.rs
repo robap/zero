@@ -54,15 +54,11 @@ pub fn start(
                     continue;
                 }
             };
-            let representative = events.iter().find_map(|ev| {
-                let p = &ev.path;
-                if is_ignored(p, &root_for_thread, &out_dir) {
-                    None
-                } else {
-                    Some(relative_to_root(p, &root_for_thread))
-                }
-            });
-            if let Some(rel_path) = representative {
+            if let Some(rel_path) = representative_path(
+                events.iter().map(|ev| ev.path.as_path()),
+                &root_for_thread,
+                &out_dir,
+            ) {
                 println!("zero dev — reload: {rel_path}");
                 bus.send(rel_path);
             }
@@ -83,6 +79,24 @@ pub fn is_ignored(path: &Path, _root: &Path, out_dir: &Path) -> bool {
     path.components().any(|c| match c {
         Component::Normal(s) => s.to_string_lossy().starts_with('.'),
         _ => false,
+    })
+}
+
+/// Pick the first non-ignored event path and render it relative to `root`.
+///
+/// Used by the watcher loop to decide what to broadcast on the reload bus.
+/// Extracted from `start` so its logic is unit-testable without spinning up
+/// a real `notify` watcher.
+pub fn representative_path<'a, I>(events: I, root: &Path, out_dir: &Path) -> Option<String>
+where
+    I: IntoIterator<Item = &'a Path>,
+{
+    events.into_iter().find_map(|p| {
+        if is_ignored(p, root, out_dir) {
+            None
+        } else {
+            Some(relative_to_root(p, root))
+        }
     })
 }
 
@@ -144,5 +158,69 @@ mod tests {
             relative_to_root(Path::new("/x/src/a.js"), Path::new("/x")),
             "src/a.js"
         );
+    }
+
+    #[test]
+    fn relative_to_root_falls_back_to_filename_when_outside_root() {
+        assert_eq!(
+            relative_to_root(Path::new("/y/other/a.js"), Path::new("/x")),
+            "a.js"
+        );
+    }
+
+    #[test]
+    fn representative_path_picks_first_non_ignored() {
+        let root = PathBuf::from("/x");
+        let out = PathBuf::from("/x/dist");
+        let events = [
+            PathBuf::from("/x/dist/asset.js"),
+            PathBuf::from("/x/.git/HEAD"),
+            PathBuf::from("/x/src/a.js"),
+            PathBuf::from("/x/src/b.js"),
+        ];
+        let got = representative_path(events.iter().map(|p| p.as_path()), &root, &out);
+        assert_eq!(got.as_deref(), Some("src/a.js"));
+    }
+
+    #[test]
+    fn representative_path_returns_none_when_all_ignored() {
+        let root = PathBuf::from("/x");
+        let out = PathBuf::from("/x/dist");
+        let events = [PathBuf::from("/x/dist/a.js"), PathBuf::from("/x/.git/HEAD")];
+        let got = representative_path(events.iter().map(|p| p.as_path()), &root, &out);
+        assert!(got.is_none());
+    }
+
+    #[test]
+    fn representative_path_returns_none_on_empty_input() {
+        let got = representative_path(
+            std::iter::empty::<&Path>(),
+            Path::new("/x"),
+            Path::new("/x/dist"),
+        );
+        assert!(got.is_none());
+    }
+
+    #[tokio::test]
+    async fn start_with_valid_root_returns_some_handle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let out_dir = root.join("dist");
+        std::fs::create_dir_all(&out_dir).unwrap();
+        let bus = Arc::new(ReloadBus::new());
+        let handle = start(root, out_dir, bus).unwrap();
+        assert!(handle.is_some());
+    }
+
+    #[tokio::test]
+    async fn start_with_missing_root_returns_none_and_disables_autoreload() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("does_not_exist");
+        let out_dir = tmp.path().join("dist");
+        std::fs::create_dir_all(&out_dir).unwrap();
+        let bus = Arc::new(ReloadBus::new());
+        let handle = start(root, out_dir, bus).unwrap();
+        // notify fails to watch a missing path; start() logs and yields None.
+        assert!(handle.is_none());
     }
 }

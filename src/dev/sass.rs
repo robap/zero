@@ -55,3 +55,60 @@ pub async fn serve_scss_file(
             .into_response(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http_body_util::BodyExt;
+
+    async fn read_body(resp: Response) -> (StatusCode, String) {
+        let status = resp.status();
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        (status, String::from_utf8_lossy(&bytes).to_string())
+    }
+
+    #[tokio::test]
+    async fn missing_file_returns_404() {
+        let resp = serve_scss_file(
+            PathBuf::from("/nonexistent/__missing__.scss"),
+            "/styles/missing.scss".to_string(),
+            false,
+        )
+        .await;
+        let (status, _) = read_body(resp).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn valid_scss_compiles_to_css() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("a.scss");
+        std::fs::write(&p, "$c: red; .a { color: $c; }").unwrap();
+        let resp = serve_scss_file(p, "/styles/a.scss".to_string(), false).await;
+        let (status, body) = read_body(resp).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains(".a"), "body: {body}");
+        assert!(body.contains("red"), "body: {body}");
+    }
+
+    #[tokio::test]
+    async fn ok_response_has_text_css_content_type() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("a.scss");
+        std::fs::write(&p, ".a { color: red; }").unwrap();
+        let resp = serve_scss_file(p, "/styles/a.scss".to_string(), false).await;
+        let ct = resp.headers().get(header::CONTENT_TYPE).unwrap();
+        assert_eq!(ct.to_str().unwrap(), "text/css; charset=utf-8");
+    }
+
+    #[tokio::test]
+    async fn scss_syntax_error_returns_500() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("bad.scss");
+        std::fs::write(&p, ".a { color: ; }").unwrap();
+        let resp = serve_scss_file(p, "/styles/bad.scss".to_string(), false).await;
+        let (status, body) = read_body(resp).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(body.contains("scss error"), "body: {body}");
+    }
+}

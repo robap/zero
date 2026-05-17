@@ -101,7 +101,84 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
     });
     let port = config.dev.port;
 
-    let app = Router::new()
+    let app = build_app(state);
+
+    let addr = format!("127.0.0.1:{port}");
+    let listener = match tokio::net::TcpListener::bind(&addr).await {
+        Ok(l) => l,
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+            anyhow::bail!(
+                "port {port} is already in use; pick a different [dev].port in zero.toml"
+            );
+        }
+        Err(e) => anyhow::bail!("failed to bind {addr}: {e}"),
+    };
+
+    println!("zero dev — listening on http://{addr}");
+
+    let out_dir = cwd.join(&config.build.out);
+    let out_dir = out_dir.canonicalize().unwrap_or(out_dir);
+    let watch_handle = watch::start(root_for_watch, out_dir, bus_for_watch)?;
+    if watch_handle.is_some() {
+        println!("zero dev — watching {root_display} for changes");
+    }
+
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            let _ = tokio::signal::ctrl_c().await;
+            // Tell long-lived handlers (SSE) to end their streams so the
+            // in-flight connections finish and graceful shutdown completes.
+            let _ = shutdown_tx.send(true);
+        })
+        .await?;
+
+    drop(watch_handle);
+    Ok(())
+}
+
+/// `GET /zero.js` handler: respond with the precomputed runtime module.
+///
+/// # Parameters
+/// - `state`: shared app state.
+///
+/// # Returns
+/// A 200 response carrying the runtime as `application/javascript`.
+async fn serve_runtime(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        [(
+            header::CONTENT_TYPE,
+            "application/javascript; charset=utf-8",
+        )],
+        state.runtime.clone(),
+    )
+}
+
+/// `GET /zero-http.js` handler: respond with the precomputed `zero/http`
+/// module body.
+async fn serve_http_runtime(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        [(
+            header::CONTENT_TYPE,
+            "application/javascript; charset=utf-8",
+        )],
+        state.http.clone(),
+    )
+}
+
+/// Build the dev-server `Router` from shared state.
+///
+/// Extracted so the route table can be exercised in unit tests without
+/// binding a listener or writing the `.zero/` cache directory.
+///
+/// # Parameters
+/// - `state`: shared `AppState`.
+///
+/// # Returns
+/// A `Router` configured with all dev-mode routes and the no-cache layer.
+pub(crate) fn build_app(state: Arc<AppState>) -> Router {
+    Router::new()
         .route("/_zero/events", get(sse_handler))
         .route("/zero.js", get(serve_runtime))
         .route("/zero-http.js", get(serve_http_runtime))
@@ -187,68 +264,154 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
             },
         )
         .layer(no_cache_layer())
-        .with_state(state);
+        .with_state(state)
+}
 
-    let addr = format!("127.0.0.1:{port}");
-    let listener = match tokio::net::TcpListener::bind(&addr).await {
-        Ok(l) => l,
-        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
-            anyhow::bail!(
-                "port {port} is already in use; pick a different [dev].port in zero.toml"
-            );
-        }
-        Err(e) => anyhow::bail!("failed to bind {addr}: {e}"),
-    };
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
 
-    println!("zero dev — listening on http://{addr}");
-
-    let out_dir = cwd.join(&config.build.out);
-    let out_dir = out_dir.canonicalize().unwrap_or(out_dir);
-    let watch_handle = watch::start(root_for_watch, out_dir, bus_for_watch)?;
-    if watch_handle.is_some() {
-        println!("zero dev — watching {root_display} for changes");
+    fn make_state(root: PathBuf) -> Arc<AppState> {
+        let (_tx, rx) = shutdown_watch::channel(false);
+        Arc::new(AppState {
+            runtime: "/* runtime */".to_string(),
+            http: "/* http */".to_string(),
+            root,
+            proxy: None,
+            bus: Arc::new(ReloadBus::new()),
+            shutdown: rx,
+            dev_sourcemap: false,
+        })
     }
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            let _ = tokio::signal::ctrl_c().await;
-            // Tell long-lived handlers (SSE) to end their streams so the
-            // in-flight connections finish and graceful shutdown completes.
-            let _ = shutdown_tx.send(true);
-        })
-        .await?;
+    #[tokio::test]
+    async fn zero_js_route_serves_runtime_body() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = make_state(tmp.path().to_path_buf());
+        let app = build_app(state);
+        let req = Request::builder()
+            .uri("/zero.js")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(&body[..], b"/* runtime */");
+    }
 
-    drop(watch_handle);
-    Ok(())
-}
+    #[tokio::test]
+    async fn zero_http_js_route_serves_http_runtime_body() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = make_state(tmp.path().to_path_buf());
+        let app = build_app(state);
+        let req = Request::builder()
+            .uri("/zero-http.js")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(&body[..], b"/* http */");
+    }
 
-/// `GET /zero.js` handler: respond with the precomputed runtime module.
-///
-/// # Parameters
-/// - `state`: shared app state.
-///
-/// # Returns
-/// A 200 response carrying the runtime as `application/javascript`.
-async fn serve_runtime(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    (
-        StatusCode::OK,
-        [(
-            header::CONTENT_TYPE,
-            "application/javascript; charset=utf-8",
-        )],
-        state.runtime.clone(),
-    )
-}
+    #[tokio::test]
+    async fn sse_endpoint_is_routed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = make_state(tmp.path().to_path_buf());
+        let app = build_app(state);
+        let req = Request::builder()
+            .uri("/_zero/events")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        // SSE handler returns 200 with an event-stream content-type.
+        assert_eq!(resp.status(), StatusCode::OK);
+        let ct = resp.headers().get("content-type").unwrap();
+        assert!(
+            ct.to_str().unwrap().contains("text/event-stream"),
+            "ct: {ct:?}"
+        );
+    }
 
-/// `GET /zero-http.js` handler: respond with the precomputed `zero/http`
-/// module body.
-async fn serve_http_runtime(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    (
-        StatusCode::OK,
-        [(
-            header::CONTENT_TYPE,
-            "application/javascript; charset=utf-8",
-        )],
-        state.http.clone(),
-    )
+    #[tokio::test]
+    async fn src_route_falls_through_to_404_for_missing_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+        let state = make_state(tmp.path().to_path_buf());
+        let app = build_app(state);
+        let req = Request::builder()
+            .uri("/src/missing.ts")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn fallback_serves_local_index_when_no_proxy() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("index.html"),
+            "<!doctype html><html><head></head><body></body></html>",
+        )
+        .unwrap();
+        let state = make_state(tmp.path().to_path_buf());
+        let app = build_app(state);
+        let req = Request::builder()
+            .uri("/some/unknown/path")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let s = std::str::from_utf8(&body).unwrap();
+        assert!(s.contains("/src/app.js"), "body: {s}");
+    }
+
+    #[tokio::test]
+    async fn no_cache_layer_is_applied_to_all_responses() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = make_state(tmp.path().to_path_buf());
+        let app = build_app(state);
+        let req = Request::builder()
+            .uri("/zero.js")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let cc = resp.headers().get("cache-control").unwrap();
+        assert!(cc.to_str().unwrap().contains("no-store"), "cc: {cc:?}");
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn serve_returns_error_when_root_missing() {
+        let _guard = crate::test_support::CWD_LOCK.lock().unwrap();
+        // Build a Config pointing at a non-existent root subdirectory.
+        let tmp = tempfile::tempdir().unwrap();
+        let prev = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let cfg = crate::config::Config {
+            project: crate::config::ProjectConfig {
+                root: "missing_dir".to_string(),
+            },
+            dev: crate::config::DevConfig {
+                port: 0,
+                proxy: None,
+                sourcemap: true,
+            },
+            build: crate::config::BuildConfig {
+                out: "dist".to_string(),
+                sourcemap: false,
+            },
+        };
+        let res = serve(cfg).await;
+        std::env::set_current_dir(prev).unwrap();
+        assert!(res.is_err(), "expected error when root missing");
+        let msg = res.unwrap_err().to_string();
+        assert!(msg.contains("not found"), "msg: {msg}");
+    }
 }

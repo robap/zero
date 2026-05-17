@@ -250,3 +250,204 @@ impl ProxyState {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::Router;
+    use axum::routing::get;
+    use http_body_util::BodyExt;
+    use std::net::SocketAddr;
+
+    async fn read_body(resp: Response) -> (StatusCode, HeaderMap, String) {
+        let status = resp.status();
+        let headers = resp.headers().clone();
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        (status, headers, String::from_utf8_lossy(&bytes).to_string())
+    }
+
+    async fn start_backend<F>(make_app: F) -> (SocketAddr, tokio::task::JoinHandle<()>)
+    where
+        F: FnOnce() -> Router,
+    {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = make_app();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.ok();
+        });
+        (addr, handle)
+    }
+
+    #[test]
+    fn build_client_succeeds() {
+        let c = build_client();
+        assert!(c.is_ok());
+    }
+
+    #[test]
+    fn proxy_state_new_constructs() {
+        let s = ProxyState::new(url::Url::parse("http://127.0.0.1:9999").unwrap());
+        assert!(s.is_ok());
+    }
+
+    #[tokio::test]
+    async fn websocket_upgrade_returns_501() {
+        let client = build_client().unwrap();
+        let base = url::Url::parse("http://127.0.0.1:1").unwrap();
+        let req = Request::builder()
+            .uri("/ws")
+            .header("upgrade", "websocket")
+            .header("connection", "upgrade")
+            .body(Body::empty())
+            .unwrap();
+        let resp = proxy_request(&base, &client, req, "/src/app.js").await;
+        let (status, _, body) = read_body(resp).await;
+        assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
+        assert!(body.contains("WebSocket"), "body: {body}");
+    }
+
+    #[tokio::test]
+    async fn unreachable_backend_returns_502() {
+        let client = build_client().unwrap();
+        // Port 1 should not be listening.
+        let base = url::Url::parse("http://127.0.0.1:1").unwrap();
+        let req = Request::builder()
+            .uri("/anything")
+            .body(Body::empty())
+            .unwrap();
+        let resp = proxy_request(&base, &client, req, "/src/app.js").await;
+        let (status, _, body) = read_body(resp).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert!(body.contains("Cannot reach backend"), "body: {body}");
+    }
+
+    #[tokio::test]
+    async fn html_response_is_injected_with_scripts() {
+        let (addr, _h) = start_backend(|| {
+            Router::new().route(
+                "/",
+                get(|| async {
+                    (
+                        StatusCode::OK,
+                        [("content-type", "text/html; charset=utf-8")],
+                        "<html><head><title>X</title></head><body>hi</body></html>",
+                    )
+                        .into_response()
+                }),
+            )
+        })
+        .await;
+        let client = build_client().unwrap();
+        let base = url::Url::parse(&format!("http://{addr}")).unwrap();
+        let req = Request::builder().uri("/").body(Body::empty()).unwrap();
+        let resp = proxy_request(&base, &client, req, "/src/app.js").await;
+        let (status, headers, body) = read_body(resp).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            body.contains(r#"<script type="importmap">"#),
+            "body: {body}"
+        );
+        // Content-Length should reflect the injected body length.
+        let cl = headers.get("content-length").unwrap();
+        assert_eq!(cl.to_str().unwrap().parse::<usize>().unwrap(), body.len());
+    }
+
+    #[tokio::test]
+    async fn non_html_response_is_streamed_through_unchanged() {
+        let (addr, _h) = start_backend(|| {
+            Router::new().route(
+                "/api",
+                get(|| async {
+                    (
+                        StatusCode::OK,
+                        [("content-type", "application/json")],
+                        r#"{"x":1}"#,
+                    )
+                        .into_response()
+                }),
+            )
+        })
+        .await;
+        let client = build_client().unwrap();
+        let base = url::Url::parse(&format!("http://{addr}")).unwrap();
+        let req = Request::builder().uri("/api").body(Body::empty()).unwrap();
+        let resp = proxy_request(&base, &client, req, "/src/app.js").await;
+        let (status, headers, body) = read_body(resp).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, r#"{"x":1}"#);
+        let ct = headers.get("content-type").unwrap();
+        assert!(
+            ct.to_str().unwrap().contains("application/json"),
+            "ct: {ct:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn html_response_strips_cache_and_validator_headers() {
+        let (addr, _h) = start_backend(|| {
+            Router::new().route(
+                "/",
+                get(|| async {
+                    (
+                        StatusCode::OK,
+                        [
+                            ("content-type", "text/html; charset=utf-8"),
+                            ("cache-control", "max-age=3600"),
+                            ("etag", "\"abc\""),
+                            ("last-modified", "Wed, 21 Oct 2015 07:28:00 GMT"),
+                        ],
+                        "<html><head></head><body></body></html>",
+                    )
+                        .into_response()
+                }),
+            )
+        })
+        .await;
+        let client = build_client().unwrap();
+        let base = url::Url::parse(&format!("http://{addr}")).unwrap();
+        let req = Request::builder().uri("/").body(Body::empty()).unwrap();
+        let resp = proxy_request(&base, &client, req, "/src/app.js").await;
+        let (status, headers, _body) = read_body(resp).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(headers.get("etag").is_none(), "etag should be stripped");
+        assert!(
+            headers.get("last-modified").is_none(),
+            "last-modified should be stripped"
+        );
+        // cache-control survives as-is because the no_cache_layer reapplies it at the router level.
+        // The proxy itself strips the upstream value.
+        assert!(
+            !headers
+                .get("cache-control")
+                .map(|v| v.to_str().unwrap().contains("max-age=3600"))
+                .unwrap_or(false),
+            "upstream cache-control should not leak through"
+        );
+    }
+
+    #[tokio::test]
+    async fn upstream_status_is_propagated() {
+        let (addr, _h) = start_backend(|| {
+            Router::new().route(
+                "/",
+                get(|| async {
+                    (
+                        StatusCode::BAD_GATEWAY,
+                        [("content-type", "text/plain")],
+                        "upstream is down",
+                    )
+                        .into_response()
+                }),
+            )
+        })
+        .await;
+        let client = build_client().unwrap();
+        let base = url::Url::parse(&format!("http://{addr}")).unwrap();
+        let req = Request::builder().uri("/").body(Body::empty()).unwrap();
+        let resp = proxy_request(&base, &client, req, "/src/app.js").await;
+        let (status, _, body) = read_body(resp).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(body, "upstream is down");
+    }
+}

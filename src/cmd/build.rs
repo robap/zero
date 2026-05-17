@@ -101,3 +101,134 @@ fn copy_public(src: &Path, dst: &Path) -> anyhow::Result<usize> {
     }
     Ok(count)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::CWD_LOCK;
+
+    struct CwdGuard {
+        prev: std::path::PathBuf,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+    impl CwdGuard {
+        fn enter(target: &Path) -> Self {
+            let lock = CWD_LOCK.lock().unwrap();
+            let prev = std::env::current_dir().unwrap();
+            std::env::set_current_dir(target).unwrap();
+            CwdGuard { prev, _lock: lock }
+        }
+    }
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.prev);
+        }
+    }
+
+    /// Minimal scaffold of a project the bundler can build.
+    fn write_minimal_project(root: &Path) {
+        std::fs::write(
+            root.join("zero.toml"),
+            "[project]\nroot = \"web\"\n\n[build]\nout = \"dist\"\n",
+        )
+        .unwrap();
+        let web = root.join("web");
+        std::fs::create_dir_all(web.join("src")).unwrap();
+        std::fs::write(
+            web.join("index.html"),
+            "<!doctype html><html><head><title>x</title></head><body></body></html>",
+        )
+        .unwrap();
+        std::fs::write(
+            web.join("src").join("app.ts"),
+            "export const x = 1;\nconsole.log(x);\n",
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn missing_zero_toml_returns_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _g = CwdGuard::enter(tmp.path());
+        let err = super::run(None).await.expect_err("should fail");
+        let msg = format!("{err}");
+        assert!(msg.contains("zero.toml"), "msg: {msg}");
+    }
+
+    #[tokio::test]
+    async fn override_sourcemap_true_writes_external_map_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _g = CwdGuard::enter(tmp.path());
+        write_minimal_project(tmp.path());
+        super::run(Some(true)).await.unwrap();
+        let assets = tmp.path().join("dist").join("assets");
+        let mut had_map = false;
+        for e in std::fs::read_dir(&assets).unwrap() {
+            let p = e.unwrap().path();
+            if p.extension().and_then(|s| s.to_str()) == Some("map") {
+                had_map = true;
+            }
+        }
+        assert!(had_map, "expected a .map file in {}", assets.display());
+    }
+
+    #[tokio::test]
+    async fn override_sourcemap_false_omits_external_map_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _g = CwdGuard::enter(tmp.path());
+        write_minimal_project(tmp.path());
+        super::run(Some(false)).await.unwrap();
+        let assets = tmp.path().join("dist").join("assets");
+        let mut had_map = false;
+        for e in std::fs::read_dir(&assets).unwrap() {
+            let p = e.unwrap().path();
+            if p.extension().and_then(|s| s.to_str()) == Some("map") {
+                had_map = true;
+            }
+        }
+        assert!(!had_map, "did not expect a .map file");
+    }
+
+    #[tokio::test]
+    async fn build_writes_manifest_and_index_html() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _g = CwdGuard::enter(tmp.path());
+        write_minimal_project(tmp.path());
+        super::run(None).await.unwrap();
+        let dist = tmp.path().join("dist");
+        assert!(dist.join("manifest.json").is_file(), "manifest missing");
+        assert!(dist.join("index.html").is_file(), "index.html missing");
+    }
+
+    #[tokio::test]
+    async fn override_none_falls_back_to_config_default() {
+        // Default build.sourcemap is `false`, so no .map should be written.
+        let tmp = tempfile::tempdir().unwrap();
+        let _g = CwdGuard::enter(tmp.path());
+        write_minimal_project(tmp.path());
+        super::run(None).await.unwrap();
+        let assets = tmp.path().join("dist").join("assets");
+        let mut had_map = false;
+        for e in std::fs::read_dir(&assets).unwrap() {
+            let p = e.unwrap().path();
+            if p.extension().and_then(|s| s.to_str()) == Some("map") {
+                had_map = true;
+            }
+        }
+        assert!(!had_map, "did not expect a .map file with default config");
+    }
+
+    #[test]
+    fn copy_public_recurses_and_counts_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src_pub");
+        let dst = tmp.path().join("dst_pub");
+        std::fs::create_dir_all(src.join("nested")).unwrap();
+        std::fs::write(src.join("a.txt"), "a").unwrap();
+        std::fs::write(src.join("nested").join("b.txt"), "b").unwrap();
+        let n = copy_public(&src, &dst).unwrap();
+        assert_eq!(n, 2);
+        assert!(dst.join("a.txt").is_file());
+        assert!(dst.join("nested").join("b.txt").is_file());
+    }
+}

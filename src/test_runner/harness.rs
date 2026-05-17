@@ -954,4 +954,315 @@ describe("g", () => {
             );
         }
     }
+
+    #[test]
+    fn parse_simple_frame_extracts_components() {
+        let loc = super::parse_simple_frame("/path/to/a.js:12:34").unwrap();
+        assert_eq!(loc.file, PathBuf::from("/path/to/a.js"));
+        assert_eq!(loc.line, 12);
+        assert_eq!(loc.column, 34);
+    }
+
+    #[test]
+    fn parse_simple_frame_returns_none_when_missing_position() {
+        assert!(super::parse_simple_frame("/path/no/position.js").is_none());
+    }
+
+    #[test]
+    fn parse_stack_frame_accepts_v8_format() {
+        let got = super::parse_stack_frame("    at fn (/x/a.js:1:2)").unwrap();
+        assert_eq!(got, ("/x/a.js".to_string(), 1, 2));
+    }
+
+    #[test]
+    fn parse_stack_frame_accepts_spidermonkey_format() {
+        let got = super::parse_stack_frame("fn@/x/a.js:3:4").unwrap();
+        assert_eq!(got, ("/x/a.js".to_string(), 3, 4));
+    }
+
+    #[test]
+    fn parse_stack_frame_returns_none_on_garbage() {
+        assert!(super::parse_stack_frame("definitely not a frame").is_none());
+    }
+
+    #[test]
+    fn is_user_path_rejects_node_prefix() {
+        assert!(!super::is_user_path("node:internal/process/task_queues"));
+    }
+
+    #[test]
+    fn is_user_path_rejects_framework_internal_basenames() {
+        assert!(!super::is_user_path("/foo/test.js"));
+        assert!(!super::is_user_path("/foo/template.js"));
+        assert!(!super::is_user_path("/foo/reactivity.js"));
+        assert!(!super::is_user_path("/foo/app.js"));
+        assert!(!super::is_user_path("/foo/router.js"));
+        assert!(!super::is_user_path("/foo/dom-shim.js"));
+        assert!(!super::is_user_path("/foo/http.js"));
+    }
+
+    #[test]
+    fn is_user_path_accepts_user_modules() {
+        assert!(super::is_user_path("/x/src/app.test.js"));
+        assert!(super::is_user_path("/x/src/home.ts"));
+        assert!(super::is_user_path("just_a_bare_name.js"));
+    }
+
+    #[test]
+    fn compute_location_prefers_user_frame_over_stack() {
+        let user = Some("/x/src/a.ts:1:2");
+        let stack = Some("at thing (/x/src/other.ts:5:6)");
+        let loc = super::compute_location(user, stack, None).unwrap();
+        assert_eq!(loc.file, PathBuf::from("/x/src/a.ts"));
+        assert_eq!(loc.line, 1);
+    }
+
+    #[test]
+    fn compute_location_walks_stack_when_no_user_frame() {
+        // First framework frame is skipped, second user frame is picked.
+        let stack = Some("at h (/x/src/template.js:1:2)\nat g (/x/src/user.ts:3:4)");
+        let loc = super::compute_location(None, stack, None).unwrap();
+        assert_eq!(loc.file, PathBuf::from("/x/src/user.ts"));
+        assert_eq!(loc.line, 3);
+        assert_eq!(loc.column, 4);
+    }
+
+    #[test]
+    fn compute_location_returns_none_when_no_user_frame_anywhere() {
+        let stack = Some("at h (/x/src/template.js:1:2)\nat g (/x/src/app.js:3:4)");
+        assert!(super::compute_location(None, stack, None).is_none());
+    }
+
+    #[test]
+    fn compute_location_returns_none_when_no_input() {
+        assert!(super::compute_location(None, None, None).is_none());
+    }
+
+    #[test]
+    fn remap_positions_passthrough_without_sourcemap() {
+        let s = "at f (/x/a.ts:5:7)";
+        assert_eq!(super::remap_positions(s, None), s);
+    }
+
+    #[test]
+    fn nested_describe_blocks_walk_in_order() {
+        let f = write_temp_js(
+            r#"import { describe, it, expect } from "zero/test";
+describe("outer", () => {
+  it("o-a", () => expect(1).toBe(1));
+  describe("inner", () => {
+    it("i-a", () => expect(2).toBe(2));
+    it("i-b", () => expect(3).toBe(3));
+  });
+  it("o-b", () => expect(4).toBe(4));
+});
+"#,
+        );
+        let root = f.path().parent().unwrap();
+        let result = run_file(root, f.path());
+        assert!(result.load_error.is_none());
+        let names: Vec<_> = result
+            .outcomes
+            .iter()
+            .map(|o| o.name_chain.join(" > "))
+            .collect();
+        assert!(names.contains(&"outer > o-a".to_string()), "{names:?}");
+        assert!(
+            names.contains(&"outer > inner > i-a".to_string()),
+            "{names:?}"
+        );
+        assert!(
+            names.contains(&"outer > inner > i-b".to_string()),
+            "{names:?}"
+        );
+        assert!(names.contains(&"outer > o-b".to_string()), "{names:?}");
+    }
+
+    #[test]
+    fn before_all_failure_skips_all_its_with_reason() {
+        let f = write_temp_js(
+            r#"import { describe, it, beforeAll, expect } from "zero/test";
+describe("g", () => {
+  beforeAll(() => { throw new Error("boot failure"); });
+  it("a", () => expect(1).toBe(1));
+  it("b", () => expect(2).toBe(2));
+});
+"#,
+        );
+        let root = f.path().parent().unwrap();
+        let result = run_file(root, f.path());
+        assert!(result.load_error.is_none());
+        for o in &result.outcomes {
+            match &o.status {
+                Status::Skipped(reason) => assert!(reason.contains("beforeAll")),
+                other => panic!("expected Skipped, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn after_each_runs_even_after_test_failure() {
+        let f = write_temp_js(
+            r#"import { describe, it, afterEach, expect } from "zero/test";
+let tail = [];
+describe("g", () => {
+  afterEach(() => { tail.push("ae"); });
+  it("fail", () => expect(1).toBe(2));
+  it("pass", () => { expect(tail.length).toBe(1); });
+});
+"#,
+        );
+        let root = f.path().parent().unwrap();
+        let result = run_file(root, f.path());
+        assert!(result.load_error.is_none());
+        let pass = result
+            .outcomes
+            .iter()
+            .find(|o| o.name_chain.iter().any(|n| n == "pass"))
+            .unwrap();
+        assert!(matches!(pass.status, Status::Passed));
+    }
+
+    #[test]
+    fn top_level_it_without_describe_runs() {
+        let f = write_temp_js(
+            r#"import { it, expect } from "zero/test";
+it("lone", () => expect(1).toBe(1));
+"#,
+        );
+        let root = f.path().parent().unwrap();
+        let result = run_file(root, f.path());
+        assert!(result.load_error.is_none());
+        assert_eq!(result.outcomes.len(), 1);
+        assert_eq!(result.outcomes[0].name_chain, vec!["lone".to_string()]);
+        assert!(matches!(result.outcomes[0].status, Status::Passed));
+    }
+
+    #[test]
+    fn async_test_awaits_promise_resolution() {
+        let f = write_temp_js(
+            r#"import { it, expect } from "zero/test";
+it("awaits", async () => {
+  await Promise.resolve();
+  expect(2 + 2).toBe(4);
+});
+"#,
+        );
+        let root = f.path().parent().unwrap();
+        let result = run_file(root, f.path());
+        assert!(result.load_error.is_none());
+        assert_eq!(result.outcomes.len(), 1);
+        assert!(matches!(result.outcomes[0].status, Status::Passed));
+    }
+
+    #[test]
+    fn async_test_rejection_is_a_failure() {
+        let f = write_temp_js(
+            r#"import { it } from "zero/test";
+it("rejects", async () => { throw new Error("rejected"); });
+"#,
+        );
+        let root = f.path().parent().unwrap();
+        let result = run_file(root, f.path());
+        assert!(result.load_error.is_none());
+        assert_eq!(result.outcomes.len(), 1);
+        assert!(matches!(result.outcomes[0].status, Status::Failed));
+    }
+
+    #[test]
+    fn after_all_runs_after_all_its() {
+        let f = write_temp_js(
+            r#"import { describe, it, afterAll, expect } from "zero/test";
+globalThis.afterAllCount = 0;
+describe("g", () => {
+  afterAll(() => { globalThis.afterAllCount++; });
+  it("a", () => expect(1).toBe(1));
+  it("b", () => expect(2).toBe(2));
+});
+"#,
+        );
+        let root = f.path().parent().unwrap();
+        let result = run_file(root, f.path());
+        assert!(result.load_error.is_none());
+        for o in &result.outcomes {
+            assert!(matches!(o.status, Status::Passed));
+        }
+    }
+
+    #[test]
+    fn console_log_in_test_does_not_crash() {
+        let f = write_temp_js(
+            r#"import { it, expect } from "zero/test";
+it("logs", () => {
+  console.log("hello");
+  console.warn("warn");
+  console.error("err");
+  expect(1).toBe(1);
+});
+"#,
+        );
+        let root = f.path().parent().unwrap();
+        let result = run_file(root, f.path());
+        assert!(result.load_error.is_none());
+        assert_eq!(result.outcomes.len(), 1);
+        assert!(matches!(result.outcomes[0].status, Status::Passed));
+    }
+
+    #[test]
+    fn throwing_non_error_value_still_produces_failed_outcome() {
+        let f = write_temp_js(
+            r#"import { it } from "zero/test";
+it("throws-string", () => { throw "literal string"; });
+it("throws-number", () => { throw 42; });
+it("throws-object", () => { throw { code: "X" }; });
+"#,
+        );
+        let root = f.path().parent().unwrap();
+        let result = run_file(root, f.path());
+        assert!(result.load_error.is_none());
+        for o in &result.outcomes {
+            assert!(matches!(o.status, Status::Failed));
+        }
+    }
+
+    #[test]
+    fn multiple_files_independent_test_state() {
+        let f1 = write_temp_js(
+            r#"import { it, expect } from "zero/test";
+it("alpha", () => expect(1).toBe(1));
+"#,
+        );
+        let f2 = write_temp_js(
+            r#"import { it, expect } from "zero/test";
+it("beta", () => expect(2).toBe(2));
+"#,
+        );
+        let r1 = run_file(f1.path().parent().unwrap(), f1.path());
+        let r2 = run_file(f2.path().parent().unwrap(), f2.path());
+        assert_eq!(r1.outcomes.len(), 1);
+        assert_eq!(r1.outcomes[0].name_chain, vec!["alpha".to_string()]);
+        assert_eq!(r2.outcomes.len(), 1);
+        assert_eq!(r2.outcomes[0].name_chain, vec!["beta".to_string()]);
+    }
+
+    #[test]
+    fn after_each_failure_does_not_break_subsequent_its() {
+        let f = write_temp_js(
+            r#"import { describe, it, afterEach, expect } from "zero/test";
+describe("g", () => {
+  afterEach(() => { throw new Error("cleanup blew up"); });
+  it("a", () => expect(1).toBe(1));
+  it("b", () => expect(2).toBe(2));
+});
+"#,
+        );
+        let root = f.path().parent().unwrap();
+        let result = run_file(root, f.path());
+        assert!(result.load_error.is_none());
+        assert_eq!(result.outcomes.len(), 2);
+        // Both 'a' and 'b' should still have been recorded.
+        for o in &result.outcomes {
+            assert!(matches!(o.status, Status::Passed));
+        }
+    }
 }
