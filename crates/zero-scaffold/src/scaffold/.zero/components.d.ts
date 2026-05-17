@@ -115,6 +115,26 @@ declare module "zero/components" {
   };
   export function Tabs(props: TabsProps): TemplateResult;
 
+  export type TableDensity = "compact" | "cozy";
+  export type TableColumn<T> = {
+    key: keyof T & string;
+    label: string;
+    align?: "start" | "end" | "center";
+    width?: string;
+    render?: (row: T, i: number) => TemplateResult | string | number;
+  };
+  export type TableProps<T> = {
+    columns: TableColumn<T>[];
+    rows: Signal<T[]>;
+    rowKey: (row: T, i: number) => string | number;
+    onRowClick?: (row: T, i: number) => void;
+    density?: TableDensity;
+    maxHeight?: string;
+    empty?: TemplateResult;
+    loading?: Signal<boolean>;
+  };
+  export function Table<T>(props: TableProps<T>): TemplateResult;
+
   export type TextAreaProps = {
     value: Signal<string>;
     rows?: number;

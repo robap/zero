@@ -14,6 +14,7 @@ const components: Array<{ name: string; href: string }> = [
   { name: "Radio", href: "/radio" },
   { name: "Select", href: "/select" },
   { name: "Spinner", href: "/spinner" },
+  { name: "Table", href: "/table" },
   { name: "Tabs", href: "/tabs" },
   { name: "TextArea", href: "/textarea" },
   { name: "Toast", href: "/toast" },

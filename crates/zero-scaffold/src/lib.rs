@@ -67,6 +67,9 @@ const TPL_SPINNER_SCSS: &str = include_str!("scaffold/.zero/styles/components/_s
 const TPL_TABS_TS: &str = include_str!("scaffold/.zero/components/Tabs.ts");
 const TPL_TABS_TEST_TS: &str = include_str!("scaffold/.zero/components/Tabs.test.ts");
 const TPL_TABS_SCSS: &str = include_str!("scaffold/.zero/styles/components/_tabs.scss");
+const TPL_TABLE_TS: &str = include_str!("scaffold/.zero/components/Table.ts");
+const TPL_TABLE_TEST_TS: &str = include_str!("scaffold/.zero/components/Table.test.ts");
+const TPL_TABLE_SCSS: &str = include_str!("scaffold/.zero/styles/components/_table.scss");
 const TPL_TEXTAREA_TS: &str = include_str!("scaffold/.zero/components/TextArea.ts");
 const TPL_TEXTAREA_TEST_TS: &str = include_str!("scaffold/.zero/components/TextArea.test.ts");
 const TPL_TEXTAREA_SCSS: &str = include_str!("scaffold/.zero/styles/components/_textarea.scss");
@@ -167,6 +170,9 @@ pub fn framework_manifest() -> Vec<(&'static str, &'static str)> {
         (".zero/components/Tabs.ts", TPL_TABS_TS),
         (".zero/components/Tabs.test.ts", TPL_TABS_TEST_TS),
         (".zero/styles/components/_tabs.scss", TPL_TABS_SCSS),
+        (".zero/components/Table.ts", TPL_TABLE_TS),
+        (".zero/components/Table.test.ts", TPL_TABLE_TEST_TS),
+        (".zero/styles/components/_table.scss", TPL_TABLE_SCSS),
         (".zero/components/TextArea.ts", TPL_TEXTAREA_TS),
         (".zero/components/TextArea.test.ts", TPL_TEXTAREA_TEST_TS),
         (".zero/styles/components/_textarea.scss", TPL_TEXTAREA_SCSS),
@@ -294,7 +300,7 @@ mod tests {
     /// per-name assertions.
     const COMPONENT_NAMES: &[&str] = &[
         "Avatar", "Badge", "Button", "Card", "Checkbox", "Dialog", "Input", "Radio", "Select",
-        "Spinner", "Tabs", "TextArea", "Toast", "Toggle",
+        "Spinner", "Table", "Tabs", "TextArea", "Toast", "Toggle",
     ];
 
     fn fresh_scaffold() -> (tempfile::TempDir, std::path::PathBuf) {
@@ -430,8 +436,10 @@ mod tests {
         let (_dir, root) = fresh_scaffold();
         let dts = fs::read_to_string(root.join(".zero/components.d.ts")).unwrap();
         for name in COMPONENT_NAMES {
+            let plain = format!("{name}(");
+            let generic = format!("{name}<");
             assert!(
-                dts.contains(&format!("{name}(")),
+                dts.contains(&plain) || dts.contains(&generic),
                 "components.d.ts missing function declaration for {name}: {dts}"
             );
         }
@@ -868,7 +876,7 @@ mod tests {
             ".zero/styles/_typography.scss",
             ".zero/styles/_components.scss",
             ".zero/styles/zero.scss",
-            // 14 components × (source, test, scss partial) = 42 entries.
+            // 15 components × (source, test, scss partial) = 45 entries.
             ".zero/components/Avatar.ts",
             ".zero/components/Avatar.test.ts",
             ".zero/styles/components/_avatar.scss",
@@ -902,6 +910,9 @@ mod tests {
             ".zero/components/Tabs.ts",
             ".zero/components/Tabs.test.ts",
             ".zero/styles/components/_tabs.scss",
+            ".zero/components/Table.ts",
+            ".zero/components/Table.test.ts",
+            ".zero/styles/components/_table.scss",
             ".zero/components/TextArea.ts",
             ".zero/components/TextArea.test.ts",
             ".zero/styles/components/_textarea.scss",

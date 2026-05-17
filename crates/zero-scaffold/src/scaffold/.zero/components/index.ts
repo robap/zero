@@ -21,6 +21,8 @@ export { default as Spinner } from "./Spinner.ts";
 export type { SpinnerProps, SpinnerSize, SpinnerVariant } from "./Spinner.ts";
 export { default as Tabs } from "./Tabs.ts";
 export type { TabsProps, TabsTab } from "./Tabs.ts";
+export { default as Table } from "./Table.ts";
+export type { TableColumn, TableDensity, TableProps } from "./Table.ts";
 export { default as TextArea } from "./TextArea.ts";
 export type { TextAreaProps } from "./TextArea.ts";
 export { default as Toast } from "./Toast.ts";

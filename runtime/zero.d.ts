@@ -43,6 +43,7 @@ declare module "zero" {
   export function each<T>(
     source: Signal<T[]> | Computed<T[]>,
     render: (item: T, index: number) => TemplateResult,
+    key?: (item: T, index: number) => string | number,
   ): TemplateResult;
   export function ref<T = unknown>(): Ref<T>;
 

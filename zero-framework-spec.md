@@ -1258,6 +1258,9 @@ Radio({ selected, name, value, ... })// radio button in a named group
 Select({ value, options, ... })      // native select wired to a signal
 Toggle({ checked, label?, ... })     // styled switch (role="switch")
 
+// Data
+Table({ columns, rows, rowKey, ... }) // sticky-header table over a Signal<T[]>
+
 // Display
 Card({ variant?, title?, ... })      // container with optional title
 Spinner({ variant?, size?, ... })    // CSS-only rotating status indicator
@@ -1306,6 +1309,7 @@ Suggested build order for a proof of concept:
 - [x] Event binding with `@` prefix
 - [x] Event modifiers (.prevent, .stop, .once, key filters)
 - [x] `each()` for keyed list rendering
+- [x] Keyed `each()` reconciliation via optional `keyFn`
 - [x] `ref()` for DOM access
 
 ### Phase 3 — App & Router
@@ -1361,7 +1365,7 @@ State machines as a first-class primitive are deferred indefinitely. See Section
 - [x] Distribution rides on Phase 7: new partials land under `.zero/styles/`, refresh via `zero update`
 
 ### Phase 9 — Component Library
-- [x] Set of ready-to-use components built on the design system (14 shipped: Avatar, Badge, Button, Card, Checkbox, Dialog, Input, Radio, Select, Spinner, Tabs, TextArea, Toast, Toggle)
+- [x] Set of ready-to-use components built on the design system (15 shipped: Avatar, Badge, Button, Card, Checkbox, Dialog, Input, Radio, Select, Spinner, Table, Tabs, TextArea, Toast, Toggle)
 - [x] Components are plain function components and consume only `var(--*)` tokens — they never embed colors, spacing, or radii directly
 - [x] A showcase project (`showcase/`) renders every component with a light/dark theme switcher; builds with `zero build`
 - [x] Distribution under `.zero/components/` — sources, tests, and SCSS partials regenerable via `zero update`
@@ -1418,5 +1422,5 @@ remaining item and stays unscheduled.)
 | Routing | Explicit `app.route()` calls | No file-system conventions, ordered matching, readable |
 | Testing | Built-in with lightweight DOM | No jsdom, no browser, possible because components are plain functions |
 | Distribution | Single CLI binary | Zero npm dependencies, one install, everything included |
-| Component library | 14 components shipped under `.zero/components/`; CSS wrapped in `@layer components` | Real apps shouldn't rebuild the same primitives; `@layer` keeps user overrides predictable without prefixing |
+| Component library | 15 components shipped under `.zero/components/`; CSS wrapped in `@layer components` | Real apps shouldn't rebuild the same primitives; `@layer` keeps user overrides predictable without prefixing |
 | HTTP client | `"zero/http"` module with middleware (onion model) and per-call `init.fetch` override | Every real app fetches; shipping one obvious wrapper avoids divergent conventions across adopters and threads cleanly with the route-scoped abort signal |

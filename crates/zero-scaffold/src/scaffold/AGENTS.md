@@ -223,7 +223,7 @@ function TodoList() {
 }
 ```
 
-Signature: `each(signalOfArray, (item, index) => TemplateResult)`. When the signal's array changes, `each` re-renders the list from scratch — there is no keyed reconciliation today. For frequently changing large lists, factor the per-item state out of the array so the underlying signals stay stable.
+Signature: `each(signalOfArray, (item, index) => TemplateResult, keyFn?)`. By default `each` re-renders the list from scratch when the signal's array changes. Pass an optional `keyFn` (e.g. `(item) => item.id`) and `each` reuses existing per-row DOM nodes and scopes across reorders, inserts, and removes. Duplicate keys throw immediately so silent reuse-wrong-DOM bugs surface as explicit failures.
 
 ### Refs
 
@@ -651,6 +651,7 @@ import { Button, Input, Dialog } from "zero/components";
 | `Radio`    | Radio button in a named group.          | `selected: Signal<string>` |
 | `Select`   | Native `<select>` wired to a signal.    | `value: Signal<string>` |
 | `Spinner`  | CSS-only rotating status indicator.     | — |
+| `Table`    | Sticky-header table over a row signal.  | `rows: Signal<T[]>`, `loading?: Signal<boolean>` |
 | `Tabs`     | Tablist with reactive panel content.    | `active: Signal<string>` |
 | `TextArea` | Multi-line text field wired to signal.  | `value: Signal<string>` |
 | `Toast`    | Fixed-position transient message.       | `open: Signal<boolean>` |
@@ -681,6 +682,23 @@ import { Card, Badge } from "zero/components";
 Card({
   title: "Status",
   children: Badge({ variant: "success", children: "Healthy" }),
+});
+```
+
+### Data
+
+```ts
+import { signal } from "zero";
+import { Table } from "zero/components";
+
+const rows = signal([{ id: 1, name: "Ada", role: "admin" }]);
+Table({
+  columns: [
+    { key: "name", label: "Name" },
+    { key: "role", label: "Role" },
+  ],
+  rows,
+  rowKey: r => r.id,
 });
 ```
 
@@ -742,8 +760,8 @@ Files currently shipped under `.zero/`:
 | `.zero/zero-test.d.ts` | TypeScript declarations for the `"zero/test"` import. |
 | `.zero/components.d.ts` | TypeScript declarations for the `"zero/components"` import. |
 | `.zero/components/index.ts` | Re-exports every shipped component. |
-| `.zero/components/<Name>.ts` | One source file per component (14 total). |
-| `.zero/components/<Name>.test.ts` | One test file per component (14 total). |
+| `.zero/components/<Name>.ts` | One source file per component (15 total). |
+| `.zero/components/<Name>.test.ts` | One test file per component (15 total). |
 | `.zero/styles/_palette.scss` | 55 framework-internal palette tokens (`gray`, `blue`, `red`, `green`, `amber` × 11 steps). |
 | `.zero/styles/_tokens.scss` | Non-color design tokens (spacing, radius, font family/size/weight, line height, shadow, border). |
 | `.zero/styles/_themes.scss` | Theme aggregator: wires `_light` / `_dark` mixins to `:root`, `[data-theme]`, and `prefers-color-scheme`. |
@@ -754,7 +772,7 @@ Files currently shipped under `.zero/`:
 | `.zero/styles/_utilities.scss` | Gap, padding, and border utility classes. |
 | `.zero/styles/_alignment.scss` | Alignment, justify, self, text-align, and flex-direction utility classes. |
 | `.zero/styles/_components.scss` | Aggregate that `@use`'s every per-component partial. |
-| `.zero/styles/components/_<name>.scss` | One SCSS partial per component (14 total). |
+| `.zero/styles/components/_<name>.scss` | One SCSS partial per component (15 total). |
 | `.zero/styles/zero.scss` | Aggregate that `@use`'s every partial above. |
 
 ### Updating
@@ -1043,7 +1061,7 @@ export default function Home() {
 
 - **Components run once per mount.** Putting `signal()` at module scope shares the signal across every mount of that component. Put per-instance state inside the function body.
 - **Reactive reads need a reactive context.** Reading `signal.val` from a plain expression in a template (e.g. `${count.val}`) takes a snapshot at template construction and never updates. Use the bare signal (`${count}`) or a reactive block (`${() => count.val}`).
-- **`each` re-renders the whole list.** There is no keyed reconciliation. If a list mutates often and its items are expensive, restructure: keep stable per-item signals out of the array.
+- **`each` re-renders the whole list by default.** Pass an optional `keyFn` to opt into keyed reconciliation that reuses per-row DOM nodes and scopes. Duplicate keys throw.
 - **`inject(key)` throws on unknown keys.** Register every key with `app.state` (in code) or in `render(tr, { state })` (in tests) before any component reads it.
 - **`app.run` must be called exactly once.** Builder methods (`state`, `use`, `route`, `layout`, `loading`, `error`) all throw if called after `run`.
 - **`navigate`/`back`/`forward`/`route()`/`inject()` require a running app.** They throw outside of `app.run` and outside of `render(...)`.
@@ -1056,7 +1074,7 @@ export default function Home() {
 
 Real apps benefit from a small, predictable layout — a `state.ts`, a `stores/` directory, a `components/` directory, a `routes/` directory, and a `lib/` directory for non-UI helpers. Keep route components, their `load()`, and their `meta` co-located in one file per route.
 
-- **Use `zero/components` for every interactive primitive.** `Button`, `Input`, `Checkbox`, `Toggle`, `Select`, `Radio`, `TextArea`, `Dialog`, `Tabs`, `Card`, `Avatar`, `Badge`, `Spinner`, `Toast`. Drop to raw `<button>` / `<input>` / `<select>` only when the shipped component cannot express the behavior (leave a `//` comment naming the missing capability) or when you are building a new presentational component the library does not ship (the per-app `Header` is the canonical case). Plain containers (`<main>`, `<section>`, `<form>`, `<ul>`, `<li>`, `<label>`, `<a>`, `<svg>`, …) are not "components" under this rule — use them freely.
+- **Use `zero/components` for every interactive primitive.** `Button`, `Input`, `Checkbox`, `Toggle`, `Select`, `Radio`, `TextArea`, `Dialog`, `Tabs`, `Table`, `Card`, `Avatar`, `Badge`, `Spinner`, `Toast`. Drop to raw `<button>` / `<input>` / `<select>` only when the shipped component cannot express the behavior (leave a `//` comment naming the missing capability) or when you are building a new presentational component the library does not ship (the per-app `Header` is the canonical case). Plain containers (`<main>`, `<section>`, `<form>`, `<ul>`, `<li>`, `<label>`, `<a>`, `<svg>`, …) are not "components" under this rule — use them freely.
 - **When building your own presentational component, wrap shipped primitives** rather than re-implementing them. A `ThemeToggle` wraps the shipped `Toggle`; it does not start from a raw `<input type="checkbox">`.
 - **Reach for `inject` via the `Keys` registry, not bare strings.** Declare keys in `src/state.ts` and augment `interface StateTypes` from `"zero"` so reads infer their value type without a generic argument.
 - **Mutate store signals only via the store's exported mutators.** Components never call `signal.set()` on a store signal. The store module is the one place behavior changes are authored.

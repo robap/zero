@@ -2,7 +2,7 @@ import './dom-shim.js'; // installs globalThis.document
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { html, commit, ref, each } from './template.js';
-import { signal, _createScope } from './reactivity.js';
+import { signal, effect, _createScope } from './reactivity.js';
 import { document } from './dom-shim.js';
 
 describe('html tagged template', () => {
@@ -522,5 +522,157 @@ describe('each()', () => {
     const before = effectRunCount;
     itemSig.set('world');
     assert.equal(effectRunCount, before);
+  });
+
+  it('keyed: reuses DOM nodes when same keys re-emitted in same order', () => {
+    const container = makeContainer();
+    const items = signal([
+      { id: 1, name: 'a' },
+      { id: 2, name: 'b' },
+    ]);
+    const scope = _createScope();
+    scope.run(() => commit(
+      html`<ul>${each(items, (it) => html`<li>${it.name}</li>`, (it) => it.id)}</ul>`,
+      container,
+    ));
+    const ul = container.childNodes[0];
+    const before = ul.childNodes.filter(n => n.tagName === 'LI');
+    items.set([
+      { id: 1, name: 'a2' },
+      { id: 2, name: 'b2' },
+    ]);
+    const after = ul.childNodes.filter(n => n.tagName === 'LI');
+    assert.equal(after[0], before[0]);
+    assert.equal(after[1], before[1]);
+    scope.dispose();
+  });
+
+  it('keyed: removes nodes whose keys disappear', () => {
+    const container = makeContainer();
+    const items = signal([
+      { id: 1, name: 'a' },
+      { id: 2, name: 'b' },
+      { id: 3, name: 'c' },
+    ]);
+    const scope = _createScope();
+    scope.run(() => commit(
+      html`<ul>${each(items, (it) => html`<li>${it.name}</li>`, (it) => it.id)}</ul>`,
+      container,
+    ));
+    const ul = container.childNodes[0];
+    const before = ul.childNodes.filter(n => n.tagName === 'LI');
+    const node1 = before[0];
+    const node3 = before[2];
+    items.set([
+      { id: 1, name: 'a' },
+      { id: 3, name: 'c' },
+    ]);
+    const after = ul.childNodes.filter(n => n.tagName === 'LI');
+    assert.equal(after.length, 2);
+    assert.equal(after[0], node1);
+    assert.equal(after[1], node3);
+    scope.dispose();
+  });
+
+  it('keyed: inserts new keys at the correct position', () => {
+    const container = makeContainer();
+    const items = signal([
+      { id: 1, name: 'a' },
+      { id: 2, name: 'b' },
+      { id: 3, name: 'c' },
+    ]);
+    const scope = _createScope();
+    scope.run(() => commit(
+      html`<ul>${each(items, (it) => html`<li>${it.name}</li>`, (it) => it.id)}</ul>`,
+      container,
+    ));
+    const ul = container.childNodes[0];
+    const before = ul.childNodes.filter(n => n.tagName === 'LI');
+    const node1 = before[0];
+    const node2 = before[1];
+    const node3 = before[2];
+    items.set([
+      { id: 1, name: 'a' },
+      { id: 4, name: 'd' },
+      { id: 2, name: 'b' },
+      { id: 3, name: 'c' },
+    ]);
+    const after = ul.childNodes.filter(n => n.tagName === 'LI');
+    assert.equal(after.length, 4);
+    assert.equal(after[0], node1);
+    assert.equal(after[2], node2);
+    assert.equal(after[3], node3);
+    assert.notEqual(after[1], node1);
+    assert.notEqual(after[1], node2);
+    assert.notEqual(after[1], node3);
+    scope.dispose();
+  });
+
+  it('keyed: per-row scope is disposed when its key disappears', () => {
+    const container = makeContainer();
+    const disposed = [];
+    const items = signal([
+      { id: 1, name: 'a' },
+      { id: 2, name: 'b' },
+    ]);
+    const scope = _createScope();
+    scope.run(() => commit(
+      html`<ul>${each(items, (it) => {
+        effect(() => {
+          return () => { disposed.push(it.id); };
+        });
+        return html`<li>${it.name}</li>`;
+      }, (it) => it.id)}</ul>`,
+      container,
+    ));
+    items.set([{ id: 1, name: 'a' }]);
+    assert.deepEqual(disposed, [2]);
+    scope.dispose();
+  });
+
+  it('keyed: duplicate keys throw', () => {
+    const container = makeContainer();
+    const items = signal([
+      { id: 1, name: 'a' },
+      { id: 1, name: 'b' },
+    ]);
+    const scope = _createScope();
+    assert.throws(() => {
+      scope.run(() => commit(
+        html`<ul>${each(items, (it) => html`<li>${it.name}</li>`, (it) => it.id)}</ul>`,
+        container,
+      ));
+    }, /duplicate key '1' in row 1/);
+    scope.dispose();
+  });
+
+  it('keyed: reuses DOM nodes when items reorder', () => {
+    const container = makeContainer();
+    const items = signal([
+      { id: 1, name: 'a' },
+      { id: 2, name: 'b' },
+      { id: 3, name: 'c' },
+    ]);
+    const scope = _createScope();
+    scope.run(() => commit(
+      html`<ul>${each(items, (it) => html`<li>${it.name}</li>`, (it) => it.id)}</ul>`,
+      container,
+    ));
+    const ul = container.childNodes[0];
+    const before = ul.childNodes.filter(n => n.tagName === 'LI');
+    const node1 = before[0];
+    const node2 = before[1];
+    const node3 = before[2];
+    items.set([
+      { id: 3, name: 'c' },
+      { id: 1, name: 'a' },
+      { id: 2, name: 'b' },
+    ]);
+    const after = ul.childNodes.filter(n => n.tagName === 'LI');
+    assert.equal(after.length, 3);
+    assert.equal(after[0], node3);
+    assert.equal(after[1], node1);
+    assert.equal(after[2], node2);
+    scope.dispose();
   });
 });

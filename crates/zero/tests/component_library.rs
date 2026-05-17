@@ -34,7 +34,7 @@ fn showcase_test_runs_all_component_tests() {
     // clear failure here.
     for name in [
         "Avatar", "Badge", "Button", "Card", "Checkbox", "Dialog", "Input", "Radio", "Select",
-        "Spinner", "Tabs", "TextArea", "Toast", "Toggle",
+        "Spinner", "Table", "Tabs", "TextArea", "Toast", "Toggle",
     ] {
         assert!(
             stdout.contains(name),

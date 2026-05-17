@@ -396,6 +396,10 @@ function _applyNodeValueLeaf(anchor, value, state) {
 }
 
 function _commitEach(anchor, eachMarker, state) {
+  if (typeof eachMarker.keyFn === 'function') {
+    _commitEachKeyed(anchor, eachMarker, state);
+    return;
+  }
   const { signal: arrSig, renderFn } = eachMarker;
   state.itemScopes = state.itemScopes || [];
 
@@ -420,6 +424,85 @@ function _commitEach(anchor, eachMarker, state) {
         }
       });
     }
+  });
+}
+
+function _commitEachKeyed(anchor, eachMarker, state) {
+  const { signal: arrSig, renderFn, keyFn } = eachMarker;
+  state.itemsByKey = state.itemsByKey || Object.create(null);
+
+  effect(() => {
+    const items = arrSig.val;
+    if (!Array.isArray(items)) {
+      for (const k in state.itemsByKey) state.itemsByKey[k].scope.dispose();
+      state.itemsByKey = Object.create(null);
+      _clearNodeContent(state);
+      return;
+    }
+
+    const newKeys = new Array(items.length);
+    const seen = Object.create(null);
+    for (let i = 0; i < items.length; i++) {
+      const k = String(keyFn(items[i], i));
+      if (seen[k]) {
+        throw new Error(`each: duplicate key '${k}' in row ${i}`);
+      }
+      seen[k] = true;
+      newKeys[i] = k;
+    }
+
+    const oldMap = state.itemsByKey;
+    const newMap = Object.create(null);
+    const parent = anchor.parentNode;
+
+    for (const k in oldMap) {
+      if (!seen[k]) {
+        const entry = oldMap[k];
+        entry.scope.dispose();
+        for (const node of entry.nodes) {
+          if (node.parentNode) node.parentNode.removeChild(node);
+        }
+      }
+    }
+
+    const newCurrentNodes = [];
+    let cursor = anchor.nextSibling;
+    for (let i = 0; i < items.length; i++) {
+      const k = newKeys[i];
+      let entry = oldMap[k];
+      if (entry == null) {
+        const scope = _createScope();
+        const nodes = [];
+        scope.run(() => {
+          const tr = renderFn(items[i], i);
+          const frag = document.createDocumentFragment();
+          commit(tr, frag);
+          while (frag.childNodes.length > 0) {
+            const node = frag.childNodes[0];
+            parent.insertBefore(node, cursor);
+            nodes.push(node);
+            newCurrentNodes.push(node);
+          }
+        });
+        entry = { scope, nodes };
+      } else {
+        for (const node of entry.nodes) {
+          if (node !== cursor) {
+            parent.insertBefore(node, cursor);
+          } else {
+            cursor = node.nextSibling;
+          }
+          newCurrentNodes.push(node);
+        }
+      }
+      newMap[k] = entry;
+      if (entry.nodes.length > 0) {
+        cursor = entry.nodes[entry.nodes.length - 1].nextSibling;
+      }
+    }
+
+    state.itemsByKey = newMap;
+    state.currentNodes = newCurrentNodes;
   });
 }
 
@@ -538,8 +621,9 @@ export function ref() {
  * @template T
  * @param {{ readonly val: T[] }} sig
  * @param {(item: T, index: number) => TemplateResult} renderFn
+ * @param {(item: T, index: number) => string | number} [keyFn]
  * @returns {EachMarker<T>}
  */
-export function each(sig, renderFn) {
-  return { _isEach: true, signal: sig, renderFn };
+export function each(sig, renderFn, keyFn) {
+  return { _isEach: true, signal: sig, renderFn, keyFn };
 }
