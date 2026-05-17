@@ -1,36 +1,45 @@
+// Select — native select with custom chevron. Polished from v0.4:
+//   - appearance: none + hand-drawn chevron via two linear gradients
+//   - hover / focus states matching Input
+//   - extra inline-end padding for chevron clearance
 @layer components {
   .select {
-    padding-inline: var(--space-sm);
-    padding-block: var(--space-xs);
-    border: var(--border-thin) solid var(--color-border);
+    padding-inline: var(--space-md);
+    padding-block: var(--space-sm);
+    padding-inline-end: var(--space-xl);
+    border: var(--border-thin) solid var(--color-border-strong);
     border-radius: var(--radius-sm);
     background: var(--color-bg);
     color: var(--color-text);
     font: inherit;
     line-height: var(--leading-normal);
+    cursor: pointer;
+    appearance: none;
+    background-image:
+      linear-gradient(45deg, transparent 50%, currentColor 50%),
+      linear-gradient(135deg, currentColor 50%, transparent 50%);
+    background-position: calc(100% - 18px) 50%, calc(100% - 12px) 50%;
+    background-size: 6px 6px;
+    background-repeat: no-repeat;
+    transition: border-color var(--duration-fast) var(--ease-out),
+                box-shadow   var(--duration-fast) var(--ease-out);
   }
+  .select:hover:not(:disabled) { border-color: var(--gray-500); }
+  .select:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 var(--ring-width) var(--ring-color);
+  }
+  .select:disabled { opacity: 0.5; cursor: not-allowed; background-color: var(--color-surface); }
 
-  .select-sm {
-    padding-inline: var(--space-xs);
-    padding-block: var(--space-xs);
-    font-size: var(--font-size-sm);
-  }
-
-  .select-md {
-    padding-inline: var(--space-sm);
-    padding-block: var(--space-xs);
-    font-size: var(--font-size-md);
-  }
-
-  .select-lg {
-    padding-inline: var(--space-md);
-    padding-block: var(--space-sm);
-    font-size: var(--font-size-lg);
-  }
+  .select-sm { padding-inline: var(--space-sm); padding-block: var(--space-xs); padding-inline-end: var(--space-xl); font-size: var(--font-size-sm); }
+  .select-md { padding-inline: var(--space-md); padding-block: var(--space-sm); padding-inline-end: var(--space-xl); font-size: var(--font-size-md); }
+  .select-lg { padding-inline: var(--space-md); padding-block: var(--space-md); padding-inline-end: var(--space-xl); font-size: var(--font-size-lg); }
 
   .select-label {
     display: block;
     font-size: var(--font-size-sm);
+    font-weight: var(--weight-medium);
     margin-block-end: var(--space-xs);
     color: var(--color-text);
   }

@@ -1,10 +1,9 @@
 // Color palette — framework-internal. Hex values from Open Color
 // (https://yeun.github.io/open-color/, MIT license).
 //
-// This file is framework-owned and rewritten by `zero update`. Do not edit.
-// The user-facing API is the --color-* semantic tokens defined in
-// themes/_light.scss and themes/_dark.scss; palette steps are reserved
-// for framework use and may change between minor versions.
+// Unchanged from v0.4. Palette steps are reserved for framework use;
+// the user-facing API is the --color-* semantic tokens defined in
+// themes/_light.scss and themes/_dark.scss.
 :root {
   // gray  (Open Color gray)
   --gray-50:  #f8f9fa;

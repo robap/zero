@@ -1,32 +1,49 @@
+// Card — 3 variants. Polished from v0.4:
+//   - padding 16 → 24 (more air, matches the system's larger feel)
+//   - + card-elevated (border + shadow-sm)
+//   - + card-interactive hover treatment
+//   - title uses semi (600) weight instead of bold
 @layer components {
   .card {
     display: block;
-    padding: var(--space-md);
+    padding: var(--space-lg);
     border-radius: var(--radius-lg);
-    // Break long unbreakable strings (URLs, identifiers) so card content
-    // never overflows its container at narrow widths.
     overflow-wrap: anywhere;
+    transition: border-color var(--duration-fast) var(--ease-out),
+                box-shadow   var(--duration-fast) var(--ease-out);
   }
 
-  .card-surface {
+  .card-surface  {
     background: var(--color-surface);
     color: var(--color-text);
+    border: var(--border-thin) solid transparent;
   }
 
   .card-outlined {
-    background: transparent;
+    background: var(--color-bg);
     color: var(--color-text);
     border: var(--border-thin) solid var(--color-border);
+  }
+
+  .card-elevated {
+    background: var(--color-bg);
+    color: var(--color-text);
+    border: var(--border-thin) solid var(--color-border);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .card-interactive { cursor: pointer; }
+  .card-interactive:hover {
+    border-color: var(--color-border-strong);
+    box-shadow: var(--shadow-md);
   }
 
   .card-title {
     margin: 0 0 var(--space-sm);
     font-size: var(--font-size-lg);
-    font-weight: var(--weight-bold);
+    font-weight: var(--weight-semi);
     line-height: var(--leading-tight);
+    letter-spacing: var(--tracking-snug);
   }
-
-  .card-body {
-    color: inherit;
-  }
+  .card-body { color: inherit; }
 }

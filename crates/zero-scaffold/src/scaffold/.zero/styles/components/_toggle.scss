@@ -1,3 +1,7 @@
+// Toggle — switch. Polished from v0.4:
+//   - sizing tweaked so the thumb has more room and reads as a switch
+//   - thumb gets a soft drop-shadow + 1px outline for floating effect
+//   - + focus-visible style on the track (box-shadow ring)
 @layer components {
   .toggle {
     display: inline-flex;
@@ -18,34 +22,36 @@
 
   .toggle-track {
     display: inline-block;
-    inline-size: var(--space-xl);
-    block-size: var(--space-md);
-    border-radius: var(--radius-lg);
-    background: var(--color-border);
+    inline-size: calc(var(--space-xl) - 4px);
+    block-size: calc(var(--space-md) + 6px);
+    border-radius: var(--radius-pill);
+    background: var(--color-border-strong);
     position: relative;
-    transition: background-color 150ms;
+    transition: background-color var(--duration-normal) var(--ease-out);
+    flex-shrink: 0;
   }
 
   .toggle-thumb {
     position: absolute;
     inset-block: 2px;
     inset-inline-start: 2px;
-    inline-size: calc(var(--space-md) - 4px);
+    inline-size: calc(var(--space-md) + 2px);
     aspect-ratio: 1;
     border-radius: 50%;
-    background: var(--color-bg);
-    transition: inset-inline-start 150ms;
+    background: #ffffff;
+    box-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.15),
+      0 0 0 1px rgba(0, 0, 0, 0.04);
+    transition: inset-inline-start var(--duration-normal) var(--ease-out);
   }
 
-  .toggle-input:checked ~ .toggle-track {
-    background: var(--color-primary);
-  }
-
+  .toggle-input:checked ~ .toggle-track { background: var(--color-primary); }
   .toggle-input:checked ~ .toggle-track .toggle-thumb {
-    inset-inline-start: calc(100% - var(--space-md) + 2px);
+    inset-inline-start: calc(100% - var(--space-md) - 4px);
+  }
+  .toggle-input:focus-visible ~ .toggle-track {
+    box-shadow: 0 0 0 var(--ring-width) var(--ring-color);
   }
 
-  .toggle-label {
-    user-select: none;
-  }
+  .toggle-label { user-select: none; }
 }

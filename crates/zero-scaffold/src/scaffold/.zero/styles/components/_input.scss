@@ -1,37 +1,41 @@
+// Input — single-line text input. Polished from v0.4:
+//   - hover / focus / disabled states added
+//   - border uses --color-border-strong (gray-400) for visibility
+//   - focus uses box-shadow ring (so the input keeps its border)
+//   - placeholder color set to --color-text-subtle
+//   - label uses medium (500) weight
 @layer components {
   .input {
     display: inline-flex;
-    padding-inline: var(--space-sm);
-    padding-block: var(--space-xs);
-    border: var(--border-thin) solid var(--color-border);
+    padding-inline: var(--space-md);
+    padding-block: var(--space-sm);
+    border: var(--border-thin) solid var(--color-border-strong);
     border-radius: var(--radius-sm);
     background: var(--color-bg);
     color: var(--color-text);
     font: inherit;
     line-height: var(--leading-normal);
+    transition:
+      border-color var(--duration-fast) var(--ease-out),
+      box-shadow   var(--duration-fast) var(--ease-out);
   }
+  .input::placeholder { color: var(--color-text-subtle); }
+  .input:hover:not(:disabled) { border-color: var(--gray-500); }
+  .input:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 var(--ring-width) var(--ring-color);
+  }
+  .input:disabled { opacity: 0.5; cursor: not-allowed; background: var(--color-surface); }
 
-  .input-sm {
-    padding-inline: var(--space-xs);
-    padding-block: var(--space-xs);
-    font-size: var(--font-size-sm);
-  }
-
-  .input-md {
-    padding-inline: var(--space-sm);
-    padding-block: var(--space-xs);
-    font-size: var(--font-size-md);
-  }
-
-  .input-lg {
-    padding-inline: var(--space-md);
-    padding-block: var(--space-sm);
-    font-size: var(--font-size-lg);
-  }
+  .input-sm { padding-inline: var(--space-sm); padding-block: var(--space-xs); font-size: var(--font-size-sm); }
+  .input-md { padding-inline: var(--space-md); padding-block: var(--space-sm); font-size: var(--font-size-md); }
+  .input-lg { padding-inline: var(--space-md); padding-block: var(--space-md); font-size: var(--font-size-lg); }
 
   .input-label {
     display: block;
     font-size: var(--font-size-sm);
+    font-weight: var(--weight-medium);
     margin-block-end: var(--space-xs);
     color: var(--color-text);
   }

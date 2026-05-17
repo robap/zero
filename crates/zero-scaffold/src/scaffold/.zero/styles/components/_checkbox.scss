@@ -1,3 +1,6 @@
+// Checkbox — custom-styled. Polished from v0.4 (was platform default
+// only). 18px square, primary fill on :checked, hand-drawn check
+// using ::after rotate(45deg).
 @layer components {
   .checkbox {
     display: inline-flex;
@@ -9,7 +12,45 @@
     line-height: var(--leading-normal);
   }
 
-  .checkbox-label {
-    user-select: none;
+  .checkbox input[type="checkbox"] {
+    appearance: none;
+    inline-size: 18px;
+    block-size: 18px;
+    border: var(--border-thin) solid var(--color-border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    cursor: pointer;
+    position: relative;
+    transition: background-color var(--duration-fast) var(--ease-out),
+                border-color     var(--duration-fast) var(--ease-out);
+    flex-shrink: 0;
   }
+
+  .checkbox input[type="checkbox"]:hover:not(:disabled) {
+    border-color: var(--gray-500);
+  }
+
+  .checkbox input[type="checkbox"]:checked {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+  }
+
+  .checkbox input[type="checkbox"]:checked::after {
+    content: "";
+    position: absolute;
+    inset-inline-start: 5px;
+    inset-block-start: 2px;
+    inline-size: 6px;
+    block-size: 10px;
+    border: solid var(--color-primary-fg);
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+  }
+
+  .checkbox input[type="checkbox"]:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .checkbox-label { user-select: none; }
 }

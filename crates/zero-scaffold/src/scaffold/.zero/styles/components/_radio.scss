@@ -1,3 +1,5 @@
+// Radio — custom-styled. Polished from v0.4 (was platform default
+// only). 18px circle, primary border + dot on :checked.
 @layer components {
   .radio {
     display: inline-flex;
@@ -9,7 +11,39 @@
     line-height: var(--leading-normal);
   }
 
-  .radio-label {
-    user-select: none;
+  .radio input[type="radio"] {
+    appearance: none;
+    inline-size: 18px;
+    block-size: 18px;
+    border: var(--border-thin) solid var(--color-border-strong);
+    border-radius: 50%;
+    background: var(--color-bg);
+    cursor: pointer;
+    position: relative;
+    transition: border-color var(--duration-fast) var(--ease-out);
+    flex-shrink: 0;
   }
+
+  .radio input[type="radio"]:hover:not(:disabled) {
+    border-color: var(--gray-500);
+  }
+
+  .radio input[type="radio"]:checked {
+    border-color: var(--color-primary);
+  }
+
+  .radio input[type="radio"]:checked::after {
+    content: "";
+    position: absolute;
+    inset: 3px;
+    border-radius: 50%;
+    background: var(--color-primary);
+  }
+
+  .radio input[type="radio"]:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .radio-label { user-select: none; }
 }

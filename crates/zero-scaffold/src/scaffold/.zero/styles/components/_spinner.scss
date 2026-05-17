@@ -1,42 +1,26 @@
+// Spinner — rotating ring. Polished from v0.4:
+//   - faster rotation (0.7s vs 0.8s — reads as more responsive)
+//   - dedicated px sizes (14/20/32) instead of recycling spacing
+//   - explicit border-width per size (2/2/3) for visible weight
 @layer components {
-  @keyframes spinner-rotate {
-    to {
-      transform: rotate(360deg);
-    }
-  }
+  @keyframes spinner-rotate { to { transform: rotate(360deg); } }
 
   .spinner {
     display: inline-block;
     border-radius: 50%;
     border: var(--border-md) solid var(--color-border);
     border-top-color: var(--color-primary);
-    animation: spinner-rotate 0.8s linear infinite;
+    animation: spinner-rotate 0.7s linear infinite;
+    box-sizing: border-box;
   }
 
-  .spinner-sm {
-    inline-size: var(--space-md);
-    block-size: var(--space-md);
-  }
+  .spinner-sm { inline-size: 14px; block-size: 14px; border-width: 2px; }
+  .spinner-md { inline-size: 20px; block-size: 20px; border-width: 2px; }
+  .spinner-lg { inline-size: 32px; block-size: 32px; border-width: 3px; }
 
-  .spinner-md {
-    inline-size: var(--space-lg);
-    block-size: var(--space-lg);
-  }
+  .spinner-primary { border-top-color: var(--color-primary); }
+  .spinner-muted   { border-top-color: var(--color-text-muted); }
 
-  .spinner-lg {
-    inline-size: var(--space-xl);
-    block-size: var(--space-xl);
-  }
-
-  .spinner-primary {
-    border-top-color: var(--color-primary);
-  }
-
-  .spinner-muted {
-    border-top-color: var(--color-text-muted);
-  }
-
-  // Screen-reader-only helper used by the Spinner's optional label.
   .visually-hidden {
     position: absolute;
     clip-path: inset(50%);

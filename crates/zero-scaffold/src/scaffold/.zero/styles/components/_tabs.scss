@@ -1,11 +1,16 @@
+// Tabs — tablist + panel. Polished from v0.4:
+//   - tab uses medium (500) weight
+//   - tab gets a 2px transparent border-bottom by default that becomes
+//     primary on aria-selected, with margin-bottom: -1px to align with
+//     the parent list's 1px border (so the selected tab visually
+//     'eats' the list border instead of doubling it)
+//   - + hover state on tab (color shift only, no underline)
 @layer components {
-  .tabs {
-    display: block;
-  }
+  .tabs { display: block; }
 
   .tabs-list {
     display: inline-flex;
-    gap: var(--space-xs);
+    gap: 2px;
     border-block-end: var(--border-thin) solid var(--color-border);
   }
 
@@ -16,15 +21,18 @@
     background: transparent;
     color: var(--color-text-muted);
     font: inherit;
+    font-weight: var(--weight-medium);
     cursor: pointer;
+    border-block-end: var(--border-md) solid transparent;
+    margin-block-end: -1px;
+    transition: color        var(--duration-fast) var(--ease-out),
+                border-color var(--duration-fast) var(--ease-out);
   }
-
+  .tabs-tab:hover { color: var(--color-text); }
   .tabs-tab[aria-selected="true"] {
     color: var(--color-text);
-    border-block-end: var(--border-md) solid var(--color-primary);
+    border-block-end-color: var(--color-primary);
   }
 
-  .tabs-panel {
-    padding-block: var(--space-md);
-  }
+  .tabs-panel { padding-block: var(--space-md); }
 }

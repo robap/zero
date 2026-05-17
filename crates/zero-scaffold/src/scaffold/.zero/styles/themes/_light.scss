@@ -1,27 +1,49 @@
-// Light theme — maps the public --color-* semantic tokens to palette steps.
+// Light theme — maps public --color-* semantic tokens to palette steps.
 //
-// This file is framework-owned and rewritten by `zero update`. To override
-// any of these tokens for your project, re-declare them in `styles/app.scss`
-// after the `@use '../.zero/styles/zero';` line, or under a custom
-// `[data-theme="brand"]` selector.
+// Polished from v0.4:
+//   - bg: gray-50 → #ffffff (cleaner canvas)
+//   - border split into -border (gray-200, hairlines) and
+//     -border-strong (gray-400, emphasis on inputs/buttons)
+//   - + -hover and -active shades for primary / danger (interaction)
+//   - + -soft variants for primary / success / warning / danger
+//     (used by badges, toasts)
+//   - + text-subtle (placeholders)
+//   - + overlay, ring-color, hover-bg, active-bg
 @mixin tokens {
   color-scheme: light;
 
-  --color-bg:          var(--gray-50);
-  --color-surface:     var(--gray-100);
-  --color-text:        var(--gray-900);
-  --color-text-muted:  var(--gray-600);
-  --color-border:      var(--gray-500);
+  --color-bg:             #ffffff;
+  --color-surface:        var(--gray-100);
+  --color-surface-strong: var(--gray-200);
+  --color-text:           var(--gray-900);
+  --color-text-muted:     var(--gray-600);
+  --color-text-subtle:    var(--gray-500);
+  --color-border:         var(--gray-200);
+  --color-border-strong:  var(--gray-400);
 
-  --color-primary:     var(--blue-600);
-  --color-primary-fg:  var(--gray-50);
+  --color-primary:        var(--blue-600);
+  --color-primary-hover:  var(--blue-700);
+  --color-primary-active: var(--blue-800);
+  --color-primary-fg:     #ffffff;
+  --color-primary-soft:   var(--blue-50);
 
-  --color-success:     var(--green-700);
-  --color-success-fg:  var(--gray-50);
+  --color-success:        var(--green-700);
+  --color-success-hover:  var(--green-800);
+  --color-success-fg:     #ffffff;
+  --color-success-soft:   var(--green-50);
 
-  --color-warning:     var(--amber-500);
-  --color-warning-fg:  var(--gray-900);
+  --color-warning:        var(--amber-500);
+  --color-warning-hover:  var(--amber-600);
+  --color-warning-fg:     var(--gray-900);
+  --color-warning-soft:   var(--amber-50);
 
-  --color-danger:      var(--red-700);
-  --color-danger-fg:   var(--gray-50);
+  --color-danger:         var(--red-700);
+  --color-danger-hover:   var(--red-800);
+  --color-danger-fg:      #ffffff;
+  --color-danger-soft:    var(--red-50);
+
+  --color-overlay:        rgba(15, 23, 42, 0.45);
+  --ring-color:           color-mix(in oklab, var(--color-primary) 35%, transparent);
+  --hover-bg:             color-mix(in oklab, var(--color-text) 5%, transparent);
+  --active-bg:            color-mix(in oklab, var(--color-text) 9%, transparent);
 }

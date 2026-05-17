@@ -1,46 +1,41 @@
+// Badge — 5 variants × 2 sizes. Polished from v0.4:
+//   - filled-saturated → soft-tinted (uses *-soft fills with accent text)
+//   - rectangular → pill (--radius-pill)
+//   - uppercase + tracking-wide for label clarity at small sizes
+//   - + 1px transparent border so size matches outlined adjacents
 @layer components {
   .badge {
     display: inline-flex;
     align-items: center;
+    gap: var(--space-xs);
     padding-inline: var(--space-sm);
-    padding-block: var(--space-xs);
-    border-radius: var(--radius-sm);
-    font-size: var(--font-size-sm);
-    font-weight: var(--weight-bold);
+    padding-block: 2px;
+    border-radius: var(--radius-pill);
+    font-size: 11px;
+    font-weight: var(--weight-semi);
     line-height: var(--leading-tight);
+    letter-spacing: var(--tracking-wide);
+    text-transform: uppercase;
+    border: var(--border-thin) solid transparent;
   }
 
-  .badge-sm {
-    font-size: var(--font-size-sm);
-    padding-inline: var(--space-xs);
-  }
-
-  .badge-md {
-    font-size: var(--font-size-md);
-  }
+  .badge-sm { font-size: 10px; padding-inline: var(--space-sm); padding-block: 1px; }
+  .badge-md { font-size: 11px; padding-inline: var(--space-sm); padding-block: 2px; }
 
   .badge-default {
     background: var(--color-surface);
-    color: var(--color-text);
+    color: var(--color-text-muted);
+    border-color: var(--color-border);
   }
+  .badge-primary { background: var(--color-primary-soft); color: var(--color-primary); }
+  .badge-success { background: var(--color-success-soft); color: var(--color-success); }
+  .badge-warning { background: var(--color-warning-soft); color: var(--amber-800); }
+  .badge-danger  { background: var(--color-danger-soft);  color: var(--color-danger); }
 
-  .badge-primary {
-    background: var(--color-primary);
-    color: var(--color-primary-fg);
-  }
-
-  .badge-success {
-    background: var(--color-success);
-    color: var(--color-success-fg);
-  }
-
-  .badge-warning {
-    background: var(--color-warning);
-    color: var(--color-warning-fg);
-  }
-
-  .badge-danger {
-    background: var(--color-danger);
-    color: var(--color-danger-fg);
+  // Dark theme adjusts the warning text color because amber-800 reads
+  // as brown against the dark soft background.
+  [data-theme="dark"] .badge-warning,
+  :root:not([data-theme="light"]) .badge-warning {
+    color: var(--color-warning);
   }
 }

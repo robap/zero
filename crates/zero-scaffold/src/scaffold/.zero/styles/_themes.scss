@@ -1,22 +1,6 @@
-// Theme aggregator. Each theme partial defines a single `@mixin tokens`
-// containing its --color-* assignments; this file owns the selector
-// strategy that decides which theme applies under which condition.
-//
-// Cascade strategy: every rule below targets selectors of equal
-// specificity (`:root` and `[data-theme="…"]` are both (0,1,0)), so the
-// browser uses source order to break ties. We exploit that:
-//
-//   1. `:root` declares the light theme as the default.
-//   2. The `@media (prefers-color-scheme: dark)` block flips that to
-//      dark whenever the user's OS pref is dark.
-//   3. The `[data-theme="…"]` rules are emitted LAST so an explicit
-//      attribute always wins over both the default and the media query.
-//
-// Cases (all verified):
-//   - No data-theme + light OS pref → :root (light) wins.
-//   - No data-theme + dark OS pref  → @media :root (dark) wins on order.
-//   - data-theme="light" anywhere   → [data-theme="light"] wins on order.
-//   - data-theme="dark"  anywhere   → [data-theme="dark"]  wins on order.
+// Theme aggregator. Unchanged from v0.4 — cascade strategy still
+// applies: :root (light) → @media dark → [data-theme] wins on source
+// order at equal specificity.
 @use 'themes/light';
 @use 'themes/dark';
 

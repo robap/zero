@@ -1,31 +1,38 @@
+// Toast — fixed-position transient. Polished from v0.4:
+//   - filled-saturated → outlined-with-accent (white bg, colored border)
+//   - + dot affordance pattern in usage
+//   - + rise-in animation
 @layer components {
+  @keyframes toast-rise {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: none; }
+  }
+
   .toast {
     position: fixed;
     inset-block-end: var(--space-lg);
     inset-inline-end: var(--space-lg);
     padding: var(--space-sm) var(--space-md);
     border-radius: var(--radius-md);
-    box-shadow: var(--shadow-md);
+    border: var(--border-thin) solid var(--color-border);
+    box-shadow: var(--shadow-lg);
+    background: var(--color-bg);
     z-index: 900;
+    font-size: var(--font-size-sm);
+    font-weight: var(--weight-medium);
+    animation: toast-rise var(--duration-normal) var(--ease-out);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
   }
 
-  .toast-info {
-    background: var(--color-surface);
-    color: var(--color-text);
-  }
+  .toast-info    { color: var(--color-text); }
+  .toast-success { color: var(--color-success); border-color: var(--color-success); }
+  .toast-warning { color: var(--amber-800);    border-color: var(--color-warning); }
+  .toast-danger  { color: var(--color-danger); border-color: var(--color-danger); }
 
-  .toast-success {
-    background: var(--color-success);
-    color: var(--color-success-fg);
-  }
-
-  .toast-warning {
-    background: var(--color-warning);
-    color: var(--color-warning-fg);
-  }
-
-  .toast-danger {
-    background: var(--color-danger);
-    color: var(--color-danger-fg);
+  [data-theme="dark"] .toast-warning,
+  :root:not([data-theme="light"]) .toast-warning {
+    color: var(--color-warning);
   }
 }

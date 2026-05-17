@@ -1,43 +1,47 @@
+// Dialog — modal. Polished from v0.4:
+//   - backdrop gets backdrop-filter: blur(4px) for depth
+//   - dialog body has a rise-in animation (opacity + slight translate)
+//   - + visible border so the dialog reads against the blurred backdrop
 @layer components {
+  @keyframes dialog-fade { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes dialog-rise {
+    from { opacity: 0; transform: translateY(8px) scale(0.98); }
+    to   { opacity: 1; transform: none; }
+  }
+
   .dialog-backdrop {
     position: fixed;
     inset: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(0, 0, 0, 0.5);
+    background: var(--color-overlay);
+    backdrop-filter: blur(4px);
     z-index: 1000;
+    animation: dialog-fade var(--duration-normal) var(--ease-out);
   }
 
   .dialog {
     background: var(--color-bg);
     color: var(--color-text);
+    border: var(--border-thin) solid var(--color-border);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-lg);
     padding: var(--space-lg);
     max-inline-size: 90vw;
+    animation: dialog-rise var(--duration-normal) var(--ease-out);
   }
 
-  .dialog-sm {
-    inline-size: 24rem;
-  }
-
-  .dialog-md {
-    inline-size: 32rem;
-  }
-
-  .dialog-lg {
-    inline-size: 48rem;
-  }
+  .dialog-sm { inline-size: 24rem; }
+  .dialog-md { inline-size: 32rem; }
+  .dialog-lg { inline-size: 48rem; }
 
   .dialog-title {
     margin: 0 0 var(--space-md);
     font-size: var(--font-size-xl);
-    font-weight: var(--weight-bold);
+    font-weight: var(--weight-semi);
     line-height: var(--leading-tight);
+    letter-spacing: var(--tracking-snug);
   }
-
-  .dialog-body {
-    color: inherit;
-  }
+  .dialog-body { color: inherit; }
 }

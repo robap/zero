@@ -1,27 +1,43 @@
-// Dark theme — maps the public --color-* semantic tokens to palette steps.
+// Dark theme — maps public --color-* semantic tokens to palette steps.
 //
-// This file is framework-owned and rewritten by `zero update`. To override
-// any of these tokens for your project, re-declare them in `styles/app.scss`
-// after the `@use '../.zero/styles/zero';` line, or under a custom
-// `[data-theme="brand"]` selector.
+// Polished from v0.4. Accents lift one step (blue-400 → blue-300 on
+// hover, etc.) and pair with gray-950 foreground for high contrast.
+// Soft variants use color-mix for tinted, low-saturation fills.
 @mixin tokens {
   color-scheme: dark;
 
-  --color-bg:          var(--gray-950);
-  --color-surface:     var(--gray-900);
-  --color-text:        var(--gray-50);
-  --color-text-muted:  var(--gray-400);
-  --color-border:      var(--gray-800);
+  --color-bg:             var(--gray-950);
+  --color-surface:        var(--gray-900);
+  --color-surface-strong: var(--gray-800);
+  --color-text:           var(--gray-50);
+  --color-text-muted:     var(--gray-400);
+  --color-text-subtle:    var(--gray-500);
+  --color-border:         var(--gray-800);
+  --color-border-strong:  var(--gray-700);
 
-  --color-primary:     var(--blue-400);
-  --color-primary-fg:  var(--gray-950);
+  --color-primary:        var(--blue-400);
+  --color-primary-hover:  var(--blue-300);
+  --color-primary-active: var(--blue-200);
+  --color-primary-fg:     var(--gray-950);
+  --color-primary-soft:   color-mix(in oklab, var(--blue-500) 18%, transparent);
 
-  --color-success:     var(--green-500);
-  --color-success-fg:  var(--gray-950);
+  --color-success:        var(--green-400);
+  --color-success-hover:  var(--green-300);
+  --color-success-fg:     var(--gray-950);
+  --color-success-soft:   color-mix(in oklab, var(--green-500) 18%, transparent);
 
-  --color-warning:     var(--amber-400);
-  --color-warning-fg:  var(--gray-950);
+  --color-warning:        var(--amber-400);
+  --color-warning-hover:  var(--amber-300);
+  --color-warning-fg:     var(--gray-950);
+  --color-warning-soft:   color-mix(in oklab, var(--amber-500) 18%, transparent);
 
-  --color-danger:      var(--red-400);
-  --color-danger-fg:   var(--gray-950);
+  --color-danger:         var(--red-400);
+  --color-danger-hover:   var(--red-300);
+  --color-danger-fg:      var(--gray-950);
+  --color-danger-soft:    color-mix(in oklab, var(--red-500) 18%, transparent);
+
+  --color-overlay:        rgba(0, 0, 0, 0.6);
+  --ring-color:           color-mix(in oklab, var(--color-primary) 45%, transparent);
+  --hover-bg:             color-mix(in oklab, var(--color-text) 6%, transparent);
+  --active-bg:            color-mix(in oklab, var(--color-text) 12%, transparent);
 }
