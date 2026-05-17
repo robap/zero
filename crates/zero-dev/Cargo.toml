@@ -1,0 +1,28 @@
+[package]
+name = "zero-dev"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+zero-config = { path = "../zero-config" }
+zero-runtime = { path = "../zero-runtime" }
+zero-sass = { path = "../zero-sass" }
+zero-transpile = { path = "../zero-transpile" }
+axum = { workspace = true }
+hyper = { workspace = true }
+reqwest = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+futures-util = { workspace = true }
+notify-debouncer-mini = { workspace = true }
+anyhow = { workspace = true }
+url = { workspace = true }
+regex = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+http-body-util = { workspace = true }
+tower = { workspace = true }

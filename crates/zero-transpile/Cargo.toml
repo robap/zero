@@ -1,0 +1,11 @@
+[package]
+name = "zero-transpile"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+swc_core = { workspace = true }
+base64 = { workspace = true }
+sourcemap = { workspace = true }
+anyhow = { workspace = true }

@@ -83,17 +83,17 @@ re-deriving them:
 - [x] **Step 2: Add unit tests to uncovered `src/dev/` modules**
 - [x] **Step 3: Add unit tests to uncovered `src/cmd/` orchestrators**
 - [x] **Step 4: Verify per-module floors and recapture coverage**
-- [ ] **Step 5: Convert root `Cargo.toml` to a Cargo workspace skeleton**
-- [ ] **Step 6: Extract `zero-runtime` (Tier 1, owns build.rs)**
-- [ ] **Step 7: Extract `zero-transpile` (Tier 1)**
-- [ ] **Step 8: Extract `zero-sass` (Tier 1)**
-- [ ] **Step 9: Extract `zero-config` (Tier 1, absorbs `toml_writer`)**
-- [ ] **Step 10: Extract `zero-scaffold` (Tier 1)**
-- [ ] **Step 11: Extract `zero-test-runner` (Tier 2)**
-- [ ] **Step 12: Extract `zero-bundler` (Tier 2)**
-- [ ] **Step 13: Extract `zero-dev` (Tier 2)**
-- [ ] **Step 14: Move the binary crate to `crates/zero/` and migrate integration tests**
-- [ ] **Step 15: Verify workspace builds, all tests pass, capture rebuild-timing observation**
+- [x] **Step 5: Convert root `Cargo.toml` to a Cargo workspace skeleton**
+- [x] **Step 6: Extract `zero-runtime` (Tier 1, owns build.rs)**
+- [x] **Step 7: Extract `zero-transpile` (Tier 1)**
+- [x] **Step 8: Extract `zero-sass` (Tier 1)**
+- [x] **Step 9: Extract `zero-config` (Tier 1, absorbs `toml_writer`)**
+- [x] **Step 10: Extract `zero-scaffold` (Tier 1)**
+- [x] **Step 11: Extract `zero-test-runner` (Tier 2)**
+- [x] **Step 12: Extract `zero-bundler` (Tier 2)**
+- [x] **Step 13: Extract `zero-dev` (Tier 2)**
+- [x] **Step 14: Move the binary crate to `crates/zero/` and migrate integration tests**
+- [x] **Step 15: Verify workspace builds, all tests pass, capture rebuild-timing observation**
 - [ ] **Step 16: Refactor `zero-test-runner` oversized functions**
 - [ ] **Step 17: Refactor `zero-bundler` oversized functions**
 - [ ] **Step 18: Refactor `zero-dev` oversized functions**

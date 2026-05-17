@@ -1,0 +1,12 @@
+[package]
+name = "zero-scaffold"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+zero-runtime = { path = "../zero-runtime" }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

@@ -1,0 +1,11 @@
+[package]
+name = "zero-runtime"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[build-dependencies]
+regex = { workspace = true }
+
+[dev-dependencies]
+regex = { workspace = true }

@@ -3771,31 +3771,131 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "axum",
- "base64",
- "boa_engine",
  "bytes",
  "clap",
  "dialoguer",
  "futures-util",
- "grass",
  "http-body-util",
- "hyper",
- "notify-debouncer-mini",
  "predicates",
  "regex",
  "reqwest",
- "serde",
  "serde_json",
  "sha2",
- "sourcemap",
- "swc_core",
  "tempfile",
  "tokio",
  "tokio-stream",
+ "url",
+ "zero-bundler",
+ "zero-config",
+ "zero-dev",
+ "zero-runtime",
+ "zero-sass",
+ "zero-scaffold",
+ "zero-test-runner",
+ "zero-transpile",
+]
+
+[[package]]
+name = "zero-bundler"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "regex",
+ "serde_json",
+ "sha2",
+ "sourcemap",
+ "tempfile",
+ "zero-config",
+ "zero-runtime",
+ "zero-sass",
+ "zero-transpile",
+]
+
+[[package]]
+name = "zero-config"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
  "toml",
+ "url",
+]
+
+[[package]]
+name = "zero-dev"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "futures-util",
+ "http-body-util",
+ "hyper",
+ "notify-debouncer-mini",
+ "regex",
+ "reqwest",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
  "tower",
  "tower-http",
  "url",
+ "zero-config",
+ "zero-runtime",
+ "zero-sass",
+ "zero-transpile",
+]
+
+[[package]]
+name = "zero-runtime"
+version = "0.1.0"
+dependencies = [
+ "regex",
+]
+
+[[package]]
+name = "zero-sass"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "grass",
+ "serde_json",
+ "sourcemap",
+ "tempfile",
+]
+
+[[package]]
+name = "zero-scaffold"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "tempfile",
+ "zero-runtime",
+]
+
+[[package]]
+name = "zero-test-runner"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "boa_engine",
+ "regex",
+ "serde_json",
+ "sourcemap",
+ "swc_core",
+ "tempfile",
+ "zero-runtime",
+ "zero-transpile",
+]
+
+[[package]]
+name = "zero-transpile"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "sourcemap",
+ "swc_core",
 ]
 
 [[package]]
