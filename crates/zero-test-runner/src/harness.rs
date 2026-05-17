@@ -125,199 +125,37 @@ fn run_with_loader(
         .strip_prefix(project_root)
         .unwrap_or(file_abs)
         .to_path_buf();
-    let mut context = match Context::builder().module_loader(loader.clone()).build() {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            return RunOutcome {
-                result: FileResult {
-                    path: rel_path,
-                    outcomes: vec![],
-                    load_error: Some(Failure {
-                        message: format!("failed to build JS context: {e}"),
-                        stack: None,
-                        location: None,
-                    }),
-                },
-                coverage: None,
-                loaded: vec![],
-            };
-        }
+    let mut context = match build_js_context(loader.clone()) {
+        Ok(c) => c,
+        Err(f) => return load_error_outcome(rel_path, f),
     };
-
-    // Install console.log/warn/error pass-through.
     install_console(&mut context);
-
-    // Evaluate the DOM shim as a script so globalThis.document / .window are set.
-    if let Err(e) = context.eval(Source::from_bytes(ZERO_DOM_SHIM_BODY.as_bytes())) {
-        return RunOutcome {
-            result: FileResult {
-                path: rel_path,
-                outcomes: vec![],
-                load_error: Some(js_err_to_failure(&e, &mut context)),
-            },
-            coverage: None,
-            loaded: vec![],
-        };
+    if let Err(f) = eval_dom_shim(&mut context) {
+        return load_error_outcome(rel_path, f);
     }
-
-    // Read the test file source.
-    let raw = match std::fs::read_to_string(file_abs) {
+    let raw = match read_test_source(file_abs) {
         Ok(s) => s,
-        Err(e) => {
-            return RunOutcome {
-                result: FileResult {
-                    path: rel_path,
-                    outcomes: vec![],
-                    load_error: Some(Failure {
-                        message: format!("cannot read {}: {e}", file_abs.display()),
-                        stack: None,
-                        location: None,
-                    }),
-                },
-                coverage: None,
-                loaded: vec![],
-            };
-        }
+        Err(f) => return load_error_outcome(rel_path, f),
     };
-
-    let (src, ts_source_map) = if file_abs.extension().and_then(|e| e.to_str()) == Some("ts") {
-        let logical = file_abs.to_string_lossy().into_owned();
-        match transpile_typescript(
-            &raw,
-            &TranspileOptions {
-                filename: &logical,
-                inline_source_map: false,
-                emit_source_map: true,
-            },
-        ) {
-            Ok(out) => {
-                let sm = out
-                    .source_map
-                    .as_deref()
-                    .and_then(|j| sourcemap::SourceMap::from_slice(j.as_bytes()).ok());
-                (out.code, sm)
-            }
-            Err(e) => {
-                return RunOutcome {
-                    result: FileResult {
-                        path: rel_path,
-                        outcomes: vec![],
-                        load_error: Some(Failure {
-                            message: format!("transpile error: {e}"),
-                            stack: None,
-                            location: None,
-                        }),
-                    },
-                    coverage: None,
-                    loaded: vec![],
-                };
-            }
-        }
-    } else {
-        (raw, None)
+    let (src, ts_source_map) = match prepare_source(raw, file_abs) {
+        Ok(out) => out,
+        Err(f) => return load_error_outcome(rel_path, f),
     };
-
-    // Register the file path so the loader can resolve relative imports from it.
     loader.register_path(
         &file_abs.to_string_lossy(),
         file_abs.parent().unwrap_or(project_root),
     );
-
-    // Parse the test file as an ES module (pass the path so stack traces name the file).
-    let module = match Module::parse(
-        Source::from_bytes(src.as_bytes()).with_path(file_abs),
-        None,
-        &mut context,
-    ) {
+    let module = match parse_test_module(&src, file_abs, &mut context) {
         Ok(m) => m,
-        Err(e) => {
-            return RunOutcome {
-                result: FileResult {
-                    path: rel_path,
-                    outcomes: vec![],
-                    load_error: Some(js_err_to_failure(&e, &mut context)),
-                },
-                coverage: None,
-                loaded: vec![],
-            };
-        }
+        Err(f) => return load_error_outcome(rel_path, f),
     };
-
-    // Load, link, and evaluate the module; drive the job queue to completion.
-    let eval_promise = module.load_link_evaluate(&mut context);
-    let _ = context.run_jobs();
-
-    if let PromiseState::Rejected(reason) = eval_promise.state() {
-        return RunOutcome {
-            result: FileResult {
-                path: rel_path,
-                outcomes: vec![],
-                load_error: Some(js_val_to_failure(reason, &mut context)),
-            },
-            coverage: None,
-            loaded: vec![],
-        };
+    if let Err(f) = evaluate_module(&module, &mut context) {
+        return load_error_outcome(rel_path, f);
     }
-
-    // Retrieve the `zero/test` module's `__getTestTree__` export.
-    let test_mod = match loader.get_cached("zero/test") {
-        Some(m) => m,
-        None => {
-            return RunOutcome {
-                result: FileResult {
-                    path: rel_path,
-                    outcomes: vec![],
-                    load_error: Some(Failure {
-                        message: "zero/test module was not loaded by the test file".to_string(),
-                        stack: None,
-                        location: None,
-                    }),
-                },
-                coverage: None,
-                loaded: vec![],
-            };
-        }
-    };
-
-    let ns = test_mod.namespace(&mut context);
-    let get_tree = match ns.get(boa_engine::js_string!("__getTestTree__"), &mut context) {
+    let root = match get_test_tree_root(&loader, &mut context) {
         Ok(v) => v,
-        Err(e) => {
-            return RunOutcome {
-                result: FileResult {
-                    path: rel_path,
-                    outcomes: vec![],
-                    load_error: Some(js_err_to_failure(&e, &mut context)),
-                },
-                coverage: None,
-                loaded: vec![],
-            };
-        }
+        Err(f) => return load_error_outcome(rel_path, f),
     };
-
-    let root = match get_tree
-        .as_callable()
-        .and_then(|f| f.call(&JsValue::undefined(), &[], &mut context).ok())
-    {
-        Some(v) => v,
-        None => {
-            return RunOutcome {
-                result: FileResult {
-                    path: rel_path,
-                    outcomes: vec![],
-                    load_error: Some(Failure {
-                        message: "__getTestTree__ is not callable or threw".to_string(),
-                        stack: None,
-                        location: None,
-                    }),
-                },
-                coverage: None,
-                loaded: vec![],
-            };
-        }
-    };
-
-    // Walk the test tree and collect outcomes.
     let mut outcomes = Vec::new();
     walk_describe(
         &root,
@@ -326,22 +164,11 @@ fn run_with_loader(
         ts_source_map.as_ref(),
         &mut context,
     );
-
-    // If coverage is enabled, serialize __zero_coverage__ to JSON before
-    // tearing down the context.
     let coverage_value = if want_coverage {
-        context
-            .eval(Source::from_bytes(
-                b"JSON.stringify(globalThis.__zero_coverage__ || {})",
-            ))
-            .ok()
-            .and_then(|v| v.as_string().map(|s| s.to_std_string_escaped()))
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        serialize_coverage(&mut context)
     } else {
         None
     };
-
-    let loaded = loader.loaded_paths();
     RunOutcome {
         result: FileResult {
             path: rel_path,
@@ -349,8 +176,133 @@ fn run_with_loader(
             load_error: None,
         },
         coverage: coverage_value,
-        loaded,
+        loaded: loader.loaded_paths(),
     }
+}
+
+/// Wrap a load-time `Failure` into an empty `RunOutcome` keyed by `rel_path`.
+fn load_error_outcome(rel_path: PathBuf, failure: Failure) -> RunOutcome {
+    RunOutcome {
+        result: FileResult {
+            path: rel_path,
+            outcomes: vec![],
+            load_error: Some(failure),
+        },
+        coverage: None,
+        loaded: vec![],
+    }
+}
+
+/// Build a Boa `Context` configured with the given module loader.
+fn build_js_context(loader: Rc<ZeroModuleLoader>) -> Result<Context, Failure> {
+    Context::builder()
+        .module_loader(loader)
+        .build()
+        .map_err(|e| Failure {
+            message: format!("failed to build JS context: {e}"),
+            stack: None,
+            location: None,
+        })
+}
+
+/// Evaluate the framework DOM shim into the current context so that
+/// `globalThis.document` and friends exist before user modules run.
+fn eval_dom_shim(ctx: &mut Context) -> Result<(), Failure> {
+    ctx.eval(Source::from_bytes(ZERO_DOM_SHIM_BODY.as_bytes()))
+        .map(|_| ())
+        .map_err(|e| js_err_to_failure(&e, ctx))
+}
+
+/// Read the on-disk test source.
+fn read_test_source(file_abs: &Path) -> Result<String, Failure> {
+    std::fs::read_to_string(file_abs).map_err(|e| Failure {
+        message: format!("cannot read {}: {e}", file_abs.display()),
+        stack: None,
+        location: None,
+    })
+}
+
+/// For `.ts` files transpile to JS and return a source map; for `.js` files
+/// pass through unchanged.
+fn prepare_source(
+    raw: String,
+    file_abs: &Path,
+) -> Result<(String, Option<sourcemap::SourceMap>), Failure> {
+    if file_abs.extension().and_then(|e| e.to_str()) != Some("ts") {
+        return Ok((raw, None));
+    }
+    let logical = file_abs.to_string_lossy().into_owned();
+    let out = transpile_typescript(
+        &raw,
+        &TranspileOptions {
+            filename: &logical,
+            inline_source_map: false,
+            emit_source_map: true,
+        },
+    )
+    .map_err(|e| Failure {
+        message: format!("transpile error: {e}"),
+        stack: None,
+        location: None,
+    })?;
+    let sm = out
+        .source_map
+        .as_deref()
+        .and_then(|j| sourcemap::SourceMap::from_slice(j.as_bytes()).ok());
+    Ok((out.code, sm))
+}
+
+/// Parse the (already-transpiled) test source as an ES module.
+fn parse_test_module(src: &str, file_abs: &Path, ctx: &mut Context) -> Result<Module, Failure> {
+    Module::parse(
+        Source::from_bytes(src.as_bytes()).with_path(file_abs),
+        None,
+        ctx,
+    )
+    .map_err(|e| js_err_to_failure(&e, ctx))
+}
+
+/// Load, link, and evaluate `module`; drive the job queue to completion and
+/// surface any rejection as a `Failure`.
+fn evaluate_module(module: &Module, ctx: &mut Context) -> Result<(), Failure> {
+    let eval_promise = module.load_link_evaluate(ctx);
+    let _ = ctx.run_jobs();
+    if let PromiseState::Rejected(reason) = eval_promise.state() {
+        return Err(js_val_to_failure(reason, ctx));
+    }
+    Ok(())
+}
+
+/// Pull the `__getTestTree__` export off the cached `zero/test` module and
+/// invoke it to materialize the describe tree root.
+fn get_test_tree_root(loader: &ZeroModuleLoader, ctx: &mut Context) -> Result<JsValue, Failure> {
+    let test_mod = loader.get_cached("zero/test").ok_or_else(|| Failure {
+        message: "zero/test module was not loaded by the test file".to_string(),
+        stack: None,
+        location: None,
+    })?;
+    let ns = test_mod.namespace(ctx);
+    let get_tree = ns
+        .get(boa_engine::js_string!("__getTestTree__"), ctx)
+        .map_err(|e| js_err_to_failure(&e, ctx))?;
+    get_tree
+        .as_callable()
+        .and_then(|f| f.call(&JsValue::undefined(), &[], ctx).ok())
+        .ok_or_else(|| Failure {
+            message: "__getTestTree__ is not callable or threw".to_string(),
+            stack: None,
+            location: None,
+        })
+}
+
+/// Serialize `globalThis.__zero_coverage__` to a JSON value if present.
+fn serialize_coverage(ctx: &mut Context) -> Option<serde_json::Value> {
+    ctx.eval(Source::from_bytes(
+        b"JSON.stringify(globalThis.__zero_coverage__ || {})",
+    ))
+    .ok()
+    .and_then(|v| v.as_string().map(|s| s.to_std_string_escaped()))
+    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
 }
 
 /// Recursively walk a describe node, running hooks and `it` bodies.
@@ -366,95 +318,109 @@ fn walk_describe(
         None => return,
     };
 
-    // Run beforeAll hooks for this describe.
-    let before_all = js_get_array(&obj, "beforeAll", ctx);
-    let mut before_all_failed: Option<String> = None;
-    for hook in &before_all {
-        if let Err(captured) = call_and_drain(hook, ctx) {
-            before_all_failed = Some(format!("beforeAll failed: {}", captured.message));
-            break;
-        }
-    }
-
-    // Walk children.
-    let children = js_get_array(&obj, "children", ctx);
-    for child in &children {
-        let child_obj = match child.as_object() {
-            Some(o) => o,
-            None => continue,
+    let before_all_failed = run_before_all(&obj, ctx);
+    for child in &js_get_array(&obj, "children", ctx) {
+        let Some(child_obj) = child.as_object() else {
+            continue;
         };
-
-        // Distinguish It (has `fn`) from Describe (has `children`).
         let fn_val = child_obj
             .get(boa_engine::js_string!("fn"), ctx)
             .unwrap_or(JsValue::undefined());
-        let has_fn = fn_val.is_callable();
-
         let child_name = js_get_string(child, "name", ctx);
-
-        if has_fn {
-            // It node.
-            name_chain.push(child_name.clone());
-
-            if let Some(ref reason) = before_all_failed {
-                outcomes.push(TestOutcome {
-                    name_chain: name_chain.clone(),
-                    status: Status::Skipped(reason.clone()),
-                    duration_ms: 0,
-                    failure: None,
-                });
-                name_chain.pop();
-                continue;
-            }
-
-            // Collect beforeEach hooks from this describe and ancestors.
-            let before_each = collect_hooks(node, "beforeEach", ctx);
-            let after_each = collect_hooks(node, "afterEach", ctx);
-
-            let mut skip_reason: Option<String> = None;
-            for hook in &before_each {
-                if let Err(captured) = call_and_drain(hook, ctx) {
-                    skip_reason = Some(format!("beforeEach failed: {}", captured.message));
-                    break;
-                }
-            }
-
-            let start = Instant::now();
-            let result = if skip_reason.is_none() {
-                call_and_drain(&fn_val, ctx)
-            } else {
-                Ok(())
-            };
-            let duration_ms = start.elapsed().as_millis();
-
-            let (status, failure) = match (skip_reason, result) {
-                (Some(reason), _) => (Status::Skipped(reason), None),
-                (None, Ok(())) => (Status::Passed, None),
-                (None, Err(captured)) => (Status::Failed, Some(build_failure(captured, sm))),
-            };
-
-            outcomes.push(TestOutcome {
-                name_chain: name_chain.clone(),
-                status,
-                duration_ms,
-                failure,
-            });
-            name_chain.pop();
-
-            for hook in &after_each {
-                let _ = call_and_drain(hook, ctx);
-            }
+        if fn_val.is_callable() {
+            run_it_node(
+                node,
+                &fn_val,
+                child_name,
+                name_chain,
+                outcomes,
+                before_all_failed.as_deref(),
+                sm,
+                ctx,
+            );
         } else {
-            // Describe node.
             name_chain.push(child_name);
             walk_describe(child, name_chain, outcomes, sm, ctx);
             name_chain.pop();
         }
     }
 
-    // Run afterAll hooks.
-    let after_all = js_get_array(&obj, "afterAll", ctx);
-    for hook in &after_all {
+    for hook in &js_get_array(&obj, "afterAll", ctx) {
+        let _ = call_and_drain(hook, ctx);
+    }
+}
+
+/// Run all `beforeAll` hooks on `obj`. Returns `Some(reason)` if any threw —
+/// the caller propagates this as a per-test skip reason.
+fn run_before_all(obj: &boa_engine::JsObject, ctx: &mut Context) -> Option<String> {
+    for hook in &js_get_array(obj, "beforeAll", ctx) {
+        if let Err(captured) = call_and_drain(hook, ctx) {
+            return Some(format!("beforeAll failed: {}", captured.message));
+        }
+    }
+    None
+}
+
+/// Execute a single `it` node: run ancestor `beforeEach` hooks, the test body,
+/// then `afterEach` hooks, and push the resulting `TestOutcome`.
+#[allow(clippy::too_many_arguments)]
+fn run_it_node(
+    parent: &JsValue,
+    fn_val: &JsValue,
+    child_name: String,
+    name_chain: &mut Vec<String>,
+    outcomes: &mut Vec<TestOutcome>,
+    before_all_failed: Option<&str>,
+    sm: Option<&sourcemap::SourceMap>,
+    ctx: &mut Context,
+) {
+    name_chain.push(child_name);
+
+    if let Some(reason) = before_all_failed {
+        outcomes.push(TestOutcome {
+            name_chain: name_chain.clone(),
+            status: Status::Skipped(reason.to_string()),
+            duration_ms: 0,
+            failure: None,
+        });
+        name_chain.pop();
+        return;
+    }
+
+    let before_each = collect_hooks(parent, "beforeEach", ctx);
+    let after_each = collect_hooks(parent, "afterEach", ctx);
+
+    let mut skip_reason: Option<String> = None;
+    for hook in &before_each {
+        if let Err(captured) = call_and_drain(hook, ctx) {
+            skip_reason = Some(format!("beforeEach failed: {}", captured.message));
+            break;
+        }
+    }
+
+    let start = Instant::now();
+    let result = if skip_reason.is_none() {
+        call_and_drain(fn_val, ctx)
+    } else {
+        Ok(())
+    };
+    let duration_ms = start.elapsed().as_millis();
+
+    let (status, failure) = match (skip_reason, result) {
+        (Some(reason), _) => (Status::Skipped(reason), None),
+        (None, Ok(())) => (Status::Passed, None),
+        (None, Err(captured)) => (Status::Failed, Some(build_failure(captured, sm))),
+    };
+
+    outcomes.push(TestOutcome {
+        name_chain: name_chain.clone(),
+        status,
+        duration_ms,
+        failure,
+    });
+    name_chain.pop();
+
+    for hook in &after_each {
         let _ = call_and_drain(hook, ctx);
     }
 }

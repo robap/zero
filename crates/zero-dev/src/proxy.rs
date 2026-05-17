@@ -65,14 +65,7 @@ pub async fn proxy_request(
     req: Request<Body>,
     app_entry_href: &str,
 ) -> Response {
-    // Reject WebSocket upgrade requests.
-    if req
-        .headers()
-        .get("upgrade")
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v.eq_ignore_ascii_case("websocket"))
-        .unwrap_or(false)
-    {
+    if is_websocket_upgrade(&req) {
         return (
             StatusCode::NOT_IMPLEMENTED,
             "zero dev: WebSocket proxying is out of scope in this slice",
@@ -80,13 +73,11 @@ pub async fn proxy_request(
             .into_response();
     }
 
-    // Build upstream URL.
     let path_and_query = req
         .uri()
         .path_and_query()
         .map(|pq| pq.as_str())
         .unwrap_or("/");
-
     let upstream_url = match build_upstream_url(proxy_base, path_and_query) {
         Ok(u) => u,
         Err(e) => {
@@ -98,65 +89,26 @@ pub async fn proxy_request(
         }
     };
 
-    // Forward headers (minus hop-by-hop), override Accept-Encoding to identity.
-    let mut forward_headers = HeaderMap::new();
-    for (name, value) in req.headers() {
-        let name_lower = name.as_str().to_ascii_lowercase();
-        if HOP_BY_HOP.contains(&name_lower.as_str()) {
-            continue;
-        }
-        forward_headers.insert(name.clone(), value.clone());
-    }
-    forward_headers.insert(
-        HeaderName::from_static("accept-encoding"),
-        HeaderValue::from_static("identity"),
-    );
-
-    // Build and execute the upstream request.
+    let forward_headers = build_forward_headers(req.headers());
     let method = req.method().clone();
     let body_bytes = axum::body::to_bytes(req.into_body(), usize::MAX)
         .await
         .unwrap_or_default();
 
-    let upstream_req = client
+    let upstream_resp = match client
         .request(method, upstream_url.as_str())
         .headers(forward_headers)
-        .body(body_bytes);
-
-    let upstream_resp = match upstream_req.send().await {
+        .body(body_bytes)
+        .send()
+        .await
+    {
         Ok(r) => r,
-        Err(e) => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                [(
-                    axum::http::header::CONTENT_TYPE,
-                    HeaderValue::from_static("text/html; charset=utf-8"),
-                )],
-                format!(
-                    "<h1>zero dev</h1><p>Cannot reach backend at {}: {e}</p>",
-                    proxy_base
-                ),
-            )
-                .into_response();
-        }
+        Err(e) => return bad_gateway_response(proxy_base, e),
     };
 
-    // Build the outgoing response.
     let status = StatusCode::from_u16(upstream_resp.status().as_u16())
         .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-
-    let mut resp_headers = HeaderMap::new();
-    for (name, value) in upstream_resp.headers() {
-        let name_lower = name.as_str().to_ascii_lowercase();
-        if HOP_BY_HOP.contains(&name_lower.as_str()) {
-            continue;
-        }
-        if STRIP_FROM_UPSTREAM.contains(&name_lower.as_str()) {
-            continue;
-        }
-        resp_headers.insert(name.clone(), value.clone());
-    }
-
+    let mut resp_headers = filter_upstream_headers(upstream_resp.headers());
     let content_type = upstream_resp
         .headers()
         .get("content-type")
@@ -167,21 +119,9 @@ pub async fn proxy_request(
     if content_type.starts_with("text/html") {
         let body_bytes = upstream_resp.bytes().await.unwrap_or_default();
         let injected = inject(&body_bytes, app_entry_href);
-        let len = injected.len();
-        resp_headers.insert(
-            axum::http::header::CONTENT_TYPE,
-            HeaderValue::from_static("text/html; charset=utf-8"),
-        );
-        resp_headers.insert(
-            axum::http::header::CONTENT_LENGTH,
-            HeaderValue::from(len as u64),
-        );
-        let mut builder = http_response_builder(status, resp_headers);
-        *builder.body_mut() = Some(injected);
-        return builder.into_response_body();
+        return build_html_response(status, &mut resp_headers, injected);
     }
 
-    // Non-HTML: stream body through unchanged.
     let body_bytes = upstream_resp.bytes().await.unwrap_or_default();
     let mut response = Response::builder()
         .status(status)
@@ -189,6 +129,85 @@ pub async fn proxy_request(
         .unwrap();
     *response.headers_mut() = resp_headers;
     response
+}
+
+/// True if the request carries an `Upgrade: websocket` header.
+fn is_websocket_upgrade(req: &Request<Body>) -> bool {
+    req.headers()
+        .get("upgrade")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.eq_ignore_ascii_case("websocket"))
+        .unwrap_or(false)
+}
+
+/// Copy `incoming` minus hop-by-hop headers; force `Accept-Encoding: identity`
+/// so we never have to decompress upstream bodies before injection.
+fn build_forward_headers(incoming: &HeaderMap) -> HeaderMap {
+    let mut out = HeaderMap::new();
+    for (name, value) in incoming {
+        let name_lower = name.as_str().to_ascii_lowercase();
+        if HOP_BY_HOP.contains(&name_lower.as_str()) {
+            continue;
+        }
+        out.insert(name.clone(), value.clone());
+    }
+    out.insert(
+        HeaderName::from_static("accept-encoding"),
+        HeaderValue::from_static("identity"),
+    );
+    out
+}
+
+/// Drop hop-by-hop and cache/validator headers from the upstream response.
+fn filter_upstream_headers(upstream: &HeaderMap) -> HeaderMap {
+    let mut out = HeaderMap::new();
+    for (name, value) in upstream {
+        let name_lower = name.as_str().to_ascii_lowercase();
+        if HOP_BY_HOP.contains(&name_lower.as_str())
+            || STRIP_FROM_UPSTREAM.contains(&name_lower.as_str())
+        {
+            continue;
+        }
+        out.insert(name.clone(), value.clone());
+    }
+    out
+}
+
+/// Build a 502 response with a human-readable HTML error body.
+fn bad_gateway_response(proxy_base: &url::Url, e: reqwest::Error) -> Response {
+    (
+        StatusCode::BAD_GATEWAY,
+        [(
+            axum::http::header::CONTENT_TYPE,
+            HeaderValue::from_static("text/html; charset=utf-8"),
+        )],
+        format!(
+            "<h1>zero dev</h1><p>Cannot reach backend at {}: {e}</p>",
+            proxy_base
+        ),
+    )
+        .into_response()
+}
+
+/// Assemble the proxied HTML response with content-type/length set on
+/// `resp_headers`.
+fn build_html_response(
+    status: StatusCode,
+    resp_headers: &mut HeaderMap,
+    injected: Vec<u8>,
+) -> Response {
+    let len = injected.len();
+    resp_headers.insert(
+        axum::http::header::CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    resp_headers.insert(
+        axum::http::header::CONTENT_LENGTH,
+        HeaderValue::from(len as u64),
+    );
+    let mut builder = http_response_builder(status, resp_headers.clone());
+    *builder.body_mut() = Some(injected);
+    builder.into_response_body()
 }
 
 struct HtmlResponseBuilder {

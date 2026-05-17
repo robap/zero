@@ -59,30 +59,55 @@ pub fn transpile_typescript(
     source: &str,
     opts: &TranspileOptions<'_>,
 ) -> Result<TranspileOutput, TranspileError> {
-    use std::sync::Arc;
-
-    use swc_core::common::errors::{Handler, HandlerFlags};
+    use swc_core::common::SourceMap;
     use swc_core::common::sync::Lrc;
-    use swc_core::common::{FileName, GLOBALS, Globals, Mark, SourceMap};
-    use swc_core::ecma::ast::{EsVersion, Program};
-    use swc_core::ecma::codegen::Emitter;
-    use swc_core::ecma::codegen::text_writer::JsWriter;
-    use swc_core::ecma::parser::{Parser, StringInput, Syntax, TsSyntax, lexer::Lexer};
-    use swc_core::ecma::transforms::base::{fixer::fixer, hygiene::hygiene, resolver};
-    use swc_core::ecma::transforms::typescript::strip;
 
     let cm: Lrc<SourceMap> = Default::default();
+    let module = parse_ts_source(&cm, source, opts.filename)?;
+    let module = strip_types(module);
+    let (mut code, srcmap_buf) = emit_js(&cm, &module, opts.filename)?;
+    let source_map_json = if opts.inline_source_map || opts.emit_source_map {
+        Some(serialize_source_map(&cm, &srcmap_buf, opts.filename)?)
+    } else {
+        None
+    };
+    if opts.inline_source_map
+        && let Some(json) = &source_map_json
+    {
+        append_inline_source_map(&mut code, json);
+    }
+    let source_map = if opts.emit_source_map {
+        source_map_json
+    } else {
+        None
+    };
+    Ok(TranspileOutput { code, source_map })
+}
+
+/// Parse `source` as a TypeScript module, surfacing the first SWC diagnostic
+/// as a `TranspileError`.
+fn parse_ts_source(
+    cm: &swc_core::common::sync::Lrc<swc_core::common::SourceMap>,
+    source: &str,
+    filename: &str,
+) -> Result<swc_core::ecma::ast::Module, TranspileError> {
+    use std::sync::Arc;
+
+    use swc_core::common::FileName;
+    use swc_core::common::errors::{Handler, HandlerFlags};
+    use swc_core::common::sync::Lrc;
+    use swc_core::ecma::ast::EsVersion;
+    use swc_core::ecma::parser::{Parser, StringInput, Syntax, TsSyntax, lexer::Lexer};
+
     let fm = cm.new_source_file(
-        Lrc::new(FileName::Custom(opts.filename.to_string())),
+        Lrc::new(FileName::Custom(filename.to_string())),
         source.to_string(),
     );
-
     let buf: Arc<std::sync::Mutex<Vec<u8>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let writer = ErrorWriter { buf: buf.clone() };
     let handler = Handler::with_emitter_and_flags(
         Box::new(EmitterAdapter {
             cm: cm.clone(),
-            writer,
+            writer: ErrorWriter { buf: buf.clone() },
         }),
         HandlerFlags {
             can_emit_warnings: false,
@@ -90,7 +115,6 @@ pub fn transpile_typescript(
             ..Default::default()
         },
     );
-
     let lexer = Lexer::new(
         Syntax::Typescript(TsSyntax {
             decorators: false,
@@ -102,26 +126,31 @@ pub fn transpile_typescript(
         None,
     );
     let mut parser = Parser::new_from(lexer);
-
     let module_result = parser.parse_module();
     for err in parser.take_errors() {
         err.into_diagnostic(&handler).emit();
     }
-
     let module = match module_result {
         Ok(m) => m,
         Err(e) => {
             e.into_diagnostic(&handler).emit();
-            let diag = first_diagnostic(&buf, &cm, opts.filename);
-            return Err(diag);
+            return Err(first_diagnostic(&buf, cm, filename));
         }
     };
-
     if handler.has_errors() {
-        return Err(first_diagnostic(&buf, &cm, opts.filename));
+        return Err(first_diagnostic(&buf, cm, filename));
     }
+    Ok(module)
+}
 
-    let module = GLOBALS.set(&Globals::new(), || {
+/// Run the resolver → strip → hygiene → fixer pipeline on `module`.
+fn strip_types(module: swc_core::ecma::ast::Module) -> swc_core::ecma::ast::Module {
+    use swc_core::common::{GLOBALS, Globals, Mark};
+    use swc_core::ecma::ast::Program;
+    use swc_core::ecma::transforms::base::{fixer::fixer, hygiene::hygiene, resolver};
+    use swc_core::ecma::transforms::typescript::strip;
+
+    GLOBALS.set(&Globals::new(), || {
         let unresolved_mark = Mark::new();
         let top_level_mark = Mark::new();
         let mut program = Program::Module(module);
@@ -133,10 +162,23 @@ pub fn transpile_typescript(
             Program::Module(m) => m,
             Program::Script(_) => unreachable!("input parsed as module"),
         }
-    });
+    })
+}
+
+/// Emit the post-strip module as JS, returning the code and the SWC sourcemap
+/// position buffer.
+type SrcmapBuf = Vec<(swc_core::common::BytePos, swc_core::common::LineCol)>;
+
+fn emit_js(
+    cm: &swc_core::common::sync::Lrc<swc_core::common::SourceMap>,
+    module: &swc_core::ecma::ast::Module,
+    filename: &str,
+) -> Result<(String, SrcmapBuf), TranspileError> {
+    use swc_core::ecma::codegen::Emitter;
+    use swc_core::ecma::codegen::text_writer::JsWriter;
 
     let mut code_buf: Vec<u8> = Vec::new();
-    let mut srcmap_buf: Vec<(swc_core::common::BytePos, swc_core::common::LineCol)> = Vec::new();
+    let mut srcmap_buf: SrcmapBuf = Vec::new();
     {
         let writer = JsWriter::new(cm.clone(), "\n", &mut code_buf, Some(&mut srcmap_buf));
         let mut emitter = Emitter {
@@ -145,66 +187,58 @@ pub fn transpile_typescript(
             comments: None,
             wr: writer,
         };
-        if let Err(e) = emitter.emit_module(&module) {
-            return Err(TranspileError {
-                file: opts.filename.to_string(),
-                line: 0,
-                column: 0,
-                message: format!("codegen error: {e}"),
-            });
-        }
+        emitter.emit_module(module).map_err(|e| TranspileError {
+            file: filename.to_string(),
+            line: 0,
+            column: 0,
+            message: format!("codegen error: {e}"),
+        })?;
     }
-
-    let mut code = String::from_utf8(code_buf).map_err(|e| TranspileError {
-        file: opts.filename.to_string(),
+    let code = String::from_utf8(code_buf).map_err(|e| TranspileError {
+        file: filename.to_string(),
         line: 0,
         column: 0,
         message: format!("non-UTF-8 codegen output: {e}"),
     })?;
+    Ok((code, srcmap_buf))
+}
 
-    let source_map_json = if opts.inline_source_map || opts.emit_source_map {
-        let map = cm.build_source_map(
-            &srcmap_buf,
-            None,
-            swc_core::common::source_map::DefaultSourceMapGenConfig,
-        );
-        let mut json: Vec<u8> = Vec::new();
-        map.to_writer(&mut json).map_err(|e| TranspileError {
-            file: opts.filename.to_string(),
-            line: 0,
-            column: 0,
-            message: format!("sourcemap serialization failed: {e}"),
-        })?;
-        Some(String::from_utf8(json).map_err(|e| TranspileError {
-            file: opts.filename.to_string(),
-            line: 0,
-            column: 0,
-            message: format!("non-UTF-8 sourcemap json: {e}"),
-        })?)
-    } else {
-        None
-    };
+/// Build a JSON source-map string from `srcmap_buf`.
+fn serialize_source_map(
+    cm: &swc_core::common::sync::Lrc<swc_core::common::SourceMap>,
+    srcmap_buf: &SrcmapBuf,
+    filename: &str,
+) -> Result<String, TranspileError> {
+    let map = cm.build_source_map(
+        srcmap_buf,
+        None,
+        swc_core::common::source_map::DefaultSourceMapGenConfig,
+    );
+    let mut json: Vec<u8> = Vec::new();
+    map.to_writer(&mut json).map_err(|e| TranspileError {
+        file: filename.to_string(),
+        line: 0,
+        column: 0,
+        message: format!("sourcemap serialization failed: {e}"),
+    })?;
+    String::from_utf8(json).map_err(|e| TranspileError {
+        file: filename.to_string(),
+        line: 0,
+        column: 0,
+        message: format!("non-UTF-8 sourcemap json: {e}"),
+    })
+}
 
-    if opts.inline_source_map
-        && let Some(json) = &source_map_json
-    {
-        use base64::Engine as _;
-        let b64 = base64::engine::general_purpose::STANDARD.encode(json.as_bytes());
-        if !code.ends_with('\n') {
-            code.push('\n');
-        }
-        code.push_str("//# sourceMappingURL=data:application/json;base64,");
-        code.push_str(&b64);
+/// Append `//# sourceMappingURL=data:application/json;base64,…` to `code`.
+fn append_inline_source_map(code: &mut String, json: &str) {
+    use base64::Engine as _;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(json.as_bytes());
+    if !code.ends_with('\n') {
         code.push('\n');
     }
-
-    let source_map = if opts.emit_source_map {
-        source_map_json
-    } else {
-        None
-    };
-
-    Ok(TranspileOutput { code, source_map })
+    code.push_str("//# sourceMappingURL=data:application/json;base64,");
+    code.push_str(&b64);
+    code.push('\n');
 }
 
 /// Convert the first emitted diagnostic in `buf` into a `TranspileError`.

@@ -54,87 +54,91 @@ pub struct AppState {
 /// `Ok(())` on graceful shutdown, an error on bind or runtime failure.
 pub async fn serve(config: Config) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
-    let root = cwd.join(&config.project.root);
-    if !root.exists() {
-        anyhow::bail!(
-            "configured `[project] root = {}` not found at {}; run `zero init` first",
-            config.project.root,
-            root.display()
-        );
-    }
-    let root = root
-        .canonicalize()
-        .unwrap_or_else(|_| cwd.join(&config.project.root));
-
-    let dot_zero = root.join(".zero");
-    if let Err(e) = std::fs::create_dir_all(&dot_zero) {
-        eprintln!("zero dev: failed to create .zero/: {e}");
-    }
-    if let Err(e) = std::fs::write(dot_zero.join("zero.d.ts"), ZERO_TYPES_BODY) {
-        eprintln!("zero dev: failed to write .zero/zero.d.ts: {e}");
-    }
-    if let Err(e) = std::fs::write(dot_zero.join("zero-test.d.ts"), ZERO_TEST_TYPES_BODY) {
-        eprintln!("zero dev: failed to write .zero/zero-test.d.ts: {e}");
-    }
-    if let Err(e) = std::fs::write(dot_zero.join("zero-http.d.ts"), ZERO_HTTP_TYPES_BODY) {
-        eprintln!("zero dev: failed to write .zero/zero-http.d.ts: {e}");
-    }
+    let root = resolve_project_root(&cwd, &config.project.root)?;
+    write_type_decls(&root.join(".zero"));
 
     let proxy = config
         .dev
         .proxy
+        .clone()
         .map(|url| ProxyState::new(url).map(Arc::new))
         .transpose()?;
-
     let bus = Arc::new(ReloadBus::new());
-    let root_for_watch = root.clone();
-    let root_display = root.display().to_string();
-    let bus_for_watch = bus.clone();
     let (shutdown_tx, shutdown_rx) = shutdown_watch::channel(false);
     let state = Arc::new(AppState {
         runtime: runtime_module(),
         http: http_module(),
-        root,
+        root: root.clone(),
         proxy,
-        bus,
+        bus: bus.clone(),
         shutdown: shutdown_rx,
         dev_sourcemap: config.dev.sourcemap,
     });
-    let port = config.dev.port;
 
-    let app = build_app(state);
-
-    let addr = format!("127.0.0.1:{port}");
-    let listener = match tokio::net::TcpListener::bind(&addr).await {
-        Ok(l) => l,
-        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
-            anyhow::bail!(
-                "port {port} is already in use; pick a different [dev].port in zero.toml"
-            );
-        }
-        Err(e) => anyhow::bail!("failed to bind {addr}: {e}"),
-    };
-
-    println!("zero dev — listening on http://{addr}");
+    let listener = bind_listener(config.dev.port).await?;
+    println!("zero dev — listening on http://{}", listener.local_addr()?);
 
     let out_dir = cwd.join(&config.build.out);
     let out_dir = out_dir.canonicalize().unwrap_or(out_dir);
-    let watch_handle = watch::start(root_for_watch, out_dir, bus_for_watch)?;
+    let watch_handle = watch::start(root.clone(), out_dir, bus)?;
     if watch_handle.is_some() {
-        println!("zero dev — watching {root_display} for changes");
+        println!("zero dev — watching {} for changes", root.display());
     }
 
-    axum::serve(listener, app)
+    axum::serve(listener, build_app(state))
         .with_graceful_shutdown(async move {
             let _ = tokio::signal::ctrl_c().await;
-            // Tell long-lived handlers (SSE) to end their streams so the
-            // in-flight connections finish and graceful shutdown completes.
             let _ = shutdown_tx.send(true);
         })
         .await?;
-
     drop(watch_handle);
     Ok(())
+}
+
+/// Resolve the project root from `cwd` + `config.project.root`; verify it
+/// exists; canonicalize if possible.
+fn resolve_project_root(cwd: &std::path::Path, project_root: &str) -> anyhow::Result<PathBuf> {
+    let root = cwd.join(project_root);
+    if !root.exists() {
+        anyhow::bail!(
+            "configured `[project] root = {}` not found at {}; run `zero init` first",
+            project_root,
+            root.display()
+        );
+    }
+    Ok(root
+        .canonicalize()
+        .unwrap_or_else(|_| cwd.join(project_root)))
+}
+
+/// Write the four ambient `*.d.ts` files into `dot_zero`. Failures are warned
+/// but non-fatal — the dev server still works without them.
+fn write_type_decls(dot_zero: &std::path::Path) {
+    if let Err(e) = std::fs::create_dir_all(dot_zero) {
+        eprintln!("zero dev: failed to create .zero/: {e}");
+    }
+    for (name, body) in [
+        ("zero.d.ts", ZERO_TYPES_BODY),
+        ("zero-test.d.ts", ZERO_TEST_TYPES_BODY),
+        ("zero-http.d.ts", ZERO_HTTP_TYPES_BODY),
+    ] {
+        if let Err(e) = std::fs::write(dot_zero.join(name), body) {
+            eprintln!("zero dev: failed to write .zero/{name}: {e}");
+        }
+    }
+}
+
+/// Bind a TCP listener on `127.0.0.1:<port>`, with a friendly message if the
+/// port is already in use.
+async fn bind_listener(port: u16) -> anyhow::Result<tokio::net::TcpListener> {
+    let addr = format!("127.0.0.1:{port}");
+    match tokio::net::TcpListener::bind(&addr).await {
+        Ok(l) => Ok(l),
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+            anyhow::bail!("port {port} is already in use; pick a different [dev].port in zero.toml")
+        }
+        Err(e) => anyhow::bail!("failed to bind {addr}: {e}"),
+    }
 }
 
 /// `GET /zero.js` handler: respond with the precomputed runtime module.

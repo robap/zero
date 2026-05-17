@@ -27,107 +27,27 @@ pub fn process_css(
     let assets_dir = out.join("assets");
     std::fs::create_dir_all(&assets_dir)?;
 
-    let entries = match std::fs::read_dir(&styles_dir) {
-        Ok(e) => e,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(e.into()),
+    let Some(all_entries) = read_styles_dir(&styles_dir)? else {
+        return Ok(Vec::new());
     };
-
-    let mut all_entries: Vec<std::path::PathBuf> = Vec::new();
-    for entry in entries {
-        let entry = entry?;
-        all_entries.push(entry.path());
-    }
-
-    // Collision check: find stems present in both .css and .scss (excluding partials).
-    let css_stems: HashSet<String> = all_entries
-        .iter()
-        .filter(|p| {
-            let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
-            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            ext == "css" && !name.starts_with('_')
-        })
-        .filter_map(|p| {
-            p.file_stem()
-                .and_then(|s| s.to_str())
-                .map(|s| s.to_string())
-        })
-        .collect();
-
-    let scss_stems: HashSet<String> = all_entries
-        .iter()
-        .filter(|p| {
-            let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
-            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            ext == "scss" && !name.starts_with('_')
-        })
-        .filter_map(|p| {
-            p.file_stem()
-                .and_then(|s| s.to_str())
-                .map(|s| s.to_string())
-        })
-        .collect();
-
-    let collisions: Vec<&String> = css_stems.intersection(&scss_stems).collect();
-    if !collisions.is_empty() {
-        let stem = collisions[0];
-        anyhow::bail!("styles/{stem}: both .scss and .css present; rename one");
-    }
+    enforce_stem_collisions(&all_entries)?;
 
     let mut pairs = Vec::new();
-
     for path in &all_entries {
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("style");
-
         if name.starts_with('_') {
             continue;
         }
-
         match ext {
             "css" => {
-                let bytes = std::fs::read(path)?;
-                let hash = &format!("{:x}", Sha256::digest(&bytes))[..8];
-                let out_filename = format!("{stem}.{hash}.css");
-                std::fs::write(assets_dir.join(&out_filename), &bytes)?;
-                pairs.push((format!("styles/{name}"), format!("assets/{out_filename}")));
+                let pair = copy_css_with_hash(path, &assets_dir, name, stem)?;
+                pairs.push(pair);
             }
             "scss" => {
-                let source = std::fs::read_to_string(path)?;
-                let logical = format!("styles/{name}");
-                let sass_opts = zero_sass::SassOptions {
-                    filename: &logical,
-                    inline_source_map: false,
-                    emit_source_map: emit_sourcemap,
-                    load_paths: &[],
-                };
-                let compiled = zero_sass::compile_scss(&source, path, &sass_opts)
-                    .map_err(|e| anyhow::anyhow!("{}", e))?;
-
-                let hash = &format!("{:x}", Sha256::digest(compiled.code.as_bytes()))[..8];
-                let out_filename = format!("{stem}.{hash}.css");
-
-                let css_body = if emit_sourcemap {
-                    let map_filename = format!("{out_filename}.map");
-                    if let Some(ref map_json) = compiled.source_map {
-                        std::fs::write(assets_dir.join(&map_filename), map_json)?;
-                    }
-                    let mut body = compiled.code.clone();
-                    if !body.ends_with('\n') {
-                        body.push('\n');
-                    }
-                    body.push_str(&format!("/*# sourceMappingURL={out_filename}.map */\n"));
-                    body
-                } else {
-                    compiled.code.clone()
-                };
-
-                std::fs::write(assets_dir.join(&out_filename), &css_body)?;
-                pairs.push((
-                    format!("styles/{stem}.scss"),
-                    format!("assets/{out_filename}"),
-                ));
+                let pair = compile_scss_with_hash(path, &assets_dir, name, stem, emit_sourcemap)?;
+                pairs.push(pair);
             }
             _ => continue,
         }
@@ -135,6 +55,106 @@ pub fn process_css(
 
     pairs.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(pairs)
+}
+
+/// Read `styles_dir`; `Ok(None)` if the directory does not exist (allowed).
+fn read_styles_dir(styles_dir: &Path) -> anyhow::Result<Option<Vec<std::path::PathBuf>>> {
+    let entries = match std::fs::read_dir(styles_dir) {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    let mut out = Vec::new();
+    for entry in entries {
+        out.push(entry?.path());
+    }
+    Ok(Some(out))
+}
+
+/// Error if any stem appears in both `.css` and `.scss` (excluding partials).
+fn enforce_stem_collisions(all_entries: &[std::path::PathBuf]) -> anyhow::Result<()> {
+    let css_stems = stems_with_ext(all_entries, "css");
+    let scss_stems = stems_with_ext(all_entries, "scss");
+    let collisions: Vec<&String> = css_stems.intersection(&scss_stems).collect();
+    if let Some(stem) = collisions.first() {
+        anyhow::bail!("styles/{stem}: both .scss and .css present; rename one");
+    }
+    Ok(())
+}
+
+/// Collect file stems with the given extension, ignoring partials (`_`-prefixed).
+fn stems_with_ext(all_entries: &[std::path::PathBuf], want_ext: &str) -> HashSet<String> {
+    all_entries
+        .iter()
+        .filter(|p| {
+            let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            ext == want_ext && !name.starts_with('_')
+        })
+        .filter_map(|p| {
+            p.file_stem()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_string())
+        })
+        .collect()
+}
+
+/// Copy a plain `.css` file into `assets/<stem>.<hash>.css`.
+fn copy_css_with_hash(
+    path: &Path,
+    assets_dir: &Path,
+    name: &str,
+    stem: &str,
+) -> anyhow::Result<(String, String)> {
+    let bytes = std::fs::read(path)?;
+    let hash = &format!("{:x}", Sha256::digest(&bytes))[..8];
+    let out_filename = format!("{stem}.{hash}.css");
+    std::fs::write(assets_dir.join(&out_filename), &bytes)?;
+    Ok((format!("styles/{name}"), format!("assets/{out_filename}")))
+}
+
+/// Compile a `.scss` file to CSS, write it (and optionally a sourcemap) into
+/// `assets/`, and return the source→output path pair.
+fn compile_scss_with_hash(
+    path: &Path,
+    assets_dir: &Path,
+    name: &str,
+    stem: &str,
+    emit_sourcemap: bool,
+) -> anyhow::Result<(String, String)> {
+    let source = std::fs::read_to_string(path)?;
+    let logical = format!("styles/{name}");
+    let sass_opts = zero_sass::SassOptions {
+        filename: &logical,
+        inline_source_map: false,
+        emit_source_map: emit_sourcemap,
+        load_paths: &[],
+    };
+    let compiled =
+        zero_sass::compile_scss(&source, path, &sass_opts).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let hash = &format!("{:x}", Sha256::digest(compiled.code.as_bytes()))[..8];
+    let out_filename = format!("{stem}.{hash}.css");
+
+    let css_body = if emit_sourcemap {
+        if let Some(ref map_json) = compiled.source_map {
+            let map_filename = format!("{out_filename}.map");
+            std::fs::write(assets_dir.join(&map_filename), map_json)?;
+        }
+        let mut body = compiled.code.clone();
+        if !body.ends_with('\n') {
+            body.push('\n');
+        }
+        body.push_str(&format!("/*# sourceMappingURL={out_filename}.map */\n"));
+        body
+    } else {
+        compiled.code.clone()
+    };
+
+    std::fs::write(assets_dir.join(&out_filename), &css_body)?;
+    Ok((
+        format!("styles/{stem}.scss"),
+        format!("assets/{out_filename}"),
+    ))
 }
 
 #[cfg(test)]

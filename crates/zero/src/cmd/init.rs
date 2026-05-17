@@ -135,6 +135,15 @@ fn config_from_answers(a: &Answers) -> anyhow::Result<Config> {
 mod tests {
     use super::*;
 
+    fn sample_answers() -> Answers {
+        Answers {
+            root: "web".to_string(),
+            port: 1234,
+            proxy: Some("http://127.0.0.1:8080".to_string()),
+            out: "dist".to_string(),
+        }
+    }
+
     #[test]
     fn init_plan_lists_framework_and_user_groups() {
         let plan = render_init_plan();
@@ -159,5 +168,44 @@ mod tests {
             plan.contains("Proceed? [Y/n]"),
             "missing Proceed? prompt: {plan}"
         );
+    }
+
+    #[test]
+    fn toml_input_from_answers_copies_fields() {
+        let a = sample_answers();
+        let input = toml_input_from_answers(&a);
+        assert_eq!(input.root, "web");
+        assert_eq!(input.port, 1234);
+        assert_eq!(input.proxy.as_deref(), Some("http://127.0.0.1:8080"));
+        assert_eq!(input.out, "dist");
+    }
+
+    #[test]
+    fn config_from_answers_round_trips_through_toml() {
+        let a = sample_answers();
+        let cfg = config_from_answers(&a).expect("config_from_answers");
+        assert_eq!(cfg.project.root, "web");
+        assert_eq!(cfg.dev.port, 1234);
+        assert_eq!(cfg.build.out, "dist");
+    }
+
+    #[test]
+    fn write_toml_file_creates_when_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("zero.toml");
+        write_toml_file(&path, "[project]\nroot = \"web\"\n").expect("first write");
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(body.contains("[project]"));
+    }
+
+    #[test]
+    fn write_toml_file_refuses_existing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("zero.toml");
+        std::fs::write(&path, "existing").unwrap();
+        let err = write_toml_file(&path, "new").expect_err("should refuse overwrite");
+        assert!(err.to_string().contains("failed to write"));
+        // Original content is preserved.
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "existing");
     }
 }

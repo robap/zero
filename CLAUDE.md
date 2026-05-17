@@ -5,25 +5,41 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Run all tests
+# Run all Rust tests (workspace)
+cargo test --workspace
+
+# Run tests for a single crate
+cargo test -p zero-bundler
+
+# Run all JS runtime tests (framework-internal, unchanged)
 node --test runtime/*.test.js
 
-# Run a single test file
+# Run a single JS test file
 node --test runtime/app.test.js
 
-# Run tests matching a name pattern
+# Run JS tests matching a name pattern
 node --test --test-name-pattern="querySelector" runtime/dom-shim.test.js
+
+# Build / install the CLI
+cargo build --workspace --release
+cargo install --path crates/zero --locked
 ```
 
-### Coverage
+### Quality
 
 ```bash
-# Generate HTML coverage report (Rust)
-cargo llvm-cov --html
+# Generate HTML coverage report (Rust, workspace-wide)
+cargo llvm-cov --workspace --html
 
-# Per-module summary table (Rust)
-cargo llvm-cov --summary-only
+# Per-module summary table
+cargo llvm-cov --workspace --summary-only
 ```
+
+Functions over ~80 lines and modules under ~70% line coverage are signals to
+refactor, not hard gates. When touching a module, glance at
+`cargo llvm-cov --workspace --summary-only` and notice outliers. Don't chase a
+number — fix the structure if a function feels too long or a path feels
+under-tested.
 
 ## Code style
 

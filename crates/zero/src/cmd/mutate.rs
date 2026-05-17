@@ -356,10 +356,6 @@ pub fn run_inner(
     threads: usize,
     progress: &mut dyn Write,
 ) -> anyhow::Result<MutationSummary> {
-    // For `zero mutate`, `target` filters the *source* files to mutate
-    // (spec §3.1), not the test files. We always run the full test suite
-    // as the baseline so the test-impact map is complete; per-mutant we
-    // still only run the tests that import the mutated source.
     let DiscoveryResult { files: test_files } = discover(DiscoveryOpts {
         root,
         out_dir,
@@ -367,25 +363,73 @@ pub fn run_inner(
     })?;
 
     let mut summary = MutationSummary::default();
-
     if test_files.is_empty() {
         summary.baseline_passed = true;
         return Ok(summary);
     }
 
-    // 1. Baseline run with coverage on. Also record, per test file, the
-    // set of in-scope src paths it loaded — this becomes the test-impact
-    // map used in step 4 (only run tests that actually import the mutated
-    // file).
     let scope = CoverageScope::new(root.to_path_buf(), out_dir.to_path_buf());
+    let baseline = run_baseline(root, &scope, &test_files);
+    summary.baseline_passed = baseline.passed;
+    if !baseline.passed {
+        return Ok(summary);
+    }
+
+    let src_files = filter_src_files(walk_src(&scope), cwd, target, progress)?;
+    let mut all_sites = generate_all_sites(&src_files, &baseline.covered, operators, &mut summary);
+    if let Some(max) = max_mutants
+        && all_sites.len() > max
+    {
+        all_sites.truncate(max);
+    }
+
+    let queue = pre_apply_to_queue(&all_sites, &mut summary);
+    let total = queue.len();
+
+    let result_rx = if threads <= 1 || isolation == Isolation::InProcess {
+        dispatch_sequential(
+            root.to_path_buf(),
+            queue,
+            baseline.src_to_tests,
+            test_files,
+            isolation,
+        )
+    } else {
+        dispatch_parallel(
+            root.to_path_buf(),
+            queue,
+            baseline.src_to_tests,
+            test_files,
+            threads,
+        )
+    };
+
+    consume_mutant_results(result_rx, total, quiet, cwd, progress, &mut summary);
+    Ok(summary)
+}
+
+/// Aggregate output of [`run_baseline`].
+struct BaselineRun {
+    /// `true` iff every baseline test passed and no file failed to load.
+    passed: bool,
+    /// For each in-scope source file, the set of source line numbers the
+    /// baseline run touched.
+    covered: HashMap<PathBuf, HashSet<u32>>,
+    /// For each in-scope source file, the test files that loaded it.
+    src_to_tests: HashMap<PathBuf, Vec<PathBuf>>,
+}
+
+/// Run every `test_files` entry with coverage on; collect per-source coverage
+/// and the test-impact map.
+fn run_baseline(root: &Path, scope: &CoverageScope, test_files: &[PathBuf]) -> BaselineRun {
     let mut covered: HashMap<PathBuf, HashSet<u32>> = HashMap::new();
     let mut src_to_tests: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
-    let mut baseline_passed = true;
-    for f in &test_files {
+    let mut passed = true;
+    for f in test_files {
         let ctx = Rc::new(CoverageContext::new(scope.clone()));
         let outcome = run_file_with_coverage(root, f, Some(ctx.clone()));
         if outcome.result.load_error.is_some() {
-            baseline_passed = false;
+            passed = false;
         }
         if outcome
             .result
@@ -393,7 +437,7 @@ pub fn run_inner(
             .iter()
             .any(|o| matches!(o.status, Status::Failed))
         {
-            baseline_passed = false;
+            passed = false;
         }
         if let Some(snap) = &outcome.coverage {
             merge_covered_lines(&mut covered, snap);
@@ -406,35 +450,32 @@ pub fn run_inner(
                     .push(f.clone());
             }
         }
-        // Drain maps to register universe (even uncovered files appear so
-        // their absence from `covered` is meaningful).
         let _: Vec<CoverageMap> = ctx.drain_maps();
     }
-    // Sort + dedup each per-src test list so the per-mutant subprocess gets
-    // a stable, minimal order (and the killed-test short-circuit is
-    // reproducible across runs).
     for v in src_to_tests.values_mut() {
         v.sort();
         v.dedup();
     }
-    summary.baseline_passed = baseline_passed;
-    if !baseline_passed {
-        return Ok(summary);
+    BaselineRun {
+        passed,
+        covered,
+        src_to_tests,
     }
+}
 
-    // 2. Walk `src/` and generate mutants per file.
-    //
-    // Coverage rule: if the baseline loaded any line of `src`, the lines it
-    // touched are in `covered[src]`; we filter sites against that set.
-    // If `src` has *no* coverage entry at all, no test exercises it — every
-    // mutant would survive trivially. Treat that as an empty covered set so
-    // the generator routes every site into `skipped_unreachable` instead of
-    // queuing useless mutant runs.
+/// Walk `src_files` and produce a `(src_path, site, raw_source, baseline_js)`
+/// tuple per generated site. Each `src_files` entry contributes to
+/// `summary.skipped_unreachable` whenever the generator routes a site away
+/// from execution.
+fn generate_all_sites(
+    src_files: &[PathBuf],
+    covered: &HashMap<PathBuf, HashSet<u32>>,
+    operators: &[Operator],
+    summary: &mut MutationSummary,
+) -> Vec<(PathBuf, MutationSite, String, String)> {
     let empty_lines: HashSet<u32> = HashSet::new();
-    let src_files = filter_src_files(walk_src(&scope), cwd, target, progress)?;
     let mut all_sites: Vec<(PathBuf, MutationSite, String, String)> = Vec::new();
-    // (src_path, site, raw_source, baseline_js)
-    for src in &src_files {
+    for src in src_files {
         let raw = match std::fs::read_to_string(src) {
             Ok(s) => s,
             Err(_) => continue,
@@ -466,21 +507,18 @@ pub fn run_inner(
             all_sites.push((src.clone(), s, raw.clone(), baseline_js.clone()));
         }
     }
+    all_sites
+}
 
-    // 3. Apply global max-mutants cap.
-    if let Some(max) = max_mutants
-        && all_sites.len() > max
-    {
-        all_sites.truncate(max);
-    }
-
-    // 4a. Pre-apply pass on the main thread: turn every site into either
-    // an enqueued unit of work or an immediate skip / errored tally. Apply
-    // is CPU-bound but fast relative to a Boa test run, so doing it
-    // sequentially is fine — it lets us count `total` accurately before
-    // dispatching workers.
+/// Apply each site once; sites whose mutated JS equals the baseline are
+/// counted as equivalent skips, apply errors tally into `summary.errored`,
+/// and the rest are enqueued for dispatch.
+fn pre_apply_to_queue(
+    all_sites: &[(PathBuf, MutationSite, String, String)],
+    summary: &mut MutationSummary,
+) -> Vec<MutantWork> {
     let mut queue: Vec<MutantWork> = Vec::new();
-    for (src_path, site, raw_src, baseline_js) in all_sites.iter() {
+    for (src_path, site, raw_src, baseline_js) in all_sites {
         match apply(raw_src, src_path, site) {
             Ok(mutated_js) => {
                 if mutated_js == *baseline_js {
@@ -504,28 +542,21 @@ pub fn run_inner(
             }
         }
     }
-    let total = queue.len();
+    queue
+}
 
-    // 4b. Dispatch — sequential if a single thread or running in-process,
-    // otherwise spawn a worker pool of subprocess-driver threads pulling
-    // from a shared work index. Either way, results stream back via the
-    // same channel so the main loop below is identical for both.
-    let result_rx = if threads <= 1 || isolation == Isolation::InProcess {
-        dispatch_sequential(
-            root.to_path_buf(),
-            queue,
-            src_to_tests,
-            test_files,
-            isolation,
-        )
-    } else {
-        dispatch_parallel(root.to_path_buf(), queue, src_to_tests, test_files, threads)
-    };
-
-    // 4c. Consume results: print progress in completion order, fold into
-    // the summary.
+/// Drain mutant results off `rx`, print progress lines, and fold into
+/// `summary`.
+fn consume_mutant_results(
+    rx: std::sync::mpsc::Receiver<MutantResult>,
+    total: usize,
+    quiet: bool,
+    cwd: &Path,
+    progress: &mut dyn Write,
+    summary: &mut MutationSummary,
+) {
     let mut completed = 0usize;
-    while let Ok((src_path, site, status)) = result_rx.recv() {
+    while let Ok((src_path, site, status)) = rx.recv() {
         completed += 1;
         if !quiet {
             let rel = src_path
@@ -557,8 +588,6 @@ pub fn run_inner(
             .or_default()
             .push((site, status));
     }
-
-    Ok(summary)
 }
 
 /// One unit of mutant test work — produced by the pre-apply pass, consumed

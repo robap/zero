@@ -42,6 +42,30 @@ function __zero_require(id) {
 /// # Returns
 /// `BundleOutput { code, source_map }`. `source_map` is `Some` iff `emit_sourcemap`.
 pub fn bundle(config: &Config, emit_sourcemap: bool) -> anyhow::Result<BundleOutput> {
+    let (root, entry_path, entry_id) = resolve_entry(config)?;
+    let (order, sources) = collect_module_graph(&root, entry_id.clone(), entry_path)?;
+    let emit_order = sort_emit_order(order);
+    let mut out = String::from(PREAMBLE);
+    emit_factories(&mut out, &emit_order, &sources, &root)?;
+    let bootstrap_id = match &entry_id {
+        ModuleId::User(rel) => rel.to_string_lossy().into_owned(),
+        ModuleId::Runtime | ModuleId::Http => unreachable!(),
+    };
+    out.push_str(&format!("\n__zero_require('{bootstrap_id}');\n"));
+    let source_map = if emit_sourcemap {
+        Some(build_combined_sourcemap(&emit_order)?)
+    } else {
+        None
+    };
+    Ok(BundleOutput {
+        code: out,
+        source_map,
+    })
+}
+
+/// Resolve the project root and entry module from `config`. Errors if both
+/// `src/app.ts` and `src/app.js` exist, or neither.
+fn resolve_entry(config: &Config) -> anyhow::Result<(PathBuf, PathBuf, ModuleId)> {
     let cwd = std::env::current_dir()?;
     let root = cwd.join(&config.project.root).canonicalize()?;
     let entry_ts = root.join("src").join("app.ts");
@@ -54,15 +78,23 @@ pub fn bundle(config: &Config, emit_sourcemap: bool) -> anyhow::Result<BundleOut
         (false, true) => (entry_js, ModuleId::User(PathBuf::from("./src/app.js"))),
         (false, false) => anyhow::bail!("zero build: no entry point at src/app.ts or src/app.js"),
     };
+    Ok((root, entry_path, entry_id))
+}
 
-    // BFS to collect modules in visit order (dependencies first via post-order).
+/// BFS the import graph starting at `entry_id`, returning the post-order
+/// visit list and the source text for every reachable module.
+fn collect_module_graph(
+    root: &Path,
+    entry_id: ModuleId,
+    entry_path: PathBuf,
+) -> anyhow::Result<(Vec<ModuleId>, HashMap<ModuleId, String>)> {
     let mut sources: HashMap<ModuleId, String> = HashMap::new();
     sources.insert(ModuleId::Runtime, ZERO_RUNTIME_BODY.to_string());
     sources.insert(ModuleId::Http, ZERO_HTTP_BODY.to_string());
     let mut order: Vec<ModuleId> = Vec::new();
     let mut visited: HashSet<ModuleId> = HashSet::new();
     let mut queue: VecDeque<(ModuleId, PathBuf)> = VecDeque::new();
-    queue.push_back((entry_id.clone(), entry_path));
+    queue.push_back((entry_id, entry_path));
 
     while let Some((id, path)) = queue.pop_front() {
         if visited.contains(&id) {
@@ -70,60 +102,79 @@ pub fn bundle(config: &Config, emit_sourcemap: bool) -> anyhow::Result<BundleOut
         }
         visited.insert(id.clone());
 
-        let src = match &id {
-            ModuleId::Runtime => ZERO_RUNTIME_BODY.to_string(),
-            ModuleId::Http => ZERO_HTTP_BODY.to_string(),
-            ModuleId::User(rel) => {
-                let raw = std::fs::read_to_string(&path)
-                    .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
-                if rel.extension().and_then(|e| e.to_str()) == Some("ts") {
-                    let logical = rel.to_string_lossy().into_owned();
-                    let out = transpile_typescript(
-                        &raw,
-                        &TranspileOptions {
-                            filename: &logical,
-                            inline_source_map: false,
-                            emit_source_map: false,
-                        },
-                    )
-                    .map_err(|e| anyhow::anyhow!("transpile failed for {logical}: {e}"))?;
-                    out.code
-                } else {
-                    raw
-                }
-            }
-        };
+        let src = load_module_source(&id, &path)?;
         sources.insert(id.clone(), src.clone());
 
         let importer_dir = if matches!(id, ModuleId::Runtime | ModuleId::Http) {
             root.to_path_buf()
         } else {
-            path.parent().unwrap_or(&root).to_path_buf()
+            path.parent().unwrap_or(root).to_path_buf()
         };
 
-        // Discover imports and enqueue dependencies before this module.
-        for specifier in extract_imports(&src) {
-            let dep_id = resolve(&specifier, &importer_dir, &root)?;
-            if !visited.contains(&dep_id) {
-                match &dep_id {
-                    ModuleId::Runtime | ModuleId::Http => {
-                        queue.push_front((dep_id, PathBuf::new()));
-                    }
-                    ModuleId::User(rel) => {
-                        let dep_path = root.join(rel.strip_prefix("./").unwrap_or(rel));
-                        queue.push_front((dep_id, dep_path));
-                    }
-                }
-            }
-        }
+        enqueue_dependencies(&src, &importer_dir, root, &visited, &mut queue)?;
         order.push(id);
     }
+    Ok((order, sources))
+}
 
-    // Emit the bundle.
-    let mut out = String::from(PREAMBLE);
+/// Read (and transpile, for `.ts`) the source for a single module.
+fn load_module_source(id: &ModuleId, path: &Path) -> anyhow::Result<String> {
+    match id {
+        ModuleId::Runtime => Ok(ZERO_RUNTIME_BODY.to_string()),
+        ModuleId::Http => Ok(ZERO_HTTP_BODY.to_string()),
+        ModuleId::User(rel) => {
+            let raw = std::fs::read_to_string(path)
+                .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
+            if rel.extension().and_then(|e| e.to_str()) == Some("ts") {
+                let logical = rel.to_string_lossy().into_owned();
+                let out = transpile_typescript(
+                    &raw,
+                    &TranspileOptions {
+                        filename: &logical,
+                        inline_source_map: false,
+                        emit_source_map: false,
+                    },
+                )
+                .map_err(|e| anyhow::anyhow!("transpile failed for {logical}: {e}"))?;
+                Ok(out.code)
+            } else {
+                Ok(raw)
+            }
+        }
+    }
+}
 
-    // Emit in order (synthetic modules first, then user modules in dependency order).
-    let mut emit_order = order.clone();
+/// Resolve every `import` specifier in `src` and enqueue any unvisited
+/// dependency for later processing.
+fn enqueue_dependencies(
+    src: &str,
+    importer_dir: &Path,
+    root: &Path,
+    visited: &HashSet<ModuleId>,
+    queue: &mut VecDeque<(ModuleId, PathBuf)>,
+) -> anyhow::Result<()> {
+    for specifier in extract_imports(src) {
+        let dep_id = resolve(&specifier, importer_dir, root)?;
+        if visited.contains(&dep_id) {
+            continue;
+        }
+        match &dep_id {
+            ModuleId::Runtime | ModuleId::Http => {
+                queue.push_front((dep_id, PathBuf::new()));
+            }
+            ModuleId::User(rel) => {
+                let dep_path = root.join(rel.strip_prefix("./").unwrap_or(rel));
+                queue.push_front((dep_id, dep_path));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Move synthetic `Runtime` and `Http` modules to the front of the emit order
+/// so they are defined before any user module references them.
+fn sort_emit_order(order: Vec<ModuleId>) -> Vec<ModuleId> {
+    let mut emit_order = order;
     if emit_order.contains(&ModuleId::Http) {
         emit_order.retain(|id| *id != ModuleId::Http);
         emit_order.insert(0, ModuleId::Http);
@@ -132,33 +183,26 @@ pub fn bundle(config: &Config, emit_sourcemap: bool) -> anyhow::Result<BundleOut
         emit_order.retain(|id| *id != ModuleId::Runtime);
         emit_order.insert(0, ModuleId::Runtime);
     }
+    emit_order
+}
 
-    for id in &emit_order {
+/// Append a `__zero_define(...)` block to `out` for each module in
+/// `emit_order`, in order.
+fn emit_factories(
+    out: &mut String,
+    emit_order: &[ModuleId],
+    sources: &HashMap<ModuleId, String>,
+    root: &Path,
+) -> anyhow::Result<()> {
+    for id in emit_order {
         let module_id_str = module_id_string(id);
         let raw_src = sources.get(id).map(|s| s.as_str()).unwrap_or("");
-        let factory_body = rewrite_module(raw_src, &root, id, &sources)?;
+        let factory_body = rewrite_module(raw_src, root, id, sources)?;
         out.push_str(&format!(
             "\n__zero_define({module_id_str}, function(exports, __zero_require) {{\n{factory_body}\n}});\n"
         ));
     }
-
-    // Bootstrap call.
-    let bootstrap_id = match &entry_id {
-        ModuleId::User(rel) => rel.to_string_lossy().into_owned(),
-        ModuleId::Runtime | ModuleId::Http => unreachable!(),
-    };
-    out.push_str(&format!("\n__zero_require('{bootstrap_id}');\n"));
-
-    let source_map = if emit_sourcemap {
-        Some(build_combined_sourcemap(&emit_order)?)
-    } else {
-        None
-    };
-
-    Ok(BundleOutput {
-        code: out,
-        source_map,
-    })
+    Ok(())
 }
 
 /// Build a coarse v3 sourcemap that lists each user module in `sources`.
@@ -196,16 +240,25 @@ fn module_id_string(id: &ModuleId) -> String {
 fn rewrite_module(
     src: &str,
     root: &Path,
-    _id: &ModuleId,
+    id: &ModuleId,
     _sources: &HashMap<ModuleId, String>,
 ) -> anyhow::Result<String> {
-    if _id == &ModuleId::Runtime {
+    if id == &ModuleId::Runtime {
         return rewrite_runtime_exports(src);
     }
-    if _id == &ModuleId::Http {
+    if id == &ModuleId::Http {
         return rewrite_http_exports(src);
     }
 
+    let out = rewrite_imports(src);
+    let out = rewrite_exports(out, src);
+    let out = resolve_relative_requires(out, root, id);
+    Ok(out)
+}
+
+/// Convert every ES import form into a `const … = __zero_require(...)`
+/// equivalent.
+fn rewrite_imports(src: &str) -> String {
     let single_line_import =
         Regex::new(r#"(?m)^[ \t]*import\s+\{([^}]+)\}\s*from\s+['"]([^'"]+)['"]\s*;?"#).unwrap();
     let default_import =
@@ -219,16 +272,8 @@ fn rewrite_module(
     let multi_single =
         Regex::new(r#"import\s*\{([^}]+)\}\s*from\s+['"]([^'"]+)['"]\s*;?"#).unwrap();
 
-    let export_default_fn = Regex::new(r"(?m)^export\s+default\s+function\s+(\w+)").unwrap();
-    let export_default_val = Regex::new(r"(?m)^export\s+default\s+").unwrap();
-    let export_named_fn = Regex::new(r"(?m)^export\s+function\s+(\w+)").unwrap();
-    let export_named_const = Regex::new(r"(?m)^export\s+(const|let|var)\s+(\w+)").unwrap();
-    let export_named_class = Regex::new(r"(?m)^export\s+class\s+(\w+)").unwrap();
-    let export_block = Regex::new(r"(?ms)^export\s*\{\s*([^}]+?)\s*\}\s*;?").unwrap();
-
     let mut out = src.to_string();
 
-    // Rewrite multi-line imports first.
     let multi_matches: Vec<_> = multi_line_import
         .find_iter(&out)
         .map(|m| (m.start(), m.end(), m.as_str().to_string()))
@@ -249,49 +294,52 @@ fn rewrite_module(
         offset_diff += replacement.len() as i64 - old_len as i64;
     }
 
-    // Single-line `import { a, b } from "..."`.
     out = single_line_import
         .replace_all(&out, |caps: &regex::Captures<'_>| {
-            let names = &caps[1];
-            let spec = &caps[2];
-            format!("const {{{}}} = __zero_require('{spec}');", names.trim())
+            format!(
+                "const {{{}}} = __zero_require('{}');",
+                caps[1].trim(),
+                &caps[2]
+            )
         })
         .into_owned();
-
-    // Namespace import: `import * as Ns from "..."`.
     out = namespace_import
         .replace_all(&out, |caps: &regex::Captures<'_>| {
-            let name = &caps[1];
-            let spec = &caps[2];
-            format!("const {name} = __zero_require('{spec}');")
+            format!("const {} = __zero_require('{}');", &caps[1], &caps[2])
         })
         .into_owned();
-
-    // Default import: `import Foo from "..."`.
     out = default_import
         .replace_all(&out, |caps: &regex::Captures<'_>| {
-            let name = &caps[1];
-            let spec = &caps[2];
-            format!("const {name} = __zero_require('{spec}').default;")
+            format!(
+                "const {} = __zero_require('{}').default;",
+                &caps[1], &caps[2]
+            )
         })
         .into_owned();
-
-    // Side-effect import: `import "..."`.
     out = side_effect_import
         .replace_all(&out, |caps: &regex::Captures<'_>| {
-            let spec = &caps[1];
-            format!("__zero_require('{spec}');")
+            format!("__zero_require('{}');", &caps[1])
         })
         .into_owned();
 
-    // `export default function Foo(...) { ... }`.
+    out
+}
+
+/// Convert every ES export form into CJS `exports.x = x;` assignments and
+/// strip the `export` keyword from the original declarations.
+fn rewrite_exports(mut out: String, src: &str) -> String {
+    let export_default_fn = Regex::new(r"(?m)^export\s+default\s+function\s+(\w+)").unwrap();
+    let export_default_val = Regex::new(r"(?m)^export\s+default\s+").unwrap();
+    let export_named_fn = Regex::new(r"(?m)^export\s+function\s+(\w+)").unwrap();
+    let export_named_const = Regex::new(r"(?m)^export\s+(const|let|var)\s+(\w+)").unwrap();
+    let export_named_class = Regex::new(r"(?m)^export\s+class\s+(\w+)").unwrap();
+    let export_block = Regex::new(r"(?ms)^export\s*\{\s*([^}]+?)\s*\}\s*;?").unwrap();
+
     out = export_default_fn
         .replace_all(&out, |caps: &regex::Captures<'_>| {
-            let name = &caps[1];
-            format!("function {name}")
+            format!("function {}", &caps[1])
         })
         .into_owned();
-    // Append `exports.default = Foo;` for named default functions.
     let default_fn_names: Vec<String> = export_default_fn
         .captures_iter(src)
         .map(|c| c[1].to_string())
@@ -300,14 +348,12 @@ fn rewrite_module(
         out.push_str(&format!("\nexports.default = {name};\n"));
     }
 
-    // `export default <expr>`.
     if default_fn_names.is_empty() {
         out = export_default_val
             .replace_all(&out, "exports.default = ")
             .into_owned();
     }
 
-    // `export function foo(...) { ... }`.
     let named_fn_names: Vec<String> = export_named_fn
         .captures_iter(&out.clone())
         .map(|c| c[1].to_string())
@@ -321,7 +367,6 @@ fn rewrite_module(
         out.push_str(&format!("\nexports.{name} = {name};\n"));
     }
 
-    // `export class Foo { ... }`.
     let named_class_names: Vec<String> = export_named_class
         .captures_iter(&out.clone())
         .map(|c| c[1].to_string())
@@ -335,7 +380,6 @@ fn rewrite_module(
         out.push_str(&format!("\nexports.{name} = {name};\n"));
     }
 
-    // `export const/let/var foo = ...`.
     let named_const_names: Vec<(String, String)> = export_named_const
         .captures_iter(&out.clone())
         .map(|c| (c[1].to_string(), c[2].to_string()))
@@ -349,57 +393,59 @@ fn rewrite_module(
         out.push_str(&format!("\nexports.{name} = {name};\n"));
     }
 
-    // `export { a, b as c }`.
-    out = export_block
+    export_block
         .replace_all(&out, |caps: &regex::Captures<'_>| {
-            let inner = &caps[1];
-            let mut lines = String::new();
-            for spec in inner.split(',') {
-                let spec = spec.trim();
-                if spec.is_empty() {
-                    continue;
-                }
-                let parts: Vec<&str> = spec.split_whitespace().collect();
-                match parts.as_slice() {
-                    [orig, "as", alias] => {
-                        lines.push_str(&format!("exports.{alias} = {orig};\n"));
-                    }
-                    [name] => {
-                        lines.push_str(&format!("exports.{name} = {name};\n"));
-                    }
-                    _ => {}
-                }
-            }
-            lines
+            rewrite_export_block(&caps[1])
         })
-        .into_owned();
+        .into_owned()
+}
 
-    // Resolve relative specifiers in require calls to root-relative paths.
+/// Translate the body of an `export { a, b as c }` aggregate into one
+/// `exports.<alias> = <orig>;` line per specifier.
+fn rewrite_export_block(inner: &str) -> String {
+    let mut lines = String::new();
+    for spec in inner.split(',') {
+        let spec = spec.trim();
+        if spec.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = spec.split_whitespace().collect();
+        match parts.as_slice() {
+            [orig, "as", alias] => {
+                lines.push_str(&format!("exports.{alias} = {orig};\n"));
+            }
+            [name] => {
+                lines.push_str(&format!("exports.{name} = {name};\n"));
+            }
+            _ => {}
+        }
+    }
+    lines
+}
+
+/// Rewrite relative `__zero_require('./…')` calls to root-relative module
+/// IDs (or to `'zero'` / `'zero/http'` for synthetic deps).
+fn resolve_relative_requires(out: String, root: &Path, id: &ModuleId) -> String {
     let require_re = Regex::new(r#"__zero_require\('(\.[^']+)'\)"#).unwrap();
-    let importer_dir = if let ModuleId::User(rel) = _id {
+    let importer_dir = if let ModuleId::User(rel) = id {
         let abs = root.join(rel.strip_prefix("./").unwrap_or(rel));
         abs.parent().unwrap_or(root).to_path_buf()
     } else {
         root.to_path_buf()
     };
-    out = require_re
+    require_re
         .replace_all(&out, |caps: &regex::Captures<'_>| {
             let spec = &caps[1];
-            if let Ok(resolved) = resolve(spec, &importer_dir, root) {
-                match resolved {
-                    ModuleId::Runtime => "__zero_require('zero')".to_string(),
-                    ModuleId::Http => "__zero_require('zero/http')".to_string(),
-                    ModuleId::User(rel) => {
-                        format!("__zero_require('{}')", rel.to_str().unwrap_or(spec))
-                    }
+            match resolve(spec, &importer_dir, root) {
+                Ok(ModuleId::Runtime) => "__zero_require('zero')".to_string(),
+                Ok(ModuleId::Http) => "__zero_require('zero/http')".to_string(),
+                Ok(ModuleId::User(rel)) => {
+                    format!("__zero_require('{}')", rel.to_str().unwrap_or(spec))
                 }
-            } else {
-                format!("__zero_require('{spec}')")
+                Err(_) => format!("__zero_require('{spec}')"),
             }
         })
-        .into_owned();
-
-    Ok(out)
+        .into_owned()
 }
 
 /// Rewrite the runtime body's final `export { ... }` aggregate into

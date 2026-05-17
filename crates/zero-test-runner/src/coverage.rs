@@ -68,11 +68,36 @@ pub fn instrument(
     opts: &TranspileOptions<'_>,
 ) -> Result<InstrumentOutput, TranspileError> {
     let cm: Lrc<SwcSourceMap> = Default::default();
+    let module = parse_typescript_module(&cm, source, opts.filename)?;
+    let (module, lines, fns) = transform_with_counters(&cm, module, opts.filename);
+    let (code, srcmap_buf) = emit_module(&cm, &module, opts.filename)?;
+    let source_map = if opts.emit_source_map {
+        Some(build_source_map_json(&cm, &srcmap_buf, opts.filename)?)
+    } else {
+        None
+    };
+    let map = CoverageMap {
+        file: PathBuf::from(opts.filename),
+        lines: lines.into_iter().collect(),
+        fns,
+    };
+    Ok(InstrumentOutput {
+        code,
+        source_map,
+        map,
+    })
+}
+
+/// Lex + parse `source` as a TypeScript module against `cm`.
+fn parse_typescript_module(
+    cm: &Lrc<SwcSourceMap>,
+    source: &str,
+    filename: &str,
+) -> Result<Module, TranspileError> {
     let fm = cm.new_source_file(
-        Lrc::new(FileName::Custom(opts.filename.to_string())),
+        Lrc::new(FileName::Custom(filename.to_string())),
         source.to_string(),
     );
-
     let lexer = Lexer::new(
         Syntax::Typescript(TsSyntax {
             decorators: false,
@@ -84,32 +109,37 @@ pub fn instrument(
         None,
     );
     let mut parser = Parser::new_from(lexer);
-
-    let module = parser.parse_module().map_err(|e| TranspileError {
-        file: opts.filename.to_string(),
+    parser.parse_module().map_err(|e| TranspileError {
+        file: filename.to_string(),
         line: 0,
         column: 0,
         message: format!("parse error: {e:?}"),
-    })?;
+    })
+}
 
-    let (module, lines, fns) = GLOBALS.set(&Globals::new(), || {
+/// Run resolver → strip → InstrumenterVisitor → hygiene → fixer; return the
+/// instrumented module plus the set of recorded lines and function names.
+fn transform_with_counters(
+    cm: &Lrc<SwcSourceMap>,
+    module: Module,
+    filename: &str,
+) -> (Module, BTreeSet<u32>, Vec<String>) {
+    GLOBALS.set(&Globals::new(), || {
         let unresolved_mark = Mark::new();
         let top_level_mark = Mark::new();
         let mut program = swc_core::ecma::ast::Program::Module(module);
         program.mutate(resolver(unresolved_mark, top_level_mark, true));
         program.mutate(strip(unresolved_mark, top_level_mark));
 
-        let module = match program {
+        let mut module = match program {
             swc_core::ecma::ast::Program::Module(m) => m,
             swc_core::ecma::ast::Program::Script(_) => unreachable!(),
         };
 
         let mut visitor = InstrumenterVisitor::new(cm.clone());
-        let mut module = module;
         visitor.visit_mut_module(&mut module);
 
-        // Insert prologue at index 0.
-        let prologue = build_prologue(opts.filename, &visitor.lines, &visitor.fns);
+        let prologue = build_prologue(filename, &visitor.lines, &visitor.fns);
         module.body.insert(0, ModuleItem::Stmt(prologue));
 
         let mut program = swc_core::ecma::ast::Program::Module(module);
@@ -121,10 +151,19 @@ pub fn instrument(
             _ => unreachable!(),
         };
         (module, visitor.lines, visitor.fns)
-    });
+    })
+}
 
+/// Emit `module` to JS bytes plus an SWC sourcemap-position buffer.
+type SrcmapBuf = Vec<(swc_core::common::BytePos, swc_core::common::LineCol)>;
+
+fn emit_module(
+    cm: &Lrc<SwcSourceMap>,
+    module: &Module,
+    filename: &str,
+) -> Result<(String, SrcmapBuf), TranspileError> {
     let mut code_buf: Vec<u8> = Vec::new();
-    let mut srcmap_buf: Vec<(swc_core::common::BytePos, swc_core::common::LineCol)> = Vec::new();
+    let mut srcmap_buf: SrcmapBuf = Vec::new();
     {
         let writer = JsWriter::new(cm.clone(), "\n", &mut code_buf, Some(&mut srcmap_buf));
         let mut emitter = Emitter {
@@ -133,56 +172,45 @@ pub fn instrument(
             comments: None,
             wr: writer,
         };
-        if let Err(e) = emitter.emit_module(&module) {
-            return Err(TranspileError {
-                file: opts.filename.to_string(),
-                line: 0,
-                column: 0,
-                message: format!("codegen error: {e}"),
-            });
-        }
+        emitter.emit_module(module).map_err(|e| TranspileError {
+            file: filename.to_string(),
+            line: 0,
+            column: 0,
+            message: format!("codegen error: {e}"),
+        })?;
     }
-
     let code = String::from_utf8(code_buf).map_err(|e| TranspileError {
-        file: opts.filename.to_string(),
+        file: filename.to_string(),
         line: 0,
         column: 0,
         message: format!("non-UTF-8 codegen output: {e}"),
     })?;
+    Ok((code, srcmap_buf))
+}
 
-    let source_map = if opts.emit_source_map {
-        let map = cm.build_source_map(
-            &srcmap_buf,
-            None,
-            swc_core::common::source_map::DefaultSourceMapGenConfig,
-        );
-        let mut json: Vec<u8> = Vec::new();
-        map.to_writer(&mut json).map_err(|e| TranspileError {
-            file: opts.filename.to_string(),
-            line: 0,
-            column: 0,
-            message: format!("sourcemap serialization failed: {e}"),
-        })?;
-        Some(String::from_utf8(json).map_err(|e| TranspileError {
-            file: opts.filename.to_string(),
-            line: 0,
-            column: 0,
-            message: format!("non-UTF-8 sourcemap json: {e}"),
-        })?)
-    } else {
-        None
-    };
-
-    let map = CoverageMap {
-        file: PathBuf::from(opts.filename),
-        lines: lines.into_iter().collect(),
-        fns,
-    };
-
-    Ok(InstrumentOutput {
-        code,
-        source_map,
-        map,
+/// Build a JSON source-map string from the SWC position buffer.
+fn build_source_map_json(
+    cm: &Lrc<SwcSourceMap>,
+    srcmap_buf: &SrcmapBuf,
+    filename: &str,
+) -> Result<String, TranspileError> {
+    let map = cm.build_source_map(
+        srcmap_buf,
+        None,
+        swc_core::common::source_map::DefaultSourceMapGenConfig,
+    );
+    let mut json: Vec<u8> = Vec::new();
+    map.to_writer(&mut json).map_err(|e| TranspileError {
+        file: filename.to_string(),
+        line: 0,
+        column: 0,
+        message: format!("sourcemap serialization failed: {e}"),
+    })?;
+    String::from_utf8(json).map_err(|e| TranspileError {
+        file: filename.to_string(),
+        line: 0,
+        column: 0,
+        message: format!("non-UTF-8 sourcemap json: {e}"),
     })
 }
 
@@ -433,67 +461,78 @@ fn prop_name_string(name: &PropName) -> Option<String> {
 /// Build the coverage-prologue Stmt:
 /// `const __c = (globalThis.__zero_coverage__ ||= {})[<file>] ||= { lines: {...}, fns: {...} };`
 fn build_prologue(filename: &str, lines: &BTreeSet<u32>, fns: &[String]) -> Stmt {
-    let lines_obj = ObjectLit {
-        span: Default::default(),
-        props: lines
-            .iter()
-            .map(|n| {
-                PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
-                    key: PropName::Num(Number {
-                        span: Default::default(),
-                        value: *n as f64,
-                        raw: None,
-                    }),
-                    value: Box::new(Expr::Lit(Lit::Num(Number {
-                        span: Default::default(),
-                        value: 0.0,
-                        raw: None,
-                    }))),
-                })))
-            })
-            .collect(),
-    };
-    let fns_obj = ObjectLit {
-        span: Default::default(),
-        props: fns
-            .iter()
-            .map(|name| {
-                PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
-                    key: PropName::Str(Str {
-                        span: Default::default(),
-                        value: name.as_str().into(),
-                        raw: None,
-                    }),
-                    value: Box::new(Expr::Lit(Lit::Num(Number {
-                        span: Default::default(),
-                        value: 0.0,
-                        raw: None,
-                    }))),
-                })))
-            })
-            .collect(),
-    };
     let map_lit = ObjectLit {
         span: Default::default(),
         props: vec![
-            PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
-                key: PropName::Ident(IdentName {
-                    span: Default::default(),
-                    sym: "lines".into(),
-                }),
-                value: Box::new(Expr::Object(lines_obj)),
-            }))),
-            PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
-                key: PropName::Ident(IdentName {
-                    span: Default::default(),
-                    sym: "fns".into(),
-                }),
-                value: Box::new(Expr::Object(fns_obj)),
-            }))),
+            ident_prop("lines", Expr::Object(lines_zero_map(lines))),
+            ident_prop("fns", Expr::Object(fns_zero_map(fns))),
         ],
     };
+    let assigned = file_slot_or_init(filename, Expr::Object(map_lit));
+    const_decl("__c", assigned)
+}
 
-    // (globalThis.__zero_coverage__ ||= {})[<file>] ||= <map_lit>
+/// `{ <n>: 0, … }` for every line number, in BTreeSet order.
+fn lines_zero_map(lines: &BTreeSet<u32>) -> ObjectLit {
+    ObjectLit {
+        span: Default::default(),
+        props: lines.iter().map(|n| num_zero_prop(*n as f64)).collect(),
+    }
+}
+
+/// `{ "name": 0, … }` for every recorded function name, in source order.
+fn fns_zero_map(fns: &[String]) -> ObjectLit {
+    ObjectLit {
+        span: Default::default(),
+        props: fns.iter().map(|name| str_zero_prop(name)).collect(),
+    }
+}
+
+/// Numeric key → 0 literal property.
+fn num_zero_prop(n: f64) -> PropOrSpread {
+    PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
+        key: PropName::Num(Number {
+            span: Default::default(),
+            value: n,
+            raw: None,
+        }),
+        value: Box::new(zero_lit()),
+    })))
+}
+
+/// String key → 0 literal property.
+fn str_zero_prop(name: &str) -> PropOrSpread {
+    PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
+        key: PropName::Str(Str {
+            span: Default::default(),
+            value: name.into(),
+            raw: None,
+        }),
+        value: Box::new(zero_lit()),
+    })))
+}
+
+/// Identifier key → arbitrary value property.
+fn ident_prop(name: &str, value: Expr) -> PropOrSpread {
+    PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
+        key: PropName::Ident(IdentName {
+            span: Default::default(),
+            sym: name.into(),
+        }),
+        value: Box::new(value),
+    })))
+}
+
+fn zero_lit() -> Expr {
+    Expr::Lit(Lit::Num(Number {
+        span: Default::default(),
+        value: 0.0,
+        raw: None,
+    }))
+}
+
+/// `(globalThis.__zero_coverage__ ||= {})[<filename>] ||= <init>`
+fn file_slot_or_init(filename: &str, init: Expr) -> Expr {
     let global_cov = Expr::Assign(AssignExpr {
         span: Default::default(),
         op: AssignOp::OrAssign,
@@ -526,14 +565,16 @@ fn build_prologue(filename: &str, lines: &BTreeSet<u32>, fns: &[String]) -> Stmt
             }))),
         }),
     };
-    let assigned = Expr::Assign(AssignExpr {
+    Expr::Assign(AssignExpr {
         span: Default::default(),
         op: AssignOp::OrAssign,
         left: AssignTarget::Simple(SimpleAssignTarget::Member(file_lookup)),
-        right: Box::new(Expr::Object(map_lit)),
-    });
+        right: Box::new(init),
+    })
+}
 
-    // const __c = <assigned>;
+/// `const <name> = <init>;`
+fn const_decl(name: &str, init: Expr) -> Stmt {
     Stmt::Decl(swc_core::ecma::ast::Decl::Var(Box::new(VarDecl {
         span: Default::default(),
         kind: VarDeclKind::Const,
@@ -542,10 +583,10 @@ fn build_prologue(filename: &str, lines: &BTreeSet<u32>, fns: &[String]) -> Stmt
         decls: vec![VarDeclarator {
             span: Default::default(),
             name: swc_core::ecma::ast::Pat::Ident(swc_core::ecma::ast::BindingIdent {
-                id: Ident::new("__c".into(), Default::default(), Default::default()),
+                id: Ident::new(name.into(), Default::default(), Default::default()),
                 type_ann: None,
             }),
-            init: Some(Box::new(assigned)),
+            init: Some(Box::new(init)),
             definite: false,
         }],
     })))

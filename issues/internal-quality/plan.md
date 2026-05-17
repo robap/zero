@@ -94,14 +94,14 @@ re-deriving them:
 - [x] **Step 13: Extract `zero-dev` (Tier 2)**
 - [x] **Step 14: Move the binary crate to `crates/zero/` and migrate integration tests**
 - [x] **Step 15: Verify workspace builds, all tests pass, capture rebuild-timing observation**
-- [ ] **Step 16: Refactor `zero-test-runner` oversized functions**
-- [ ] **Step 17: Refactor `zero-bundler` oversized functions**
-- [ ] **Step 18: Refactor `zero-dev` oversized functions**
-- [ ] **Step 19: Refactor `zero-transpile::transpile_typescript`**
-- [ ] **Step 20: Refactor `zero` (binary) `cmd::mutate::run_inner`**
-- [ ] **Step 21: Add `scripts/check-coverage.sh` enforcing per-module floors**
-- [ ] **Step 22: Add `scripts/check-fn-size.sh` flagging ≥80-line functions**
-- [ ] **Step 23: Update `CLAUDE.md` workspace commands and recapture final coverage**
+- [x] **Step 16: Refactor `zero-test-runner` oversized functions**
+- [x] **Step 17: Refactor `zero-bundler` oversized functions**
+- [x] **Step 18: Refactor `zero-dev` oversized functions**
+- [x] **Step 19: Refactor `zero-transpile::transpile_typescript`**
+- [x] **Step 20: Refactor `zero` (binary) `cmd::mutate::run_inner`**
+- [x] **Step 21: Add `scripts/check-coverage.sh` enforcing per-module floors**
+- [x] **Step 22: Add `scripts/check-fn-size.sh` flagging ≥80-line functions**
+- [x] **Step 23: Update `CLAUDE.md` workspace commands and recapture final coverage**
 
 ---
 
