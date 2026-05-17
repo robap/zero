@@ -4,12 +4,41 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use boa_engine::module::{ModuleLoader, Referrer};
 use boa_engine::{Context, JsError, JsNativeError, JsResult, JsString, Module, Source};
 
 use crate::runtime::{http_module, runtime_module, test_module};
+use crate::test_runner::coverage::{self, CoverageMap, CoverageScope};
 use crate::transpile::{TranspileOptions, transpile_typescript};
+
+/// Coverage instrumentation context held by the loader. Files in scope are
+/// transformed via [`coverage::instrument`] on resolution, and the resulting
+/// [`CoverageMap`]s are collected here.
+pub struct CoverageContext {
+    pub scope: CoverageScope,
+    maps: RefCell<Vec<CoverageMap>>,
+}
+
+impl CoverageContext {
+    /// Create a new context with the given scope.
+    pub fn new(scope: CoverageScope) -> Self {
+        Self {
+            scope,
+            maps: RefCell::new(Vec::new()),
+        }
+    }
+
+    /// Drain the maps collected so far.
+    pub fn drain_maps(&self) -> Vec<CoverageMap> {
+        std::mem::take(&mut self.maps.borrow_mut())
+    }
+
+    fn record(&self, map: CoverageMap) {
+        self.maps.borrow_mut().push(map);
+    }
+}
 
 /// Module loader for the `zero test` harness.
 ///
@@ -25,6 +54,12 @@ pub struct ZeroModuleLoader {
     module_cache: RefCell<HashMap<String, Module>>,
     /// Side table: module path string → absolute PathBuf (used to resolve relative imports).
     path_map: RefCell<HashMap<String, PathBuf>>,
+    /// Optional coverage instrumentation context.
+    coverage: Option<Rc<CoverageContext>>,
+    /// Optional per-file overlay: canonical absolute path → pre-transpiled JS
+    /// source. Used by `zero mutate` to serve mutated code without re-running
+    /// SWC.
+    overlay: HashMap<PathBuf, String>,
 }
 
 impl ZeroModuleLoader {
@@ -40,7 +75,27 @@ impl ZeroModuleLoader {
             http_src: http_module(),
             module_cache: RefCell::new(HashMap::new()),
             path_map: RefCell::new(HashMap::new()),
+            coverage: None,
+            overlay: HashMap::new(),
         }
+    }
+
+    /// Create a loader that runs coverage instrumentation on in-scope files.
+    pub fn new_with_coverage(root: &Path, ctx: Rc<CoverageContext>) -> Self {
+        let mut loader = Self::new(root);
+        loader.coverage = Some(ctx);
+        loader
+    }
+
+    /// Attach a per-file overlay (canonical path → pre-transpiled JS).
+    ///
+    /// During `resolve_relative`, paths in `overlay` short-circuit the SWC
+    /// transpile and use the supplied JS as-is. Used by `zero mutate` to
+    /// serve mutated source for one file while every other module is loaded
+    /// normally.
+    pub fn with_overlay(mut self, overlay: HashMap<PathBuf, String>) -> Self {
+        self.overlay = overlay;
+        self
     }
 
     /// Register an entry-point file path so the loader can resolve relative imports from it.
@@ -55,6 +110,16 @@ impl ZeroModuleLoader {
     /// Retrieve a cached module by cache key.
     pub fn get_cached(&self, key: &str) -> Option<Module> {
         self.module_cache.borrow().get(key).cloned()
+    }
+
+    /// Snapshot every distinct canonical path resolved by this loader, sorted.
+    /// Used by `zero mutate` to build the `src_file → tests-that-load-it` map.
+    pub fn loaded_paths(&self) -> Vec<PathBuf> {
+        let m = self.path_map.borrow();
+        let mut out: Vec<PathBuf> = m.values().cloned().collect();
+        out.sort();
+        out.dedup();
+        out
     }
 
     /// Resolve a relative specifier against the referrer's directory.
@@ -88,6 +153,21 @@ impl ZeroModuleLoader {
             return Ok(m);
         }
 
+        // Overlay short-circuit: if this canonical path has pre-transpiled JS
+        // attached (e.g. from `zero mutate`), use it as-is.
+        if let Some(js) = self.overlay.get(&canonical) {
+            let module = Module::parse(
+                Source::from_bytes(js.as_bytes()).with_path(&canonical),
+                None,
+                context,
+            )?;
+            self.module_cache
+                .borrow_mut()
+                .insert(key.clone(), module.clone());
+            self.path_map.borrow_mut().insert(key, canonical);
+            return Ok(module);
+        }
+
         let raw = fs::read_to_string(&canonical).map_err(|e| {
             JsError::from_native(
                 JsNativeError::error()
@@ -95,8 +175,31 @@ impl ZeroModuleLoader {
             )
         })?;
 
-        let src = if canonical.extension().and_then(|e| e.to_str()) == Some("ts") {
-            let logical = canonical.to_string_lossy().into_owned();
+        // Decide whether to instrument (coverage) or just transpile.
+        let logical = canonical.to_string_lossy().into_owned();
+        let instrument_cov = self
+            .coverage
+            .as_ref()
+            .filter(|c| c.scope.covers(&canonical))
+            .cloned();
+        let src = if let Some(cov) = instrument_cov {
+            let opts = TranspileOptions {
+                filename: &logical,
+                inline_source_map: false,
+                emit_source_map: false,
+            };
+            match coverage::instrument(&raw, &opts) {
+                Ok(out) => {
+                    cov.record(out.map);
+                    out.code
+                }
+                Err(e) => {
+                    return Err(JsError::from_native(JsNativeError::error().with_message(
+                        format!("coverage instrument error in {}: {e}", canonical.display()),
+                    )));
+                }
+            }
+        } else if canonical.extension().and_then(|e| e.to_str()) == Some("ts") {
             match transpile_typescript(
                 &raw,
                 &TranspileOptions {
@@ -513,6 +616,43 @@ mod tests {
         assert!(
             loader_rc.get_cached("zero/http").is_some(),
             "zero/http not in cache after load"
+        );
+    }
+
+    #[test]
+    fn overlay_short_circuits_transpile() {
+        // The overlay should serve a pre-transpiled JS body for the
+        // matching canonical path instead of reading the on-disk file.
+        let dir = make_root();
+        let foo_path = dir.path().join("foo.js");
+        std::fs::write(&foo_path, b"export const x = 1;").unwrap();
+        let canonical = foo_path.canonicalize().unwrap();
+
+        let mut overlay: HashMap<PathBuf, String> = HashMap::new();
+        overlay.insert(canonical.clone(), "export const x = 99;".to_string());
+
+        let loader = ZeroModuleLoader::new(dir.path()).with_overlay(overlay);
+        let (mut ctx, _) = make_context_with_loader(loader);
+
+        let entry_path = dir.path().join("entry.js");
+        let m = Module::parse(
+            Source::from_bytes(
+                b"import { x } from './foo.js'; if (x !== 99) throw new Error('wanted 99, got ' + x);",
+            )
+            .with_path(&entry_path),
+            None,
+            &mut ctx,
+        )
+        .expect("entry parse");
+        let promise = m.load_link_evaluate(&mut ctx);
+        let _ = ctx.run_jobs();
+        let state = promise.state();
+        assert!(
+            !matches!(
+                state,
+                boa_engine::builtins::promise::PromiseState::Rejected(_)
+            ),
+            "overlay did not override on-disk source: {state:?}"
         );
     }
 

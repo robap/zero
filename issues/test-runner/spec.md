@@ -425,7 +425,6 @@ can complete and the developer sees all the wreckage.
 
 - `--watch` mode (re-run on file change). The dev-watch SSE
   infrastructure could be adapted, but it's a separate slice.
-- `--coverage` reporting. Boa instrumentation hooks are non-trivial.
 - Snapshot testing (`.toMatchSnapshot()`, `--update-snapshots`,
   snapshot file management).
 - `settled()` async-quiescence helper. Useful for testing async
@@ -447,6 +446,25 @@ can complete and the developer sees all the wreckage.
 - IDE/editor protocol integration (running a single test from a
   VS Code lens, etc.).
 - DOM coverage beyond what `runtime/dom-shim.js` already provides.
+
+### Shipped in a follow-up slice (`issues/test-improvements/`)
+
+The following items were originally listed as out-of-scope for this
+test-runner spec, but were delivered in a later slice and are fully
+working in the runner today:
+
+- **Coverage reporting** (`zero test --coverage`). SWC instruments
+  every in-scope `src/` file at load time, tallies per-line and
+  per-function hits, prints a terminal table sorted by ascending
+  coverage, and writes `coverage/coverage.json`.
+- **Source-mapped failure locations + snippets.** Every assertion
+  failure carries a `SourceLoc`; the reporter prints
+  `at <relpath>:<line>:<col>` plus a 5-line snippet with a caret
+  under the failing column.
+- **Mutation testing** as `zero mutate` (separate subcommand, not a
+  `zero test` flag). Eight operator families, subprocess isolation per
+  mutant, coverage-guided + test-impact-guided skipping, optional
+  `--threads N` parallelism, programmatic `mutation/mutation.json`.
 
 ## Open Questions
 

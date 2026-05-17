@@ -2,6 +2,18 @@
 
 use std::path::PathBuf;
 
+/// Source location of a failing assertion or load error, source-mapped back to
+/// the user's original `.ts`/`.js` file.
+#[derive(Debug, Clone)]
+pub struct SourceLoc {
+    /// Absolute path to the original source file.
+    pub file: PathBuf,
+    /// 1-based line number.
+    pub line: u32,
+    /// 1-based column number.
+    pub column: u32,
+}
+
 /// The outcome of a single `it()` test case.
 #[derive(Debug)]
 pub struct TestOutcome {
@@ -29,6 +41,40 @@ pub enum Status {
 pub struct Failure {
     pub message: String,
     pub stack: Option<String>,
+    pub location: Option<SourceLoc>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failure_round_trips_source_location() {
+        let loc = SourceLoc {
+            file: PathBuf::from("/abs/path/src/foo.test.ts"),
+            line: 14,
+            column: 7,
+        };
+        let failure = Failure {
+            message: "boom".to_string(),
+            stack: Some("at fn (/abs/path/src/foo.test.ts:14:7)".to_string()),
+            location: Some(loc),
+        };
+        let unwrapped = failure.location.expect("location present");
+        assert_eq!(unwrapped.file, PathBuf::from("/abs/path/src/foo.test.ts"));
+        assert_eq!(unwrapped.line, 14);
+        assert_eq!(unwrapped.column, 7);
+    }
+
+    #[test]
+    fn failure_supports_absent_location() {
+        let failure = Failure {
+            message: "x".to_string(),
+            stack: None,
+            location: None,
+        };
+        assert!(failure.location.is_none());
+    }
 }
 
 /// All outcomes for a single test file.

@@ -75,7 +75,7 @@ const TPL_TOGGLE_SCSS: &str = include_str!("scaffold/.zero/styles/components/_to
 // that path's `.zero/` rule would cause this repo's git to ignore
 // `src/scaffold/.zero/`, preventing the framework SCSS partials from being
 // tracked.
-const TPL_GITIGNORE: &str = ".zero/\ndist/\n";
+const TPL_GITIGNORE: &str = ".zero/\ndist/\ncoverage/\nmutation/\n";
 
 /// An operation `zero update` (or `zero init`) intends to apply to a path
 /// under the project root. Paths are always relative to the project root.
@@ -470,6 +470,21 @@ mod tests {
         assert!(
             gitignore.lines().any(|l| l.trim() == ".zero/"),
             ".gitignore missing `.zero/` line: {gitignore}"
+        );
+    }
+
+    #[test]
+    fn write_initial_project_emits_gitignore_with_coverage_and_mutation() {
+        let (_dir, root) = fresh_scaffold();
+        let gitignore = fs::read_to_string(root.join(".gitignore")).unwrap();
+        let lines: Vec<&str> = gitignore.lines().map(|l| l.trim()).collect();
+        assert!(
+            lines.contains(&"coverage/"),
+            ".gitignore missing `coverage/` line: {gitignore}"
+        );
+        assert!(
+            lines.contains(&"mutation/"),
+            ".gitignore missing `mutation/` line: {gitignore}"
         );
     }
 

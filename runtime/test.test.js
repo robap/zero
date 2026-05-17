@@ -131,6 +131,24 @@ describe("expect matchers", () => {
       /snapshot testing is not in this slice yet/,
     );
   });
+
+  it("matcher error carries _userFrame pointing at the assertion call site", () => {
+    let captured;
+    try {
+      zeroExpect(1).toBe(2);
+    } catch (e) {
+      captured = e;
+    }
+    assert.ok(captured, "expected toBe(2) to throw");
+    assert.ok(
+      typeof captured._userFrame === "string" && captured._userFrame.length > 0,
+      `expected _userFrame string, got: ${captured && captured._userFrame}`,
+    );
+    assert.ok(
+      /test\.test\.js:\d+:\d+$/.test(captured._userFrame),
+      `_userFrame should point at this test file: ${captured._userFrame}`,
+    );
+  });
 });
 
 describe("DOM helpers", () => {

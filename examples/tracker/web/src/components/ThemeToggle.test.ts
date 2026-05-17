@@ -21,10 +21,11 @@ describe("ThemeToggle", () => {
 
   it("flipping switches the theme between light and dark", () => {
     const el = render(ThemeToggle());
-    const before = theme.val;
+    // The test DOM shim has no `matchMedia`, so the toggle seeds to "off"
+    // and the theme must be exactly "light" — not just *some* concrete
+    // value. Flipping once must drive the theme to exactly "dark".
+    expect(theme.val).toBe("light");
     fire(find(el, "input")!, "change");
-    const after = theme.val;
-    expect(after === "light" || after === "dark").toBeTruthy();
-    expect(after === before).toBeFalsy();
+    expect(theme.val).toBe("dark");
   });
 });

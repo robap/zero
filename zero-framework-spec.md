@@ -29,6 +29,7 @@ Commands:
   zero dev                    Start dev server with HMR
   zero build                  Production build
   zero test [pattern]         Run tests
+  zero mutate [pattern]       Run mutation testing
   zero check                  Type-check the project
   zero fmt                    Format all source files
   zero lint                   Lint all source files
@@ -136,6 +137,26 @@ zero test --update-snapshots  Refresh snapshot files
 ```
 
 Built-in test API. No jsdom. Components render in z's own lightweight DOM implementation.
+
+#### `zero mutate [pattern]`
+
+Runs mutation testing over `src/`. Discovers every test file, runs them
+once as the baseline, then for each mutation site re-runs the relevant
+tests with the mutated source overlaid. See `issues/test-improvements/`
+for the full spec.
+
+```
+zero mutate                    Mutate every covered `src/` file
+zero mutate src/foo.ts         Mutate one file (path or substring)
+zero mutate --operators arith  Restrict to operator families (CSV)
+zero mutate --max-mutants 50   Cap total mutants generated
+zero mutate --threads 4        Run N mutants in parallel
+zero mutate -q, --quiet        Summary only; suppress per-mutant lines
+```
+
+Output: terminal summary plus a programmatic `mutation/mutation.json`
+(see §3.5 of `issues/test-improvements/spec.md`). Exit code is non-zero
+iff any mutant survived or errored.
 
 #### `zero gen`
 
@@ -1040,6 +1061,24 @@ expect(val).toBeTemplateResult()
 expect(val).toMatchSnapshot()
 ```
 
+### In-Runner Capabilities
+
+Beyond running tests, the runner ships first-class support for:
+
+- **Failure source maps.** Every assertion failure carries a `SourceLoc`
+  back through SWC's source map; the reporter prints
+  `at <relpath>:<line>:<col>` plus a 5-line snippet with a caret under
+  the failing column.
+- **Coverage.** `zero test --coverage` instruments every `src/` file at
+  load time, tallies per-line and per-function hits, prints a terminal
+  table sorted by ascending coverage, and writes `coverage/coverage.json`.
+- **Mutation testing.** `zero mutate` (separate subcommand — see §1)
+  runs eight mutation-operator families against `src/`, isolates each
+  mutant in a child process for panic safety, and reports
+  killed / survived / errored counts plus `mutation/mutation.json`.
+
+See `issues/test-improvements/` for the full design.
+
 ### E2E Tests
 
 Outside z's scope. Use Playwright or Cypress against `zero dev` or `zero preview`. zero handles unit and integration tests — the 90% case.
@@ -1338,7 +1377,12 @@ The DX wins Phase 11 chased are delivered by Phase 12 instead:
 - Typed `inject` via the `StateTypes` registry — no generic argument at the call site; module augmentation pins the shape.
 - A `BEST_PRACTICES.md` reference plus three shipped example apps that encode the layout decisions.
 
-(The original "Test Improvements" content — better error messages, coverage, mutation testing, watch mode — was a placeholder under this slot; those items are unaffected by the decorator deferral and can be tracked under a future phase if and when scheduled.)
+(The original "Test Improvements" content — better error messages,
+coverage, mutation testing, watch mode — was a placeholder under this
+slot; three of the four shipped under `issues/test-improvements/`:
+source-mapped failure locations + snippets, `zero test --coverage`, and
+`zero mutate` as a dedicated subcommand. Watch mode is the one
+remaining item and stays unscheduled.)
 
 ### Phase 12 — Best Practices & Example Applications
 - [x] Three shipped example projects under `examples/`: `counter` (~50 LOC), `todos` (mid-size, structured signal + localStorage), `tracker` (full app — auth, routes, guards, HTTP, comments)

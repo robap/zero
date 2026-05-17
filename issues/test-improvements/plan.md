@@ -50,15 +50,15 @@ through the same matcher path Step 2 instruments).
 
 ## Steps
 
-- [ ] **Step 1: Extend `Failure` with `SourceLoc`**
-- [ ] **Step 2: Capture stack + populate `Failure.location` from harness and matchers**
-- [ ] **Step 3: Reporter renders `at file:line:col` + source snippet**
-- [ ] **Step 4: SWC coverage instrumenter (`src/test_runner/coverage.rs`)**
-- [ ] **Step 5: `zero test --coverage` CLI wiring + JSON + terminal table**
-- [ ] **Step 6: SWC mutation generator (`src/test_runner/mutate.rs`)**
-- [ ] **Step 7: `zero mutate` subcommand orchestrator**
-- [ ] **Step 8: Dependency-aware watch mode (`zero test --watch`)**
-- [ ] **Step 9: Spec amendments + scaffold `.gitignore`**
+- [x] **Step 1: Extend `Failure` with `SourceLoc`**
+- [x] **Step 2: Capture stack + populate `Failure.location` from harness and matchers**
+- [x] **Step 3: Reporter renders `at file:line:col` + source snippet**
+- [x] **Step 4: SWC coverage instrumenter (`src/test_runner/coverage.rs`)**
+- [x] **Step 5: `zero test --coverage` CLI wiring + JSON + terminal table**
+- [x] **Step 6: SWC mutation generator (`src/test_runner/mutate.rs`)**
+- [x] **Step 7: `zero mutate` subcommand orchestrator**
+- [ ] **Step 8: Cancelled - Dependency-aware watch mode (`zero test --watch`)**
+- [x] **Step 9: Scaffold + example `.gitignore` (narrowed: only the `coverage/`/`mutation/` lines; spec-doc amendments dropped because they referenced cancelled Step 8 work)**
 
 ---
 

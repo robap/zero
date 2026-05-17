@@ -259,6 +259,55 @@ export function spy(impl) {
 // Assertions
 // ---------------------------------------------------------------------------
 
+/** @internal */
+const _FRAMEWORK_INTERNAL_BASENAMES = new Set([
+  "test.js",
+  "template.js",
+  "reactivity.js",
+  "app.js",
+  "router.js",
+  "dom-shim.js",
+  "http.js",
+]);
+
+/**
+ * Walk a fresh stack and return the first frame outside framework-internal
+ * runtime modules, formatted as `"<path>:<line>:<column>"`. Returns `null`
+ * when no user frame can be identified.
+ * @internal
+ * @returns {string|null}
+ */
+function _captureUserFrame() {
+  const stack = (new Error().stack) || "";
+  for (const line of stack.split("\n")) {
+    // V8: "    at fn (path:L:C)" or "    at path:L:C"
+    // SpiderMonkey: "fn@path:L:C"
+    // Plain "path:L:C"
+    const m = line.match(/(?:\(|@|\s)([^\s()@]+):(\d+):(\d+)\)?\s*$/);
+    if (!m) continue;
+    const path = m[1];
+    if (path.startsWith("node:")) continue;
+    const slash = path.lastIndexOf("/");
+    const base = slash >= 0 ? path.slice(slash + 1) : path;
+    if (_FRAMEWORK_INTERNAL_BASENAMES.has(base)) continue;
+    return `${path}:${m[2]}:${m[3]}`;
+  }
+  return null;
+}
+
+/**
+ * Throw a fresh `Error` decorated with `_userFrame` (the call-site frame
+ * outside `runtime/*.js`). Used by every matcher in `expect()`.
+ * @internal
+ * @param {string} msg
+ * @returns {never}
+ */
+function _fail(msg) {
+  const err = new Error(msg);
+  err._userFrame = _captureUserFrame();
+  throw err;
+}
+
 /**
  * Pretty-print a value for use in assertion error messages.
  * @internal
@@ -327,53 +376,53 @@ export function expect(actual) {
   return {
     toBe(expected) {
       if (actual !== expected) {
-        throw new Error(
+        _fail(
           `expect(${_pretty(actual)}).toBe(${_pretty(expected)}): values are not strictly equal`,
         );
       }
     },
     toEqual(expected) {
       if (!_deepEqual(actual, expected)) {
-        throw new Error(
+        _fail(
           `expect(${_pretty(actual)}).toEqual(${_pretty(expected)}): values are not deeply equal`,
         );
       }
     },
     toBeTruthy() {
       if (!Boolean(actual)) {
-        throw new Error(`expect(${_pretty(actual)}).toBeTruthy(): value is falsy`);
+        _fail(`expect(${_pretty(actual)}).toBeTruthy(): value is falsy`);
       }
     },
     toBeFalsy() {
       if (Boolean(actual)) {
-        throw new Error(`expect(${_pretty(actual)}).toBeFalsy(): value is truthy`);
+        _fail(`expect(${_pretty(actual)}).toBeFalsy(): value is truthy`);
       }
     },
     toBeNull() {
       if (actual !== null) {
-        throw new Error(`expect(${_pretty(actual)}).toBeNull(): value is not null`);
+        _fail(`expect(${_pretty(actual)}).toBeNull(): value is not null`);
       }
     },
     toContain(item) {
       if (typeof actual === "string") {
         if (!actual.includes(item)) {
-          throw new Error(
+          _fail(
             `expect(${_pretty(actual)}).toContain(${_pretty(item)}): string does not include substring`,
           );
         }
       } else if (Array.isArray(actual)) {
         if (actual.indexOf(item) < 0) {
-          throw new Error(
+          _fail(
             `expect(${_pretty(actual)}).toContain(${_pretty(item)}): array does not contain item`,
           );
         }
       } else {
-        throw new Error(`expect(...).toContain: value is not a string or array`);
+        _fail(`expect(...).toContain: value is not a string or array`);
       }
     },
     toThrow(message) {
       if (typeof actual !== "function") {
-        throw new Error(`expect(...).toThrow: value must be a function`);
+        _fail(`expect(...).toThrow: value must be a function`);
       }
       let threw = false;
       let thrownError;
@@ -384,12 +433,12 @@ export function expect(actual) {
         thrownError = e;
       }
       if (!threw) {
-        throw new Error(`expect(...).toThrow: function did not throw`);
+        _fail(`expect(...).toThrow: function did not throw`);
       }
       if (typeof message === "string") {
         const errMsg = thrownError instanceof Error ? thrownError.message : String(thrownError);
         if (!errMsg.includes(message)) {
-          throw new Error(
+          _fail(
             `expect(...).toThrow(${_pretty(message)}): threw "${errMsg}" which does not contain "${message}"`,
           );
         }
@@ -402,28 +451,28 @@ export function expect(actual) {
         actual._template == null ||
         !Array.isArray(actual._values)
       ) {
-        throw new Error(
+        _fail(
           `expect(${_pretty(actual)}).toBeTemplateResult(): value is not a TemplateResult`,
         );
       }
     },
     toMatchSnapshot() {
-      throw new Error("toMatchSnapshot: snapshot testing is not in this slice yet");
+      _fail("toMatchSnapshot: snapshot testing is not in this slice yet");
     },
     toHaveBeenCalled() {
       if (!_isSpy(actual)) {
-        throw new Error(`expect(...).toHaveBeenCalled: value is not a spy`);
+        _fail(`expect(...).toHaveBeenCalled: value is not a spy`);
       }
       if (actual.callCount === 0) {
-        throw new Error(`expect(spy).toHaveBeenCalled(): spy was not called`);
+        _fail(`expect(spy).toHaveBeenCalled(): spy was not called`);
       }
     },
     toHaveBeenCalledTimes(n) {
       if (!_isSpy(actual)) {
-        throw new Error(`expect(...).toHaveBeenCalledTimes: value is not a spy`);
+        _fail(`expect(...).toHaveBeenCalledTimes: value is not a spy`);
       }
       if (actual.callCount !== n) {
-        throw new Error(
+        _fail(
           `expect(spy).toHaveBeenCalledTimes(${n}): spy was called ${actual.callCount} time(s)\n` +
           `  calls: ${_pretty(actual.calls)}`,
         );
@@ -431,11 +480,11 @@ export function expect(actual) {
     },
     toHaveBeenCalledWith(...expectedArgs) {
       if (!_isSpy(actual)) {
-        throw new Error(`expect(...).toHaveBeenCalledWith: value is not a spy`);
+        _fail(`expect(...).toHaveBeenCalledWith: value is not a spy`);
       }
       const hit = actual.calls.some(args => _deepEqual(args, expectedArgs));
       if (!hit) {
-        throw new Error(
+        _fail(
           `expect(spy).toHaveBeenCalledWith(${expectedArgs.map(a => _pretty(a)).join(", ")}): no recorded call matched\n` +
           `  recorded calls (${actual.callCount}): ${_pretty(actual.calls)}`,
         );
@@ -443,14 +492,14 @@ export function expect(actual) {
     },
     toHaveBeenLastCalledWith(...expectedArgs) {
       if (!_isSpy(actual)) {
-        throw new Error(`expect(...).toHaveBeenLastCalledWith: value is not a spy`);
+        _fail(`expect(...).toHaveBeenLastCalledWith: value is not a spy`);
       }
       if (actual.callCount === 0) {
-        throw new Error(`expect(spy).toHaveBeenLastCalledWith(...): spy was never called`);
+        _fail(`expect(spy).toHaveBeenLastCalledWith(...): spy was never called`);
       }
       const lastArgs = actual.calls[actual.callCount - 1];
       if (!_deepEqual(lastArgs, expectedArgs)) {
-        throw new Error(
+        _fail(
           `expect(spy).toHaveBeenLastCalledWith(${expectedArgs.map(a => _pretty(a)).join(", ")}): last call did not match\n` +
           `  last call args: ${_pretty(lastArgs)}`,
         );

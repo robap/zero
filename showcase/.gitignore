@@ -1,2 +1,4 @@
 .zero/
 dist/
+coverage/
+mutation/
