@@ -63,7 +63,7 @@ export default function IssuePage(props: IssuePageProps): TemplateResult {
         if (!it) {
           document.title = "Not found · tracker";
           return Card({
-            children: html`<p>Issue <code>${props.params.id}</code> not found.</p>`,
+            children: html`<p class="text-body">Issue <code class="text-code">${props.params.id}</code> not found.</p>`,
           });
         }
         document.title = `${it.id} · tracker`;
@@ -71,7 +71,7 @@ export default function IssuePage(props: IssuePageProps): TemplateResult {
           children: html`
             <div class="stack gap-md">
               <header class="cluster gap-sm">
-                <h1>${it.title}</h1>
+                <h1 class="text-h1">${it.title}</h1>
                 <span class="issue-detail-meta">${it.id} · ${it.assignee} · ${statusLabel(it.status)}</span>
               </header>
               ${Button({
@@ -79,7 +79,7 @@ export default function IssuePage(props: IssuePageProps): TemplateResult {
                 variant: "secondary",
                 onClick: () => updateStatus(it.id, it.status === "open" ? "closed" : "open"),
               })}
-              <h2>Comments</h2>
+              <h2 class="text-h2">Comments</h2>
               ${CommentThread({ comments: it.comments })}
               <form class="comment-form stack gap-sm" @submit=${submitComment}>
                 ${TextArea({ value: draft, placeholder: "Add a comment...", rows: 3 })}

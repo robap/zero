@@ -17,7 +17,7 @@ export interface CommentThreadProps {
  */
 export default function CommentThread(props: CommentThreadProps): TemplateResult {
   if (props.comments.length === 0) {
-    return html`<p class="comment-thread-empty">No comments yet.</p>`;
+    return html`<p class="comment-thread-empty text-body">No comments yet.</p>`;
   }
   return html`
     <ul class="comment-thread stack gap-sm">
@@ -28,7 +28,7 @@ export default function CommentThread(props: CommentThreadProps): TemplateResult
               <strong>${c.author}</strong>
               <span class="comment-date">${formatDate(c.createdAt)}</span>
             </div>
-            <p class="comment-body">${c.body}</p>
+            <p class="comment-body text-body">${c.body}</p>
           </li>
         `,
       )}

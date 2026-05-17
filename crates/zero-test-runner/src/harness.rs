@@ -169,6 +169,9 @@ fn run_with_loader(
     } else {
         None
     };
+    let loaded = loader.loaded_paths();
+    drop(context);
+    boa_engine::gc::force_collect();
     RunOutcome {
         result: FileResult {
             path: rel_path,
@@ -176,7 +179,7 @@ fn run_with_loader(
             load_error: None,
         },
         coverage: coverage_value,
-        loaded: loader.loaded_paths(),
+        loaded,
     }
 }
 

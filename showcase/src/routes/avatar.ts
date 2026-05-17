@@ -8,7 +8,7 @@ import { Avatar } from "zero/components";
 export default function AvatarRoute(): TemplateResult {
   return html`
     <main class="showcase-page stack pad-xl">
-      <h1>Avatar</h1>
+      <h1 class="text-h1">Avatar</h1>
       <section class="cluster gap-md align-center">
         ${Avatar({ alt: "Ada Lovelace", size: "sm" })}
         ${Avatar({ alt: "Ada Lovelace", size: "md" })}

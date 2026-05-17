@@ -8,7 +8,7 @@ import { Card } from "zero/components";
 export default function CardRoute(): TemplateResult {
   return html`
     <main class="showcase-page stack pad-xl">
-      <h1>Card</h1>
+      <h1 class="text-h1">Card</h1>
       <section class="stack gap-md">
         ${Card({ title: "Surface card", children: "Default filled surface." })}
         ${Card({ variant: "outlined", title: "Outlined card", children: "Transparent with a border." })}

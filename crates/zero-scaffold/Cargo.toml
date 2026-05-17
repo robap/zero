@@ -10,3 +10,4 @@ anyhow = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+zero-sass = { path = "../zero-sass" }

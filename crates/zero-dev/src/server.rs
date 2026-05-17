@@ -238,6 +238,19 @@ pub(crate) fn build_app(state: Arc<AppState>) -> Router {
             ),
         )
         .route(
+            "/.zero/fonts/*path",
+            get(
+                |State(s): State<Arc<AppState>>, Path(p): Path<String>| async move {
+                    serve_under(
+                        s.root.join(".zero").join("fonts"),
+                        "/.zero/fonts",
+                        &format!("/.zero/fonts/{p}"),
+                    )
+                    .await
+                },
+            ),
+        )
+        .route(
             "/favicon.ico",
             get(|State(s): State<Arc<AppState>>| async move {
                 serve_root_file(s.root.clone(), "favicon.ico").await
@@ -340,6 +353,40 @@ mod tests {
             ct.to_str().unwrap().contains("text/event-stream"),
             "ct: {ct:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn fonts_route_serves_woff2_with_correct_content_type() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fonts_dir = tmp.path().join(".zero").join("fonts");
+        std::fs::create_dir_all(&fonts_dir).unwrap();
+        let body = b"\x77OF2\x00\x00\x00\x01stub-woff2-bytes";
+        std::fs::write(fonts_dir.join("Geist-VariableFont_wght.woff2"), body).unwrap();
+        let state = make_state(tmp.path().to_path_buf());
+        let app = build_app(state);
+        let req = Request::builder()
+            .uri("/.zero/fonts/Geist-VariableFont_wght.woff2")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.headers().get("content-type").unwrap(), "font/woff2");
+        let got = resp.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(got.as_ref(), body);
+    }
+
+    #[tokio::test]
+    async fn fonts_route_returns_404_for_missing_font() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".zero").join("fonts")).unwrap();
+        let state = make_state(tmp.path().to_path_buf());
+        let app = build_app(state);
+        let req = Request::builder()
+            .uri("/.zero/fonts/nope.woff2")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

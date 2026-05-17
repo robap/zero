@@ -8,7 +8,7 @@ import { Badge } from "zero/components";
 export default function BadgeRoute(): TemplateResult {
   return html`
     <main class="showcase-page stack pad-xl">
-      <h1>Badge</h1>
+      <h1 class="text-h1">Badge</h1>
       <section class="cluster gap-md align-center">
         ${Badge({ children: "Default" })}
         ${Badge({ variant: "primary", children: "Primary" })}

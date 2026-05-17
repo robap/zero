@@ -18,7 +18,7 @@ export default function DashboardLayout(props: DashboardLayoutProps): TemplateRe
   return html`
     <div class="dashboard-shell cluster">
       <aside class="dashboard-nav stack gap-sm pad-md">
-        <a href="/issues">Issues</a>
+        <a class="text-link" href="/issues">Issues</a>
       </aside>
       <section class="dashboard-content pad-lg">${props.outlet}</section>
     </div>

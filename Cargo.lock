@@ -3871,6 +3871,7 @@ dependencies = [
  "anyhow",
  "tempfile",
  "zero-runtime",
+ "zero-sass",
 ]
 
 [[package]]

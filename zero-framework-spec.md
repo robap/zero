@@ -922,6 +922,10 @@ Theme variants override only the thirteen semantic `--color-*` tokens; everythin
 
 **Component layer.** The shipped component library (§11, `"zero/components"`) contributes one SCSS partial per component under `.zero/styles/components/_<name>.scss`, aggregated by `.zero/styles/_components.scss` and pulled into `zero.scss` via `@use 'components';`. Every component rule is wrapped in `@layer components { … }`, so any rule in `styles/app.scss` (which is unlayered) automatically wins on override without specificity tricks or `!important`.
 
+**Typography.** The framework ships twelve utility classes — `.text-display`, `.text-h1`–`.text-h4`, `.text-eyebrow`, `.text-body`, `.text-small`, `.text-muted`, `.text-code`, `.text-link`, `.divider` — inside `.zero/styles/_typography.scss`, wrapped in `@layer components`. Pick a tag for semantics (e.g. `<h1>` for page outline) and a class for visual intent (`class="text-display"` for hero size). There are no opinionated rules on bare element selectors in `_base.scss`; an unstyled `<h1>` renders with browser defaults.
+
+**Fonts.** Geist (sans, both styles) and Geist Mono (mono, both styles) ship locally in `.zero/fonts/` as four variable-axis `.woff2` files. `_base.scss` declares the four `@font-face` blocks against `/.zero/fonts/...` URLs. No network round-trip to Google Fonts. The dev server serves `/.zero/fonts/*` directly; `zero build` copies the directory into `dist/.zero/fonts/`. The SIL Open Font License text rides alongside as `.zero/fonts/OFL.txt`.
+
 ---
 
 ## 8. Testing

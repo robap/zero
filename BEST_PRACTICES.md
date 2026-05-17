@@ -433,6 +433,32 @@ step set may change between minor versions. Stick to the `--color-*`
 semantic tokens in app code; reach for palette steps only inside a
 custom theme partial where you're already committed to one.
 
+### Typography
+
+`_base.scss` does not style bare `<h1>`–`<h6>`, `<p>`, `<a>`,
+`<small>`, `<code>`, or `<hr>` — pick a tag for semantics and a
+utility class from `.zero/styles/_typography.scss` for visual intent.
+
+```html
+<!-- semantic h1 for outline, display-size visual treatment -->
+<h1 class="text-display">Hello, world.</h1>
+
+<!-- inline code that should look like a chip -->
+Use <code class="text-code">signal</code> for reactive state.
+
+<!-- opt-in link styling -->
+See the <a class="text-link" href="/spec">spec</a>.
+```
+
+The twelve shipped utilities are `.text-display`, `.text-h1`–
+`.text-h4`, `.text-eyebrow`, `.text-body`, `.text-small`,
+`.text-muted`, `.text-code`, `.text-link`, and `.divider`. They live
+inside `@layer components`, so a re-declaration of the same property
+in unlayered `styles/app.scss` always wins.
+
+Geist (sans, normal + italic) and Geist Mono (mono, normal + italic)
+ship locally in `.zero/fonts/`; nothing fetches over the network.
+
 ---
 
 ## 9. Testing

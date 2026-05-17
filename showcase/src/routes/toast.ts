@@ -9,7 +9,7 @@ export default function ToastRoute(): TemplateResult {
   const open = signal(false);
   return html`
     <main class="showcase-page stack pad-xl">
-      <h1>Toast</h1>
+      <h1 class="text-h1">Toast</h1>
       <section class="cluster gap-md">
         ${Button({ onClick: () => open.set(true), children: "Show toast" })}
         ${Button({ variant: "secondary", onClick: () => open.set(false), children: "Hide toast" })}

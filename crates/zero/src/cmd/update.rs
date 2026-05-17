@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use dialoguer::theme::ColorfulTheme;
 use dialoguer::{Confirm, Select};
 
-use zero_scaffold::{Operation, framework_manifest};
+use zero_scaffold::{Operation, binary_manifest, framework_manifest};
 
 /// Per-operation decision in interactive mode.
 pub enum PerOpDecision {
@@ -159,19 +159,34 @@ pub fn run_with(cwd: &Path, yes: bool, confirmer: &mut dyn Confirmer) -> anyhow:
 /// # Returns
 /// The ordered plan (adds and updates first, then removes).
 pub fn compute_plan(root: &Path) -> anyhow::Result<Vec<Operation>> {
-    let manifest = framework_manifest();
-    let manifest_paths: BTreeSet<PathBuf> =
-        manifest.iter().map(|(p, _)| PathBuf::from(p)).collect();
+    let text_manifest = framework_manifest();
+    let bin_manifest = binary_manifest();
+    let manifest_paths: BTreeSet<PathBuf> = text_manifest
+        .iter()
+        .map(|(p, _)| PathBuf::from(p))
+        .chain(bin_manifest.iter().map(|(p, _)| PathBuf::from(p)))
+        .collect();
 
     let mut ops = Vec::new();
 
-    for (rel, content) in &manifest {
+    for (rel, content) in &text_manifest {
         let abs = root.join(rel);
         if !abs.exists() {
             ops.push(Operation::Add(PathBuf::from(rel)));
         } else {
             let on_disk = fs::read(&abs)?;
             if on_disk != content.as_bytes() {
+                ops.push(Operation::Update(PathBuf::from(rel)));
+            }
+        }
+    }
+    for (rel, bytes) in &bin_manifest {
+        let abs = root.join(rel);
+        if !abs.exists() {
+            ops.push(Operation::Add(PathBuf::from(rel)));
+        } else {
+            let on_disk = fs::read(&abs)?;
+            if on_disk != *bytes {
                 ops.push(Operation::Update(PathBuf::from(rel)));
             }
         }
@@ -275,7 +290,8 @@ pub fn render_plan(ops: &[Operation]) -> String {
 /// # Returns
 /// `Ok(())` on success.
 pub fn apply(root: &Path, ops: &[Operation]) -> anyhow::Result<()> {
-    let manifest = framework_manifest();
+    let text_manifest = framework_manifest();
+    let bin_manifest = binary_manifest();
     let dot_zero = root.join(".zero");
     for op in ops {
         let rel = match op {
@@ -290,17 +306,23 @@ pub fn apply(root: &Path, ops: &[Operation]) -> anyhow::Result<()> {
         }
         match op {
             Operation::Add(_) | Operation::Update(_) => {
-                let content = manifest
+                let content_bytes: Vec<u8> = if let Some((_, txt)) = text_manifest
                     .iter()
                     .find(|(p, _)| Path::new(p) == rel.as_path())
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("internal: no manifest entry for {}", rel.display())
-                    })?
-                    .1;
+                {
+                    txt.as_bytes().to_vec()
+                } else if let Some((_, bytes)) = bin_manifest
+                    .iter()
+                    .find(|(p, _)| Path::new(p) == rel.as_path())
+                {
+                    bytes.to_vec()
+                } else {
+                    anyhow::bail!("internal: no manifest entry for {}", rel.display());
+                };
                 if let Some(parent) = abs.parent() {
                     fs::create_dir_all(parent)?;
                 }
-                fs::write(&abs, content)?;
+                fs::write(&abs, &content_bytes)?;
             }
             Operation::Remove(_) => {
                 fs::remove_file(&abs)?;
@@ -575,6 +597,64 @@ mod tests {
     }
 
     #[test]
+    fn update_with_missing_font_proposes_add() {
+        let (_dir, root) = scaffold();
+        fs::remove_file(root.join(".zero/fonts/Geist-VariableFont_wght.woff2")).unwrap();
+        let plan = compute_plan(&root).unwrap();
+        assert!(
+            plan.contains(&Operation::Add(PathBuf::from(
+                ".zero/fonts/Geist-VariableFont_wght.woff2"
+            ))),
+            "plan missing Add for woff2 font: {plan:?}"
+        );
+    }
+
+    #[test]
+    fn update_with_modified_font_proposes_update() {
+        let (_dir, root) = scaffold();
+        fs::write(
+            root.join(".zero/fonts/Geist-VariableFont_wght.woff2"),
+            b"garbage bytes",
+        )
+        .unwrap();
+        let plan = compute_plan(&root).unwrap();
+        assert!(
+            plan.contains(&Operation::Update(PathBuf::from(
+                ".zero/fonts/Geist-VariableFont_wght.woff2"
+            ))),
+            "plan missing Update for woff2 font: {plan:?}"
+        );
+    }
+
+    #[test]
+    fn update_yes_flag_restores_binary_drift() {
+        let (_dir, root) = scaffold();
+        fs::remove_file(root.join(".zero/fonts/Geist-VariableFont_wght.woff2")).unwrap();
+        fs::write(root.join(".zero/fonts/OFL.txt"), b"// mutated\n").unwrap();
+
+        let mut stub = StubConfirmer {
+            top: TopDecision::ApplyAll,
+            per_op: Vec::new(),
+            final_apply: true,
+        };
+        run_with(&root, true, &mut stub).unwrap();
+
+        let plan = compute_plan(&root).unwrap();
+        assert!(
+            plan.is_empty(),
+            "expected empty plan after --yes apply, got {plan:?}"
+        );
+        // Confirm bytes match the embedded manifest entry.
+        let on_disk = fs::read(root.join(".zero/fonts/Geist-VariableFont_wght.woff2")).unwrap();
+        let expected = zero_scaffold::binary_manifest()
+            .into_iter()
+            .find(|(p, _)| *p == ".zero/fonts/Geist-VariableFont_wght.woff2")
+            .map(|(_, b)| b)
+            .unwrap();
+        assert_eq!(on_disk, expected);
+    }
+
+    #[test]
     fn update_with_empty_dot_zero_dir_proposes_only_adds() {
         let (_dir, root) = scaffold();
         for entry in fs::read_dir(root.join(".zero")).unwrap() {
@@ -589,7 +669,7 @@ mod tests {
         let plan = compute_plan(&root).unwrap();
         assert_eq!(
             plan.len(),
-            framework_manifest().len(),
+            framework_manifest().len() + zero_scaffold::binary_manifest().len(),
             "expected one Add per manifest entry, got {plan:?}"
         );
         for op in &plan {

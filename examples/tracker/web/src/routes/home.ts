@@ -18,8 +18,8 @@ export default function Home(): TemplateResult {
       ${Card({
         children: html`
           <div class="stack gap-md">
-            <h1>tracker</h1>
-            <p>A small issue tracker that exercises the canonical zero patterns.</p>
+            <h1 class="text-display">tracker</h1>
+            <p class="text-body">A small issue tracker that exercises the canonical zero patterns.</p>
             ${() =>
               status() === "loggedIn"
                 ? html`<a class="button button-primary" href="/issues">Go to issues</a>`

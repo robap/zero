@@ -9,7 +9,7 @@ export default function SelectRoute(): TemplateResult {
   const choice = signal("apple");
   return html`
     <main class="showcase-page stack pad-xl">
-      <h1>Select</h1>
+      <h1 class="text-h1">Select</h1>
       <section class="stack gap-sm">
         ${Select({
           value: choice,
@@ -21,7 +21,7 @@ export default function SelectRoute(): TemplateResult {
           ],
         })}
       </section>
-      <p>Choice: ${() => choice.val}</p>
+      <p class="text-body">Choice: ${() => choice.val}</p>
       <a class="showcase-nav-link" href="/">Back</a>
     </main>
   `;

@@ -53,7 +53,7 @@ export default function IssuesIndex(props: IssuesIndexProps): TemplateResult {
       ${Card({
         children: html`
           <div class="stack gap-md">
-            <h1>Issues</h1>
+            <h1 class="text-h1">Issues</h1>
             ${IssueFilters({ current: filter })}
             <ul class="issues-list stack gap-xs">
               ${each(visible, (issue) => IssueRow({ issue }))}

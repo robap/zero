@@ -29,14 +29,14 @@ export default function Home(): TemplateResult {
   const theme = inject<Signal<ThemeMode>>("theme");
   return html`
     <main class="showcase-page stack pad-xl">
-      <h1>zero showcase</h1>
-      <p>
+      <h1 class="text-display">zero showcase</h1>
+      <p class="text-body">
         Every component shipped by zero, rendered in its variants and
         sizes. Use the theme switcher to flip between auto, light, and
         dark; the choice rides the route stack.
       </p>
       <section class="stack gap-sm">
-        <h2>Theme</h2>
+        <h2 class="text-h2">Theme</h2>
         <div class="cluster gap-md">
           <button class="button button-secondary button-sm" @click=${() => theme.set("auto")}>Auto</button>
           <button class="button button-secondary button-sm" @click=${() => theme.set("light")}>Light</button>
@@ -45,7 +45,7 @@ export default function Home(): TemplateResult {
         </div>
       </section>
       <section class="stack gap-sm">
-        <h2>Components</h2>
+        <h2 class="text-h2">Components</h2>
         <nav class="cluster gap-md">
           ${components.map((c) => html`<a class="showcase-nav-link" href=${c.href}>${c.name}</a>`)}
         </nav>

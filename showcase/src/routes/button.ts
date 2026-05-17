@@ -9,7 +9,7 @@ export default function ButtonRoute(): TemplateResult {
   const clicks = signal(0);
   return html`
     <main class="showcase-page stack pad-xl">
-      <h1>Button</h1>
+      <h1 class="text-h1">Button</h1>
       <section class="cluster gap-md">
         ${Button({ variant: "primary", children: "Primary" })}
         ${Button({ variant: "secondary", children: "Secondary" })}
@@ -27,7 +27,7 @@ export default function ButtonRoute(): TemplateResult {
       </section>
       <section class="stack gap-sm">
         ${Button({ onClick: () => clicks.update((n) => n + 1), children: "Click me" })}
-        <p>Clicks: ${clicks}</p>
+        <p class="text-body">Clicks: ${clicks}</p>
       </section>
       <a class="showcase-nav-link" href="/">Back</a>
     </main>

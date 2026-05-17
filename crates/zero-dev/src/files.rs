@@ -31,6 +31,10 @@ pub fn content_type_for(path: &Path) -> &'static str {
         Some("png") => "image/png",
         Some("jpg") | Some("jpeg") => "image/jpeg",
         Some("ico") => "image/x-icon",
+        Some("woff2") => "font/woff2",
+        Some("woff") => "font/woff",
+        Some("ttf") => "font/ttf",
+        Some("otf") => "font/otf",
         Some("txt") => "text/plain; charset=utf-8",
         _ => "application/octet-stream",
     }
@@ -310,6 +314,26 @@ mod tests {
             content_type_for(Path::new("a.scss")),
             "text/css; charset=utf-8"
         );
+    }
+
+    #[test]
+    fn content_type_woff2() {
+        assert_eq!(content_type_for(Path::new("g.woff2")), "font/woff2");
+    }
+
+    #[test]
+    fn content_type_woff() {
+        assert_eq!(content_type_for(Path::new("g.woff")), "font/woff");
+    }
+
+    #[test]
+    fn content_type_ttf() {
+        assert_eq!(content_type_for(Path::new("g.ttf")), "font/ttf");
+    }
+
+    #[test]
+    fn content_type_otf() {
+        assert_eq!(content_type_for(Path::new("g.otf")), "font/otf");
     }
 
     fn rt() -> tokio::runtime::Runtime {

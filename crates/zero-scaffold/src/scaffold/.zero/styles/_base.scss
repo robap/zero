@@ -1,11 +1,36 @@
-// Reset + token-bound body rule + opinionated type defaults +
-// global focus ring + reduced-motion override.
-//
-// Polished from v0.4 — added opinionated heading/paragraph defaults
-// (was body-only), a global :focus-visible ring, and a
-// prefers-reduced-motion blanket.
+// Reset + token-bound body rule + global :focus-visible ring +
+// reduced-motion override. Opinionated typography lives in
+// _typography.scss; this file holds only browser-reset-level rules
+// and a11y / OS-pref respect.
 
-@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap");
+@font-face {
+  font-family: "Geist";
+  src: url("/.zero/fonts/Geist-VariableFont_wght.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist";
+  src: url("/.zero/fonts/Geist-Italic-VariableFont_wght.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/.zero/fonts/GeistMono-VariableFont_wght.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/.zero/fonts/GeistMono-Italic-VariableFont_wght.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
 
 *, *::before, *::after { box-sizing: border-box; }
 
@@ -19,53 +44,6 @@ body {
   font-feature-settings: "ss01", "cv11"; // Geist stylistic alternates
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-}
-
-h1, h2, h3, h4, h5, h6 {
-  margin: 0;
-  font-weight: var(--weight-semi);
-  line-height: var(--leading-tight);
-  color: var(--color-text);
-  letter-spacing: var(--tracking-snug);
-}
-
-h1 { font-size: var(--font-size-display); letter-spacing: var(--tracking-tight); font-weight: var(--weight-bold); }
-h2 { font-size: var(--font-size-2xl); }
-h3 { font-size: var(--font-size-xl); }
-h4 { font-size: var(--font-size-lg); }
-h5 { font-size: var(--font-size-md); }
-h6 {
-  font-size: var(--font-size-sm);
-  text-transform: uppercase;
-  letter-spacing: var(--tracking-caps);
-  color: var(--color-text-muted);
-  font-weight: var(--weight-semi);
-}
-
-p     { margin: 0; color: var(--color-text); }
-small { font-size: var(--font-size-sm); color: var(--color-text-muted); }
-
-code, kbd, samp, pre { font-family: var(--font-mono); font-size: 0.9em; }
-code {
-  padding: 0.1em 0.35em;
-  background: var(--color-surface);
-  border-radius: var(--radius-sm);
-  border: var(--border-thin) solid var(--color-border);
-}
-
-a {
-  color: var(--color-primary);
-  text-decoration: underline;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 0.18em;
-  transition: color var(--duration-fast) var(--ease-out);
-}
-a:hover { color: var(--color-primary-hover); }
-
-hr {
-  border: none;
-  border-block-start: var(--border-thin) solid var(--color-border);
-  margin-block: var(--space-md);
 }
 
 // Global focus ring — single, accessible focus style. :focus-visible

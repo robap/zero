@@ -64,7 +64,7 @@ Evaluate the implementation on:
 
 - **Correctness** — does the logic match the domain model in `CLAUDE.md`?
 - **Test quality** — do the tests verify behavior meaningfully, or are they
-  tautological? Do they cover edge cases relevant to the spec?
+  tautological? Do they cover edge cases relevant to the spec? Use Coverage analysis tools to help determine.
 - **Idiomatic Rust** — appropriate use of types, error handling, ownership, and
   standard library. No unnecessary clones, unwraps, or type gymnastics.
 - **Design** — are types and module boundaries sensible? Would a future change

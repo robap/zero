@@ -8,7 +8,7 @@ import { Spinner } from "zero/components";
 export default function SpinnerRoute(): TemplateResult {
   return html`
     <main class="showcase-page stack pad-xl">
-      <h1>Spinner</h1>
+      <h1 class="text-h1">Spinner</h1>
       <section class="cluster gap-md align-center">
         ${Spinner({ size: "sm" })}
         ${Spinner({ size: "md" })}

@@ -25,6 +25,7 @@ const TPL_BASE_SCSS: &str = include_str!("scaffold/.zero/styles/_base.scss");
 const TPL_LAYOUT_SCSS: &str = include_str!("scaffold/.zero/styles/_layout.scss");
 const TPL_UTILITIES_SCSS: &str = include_str!("scaffold/.zero/styles/_utilities.scss");
 const TPL_ALIGNMENT_SCSS: &str = include_str!("scaffold/.zero/styles/_alignment.scss");
+const TPL_TYPOGRAPHY_SCSS: &str = include_str!("scaffold/.zero/styles/_typography.scss");
 const TPL_ZERO_SCSS: &str = include_str!("scaffold/.zero/styles/zero.scss");
 const TPL_AGENTS_MD: &str = include_str!("scaffold/AGENTS.md");
 const TPL_COMPONENTS_INDEX_TS: &str = include_str!("scaffold/.zero/components/index.ts");
@@ -81,6 +82,17 @@ const TPL_TOGGLE_SCSS: &str = include_str!("scaffold/.zero/styles/components/_to
 // tracked.
 const TPL_GITIGNORE: &str = ".zero/\ndist/\ncoverage/\nmutation/\n";
 
+// Geist + Geist Mono variable-axis woff2 fonts and the SIL Open Font License
+// text, embedded so `zero init` and `zero update` materialize them on disk.
+const FONT_GEIST: &[u8] = include_bytes!("scaffold/.zero/fonts/Geist-VariableFont_wght.woff2");
+const FONT_GEIST_ITALIC: &[u8] =
+    include_bytes!("scaffold/.zero/fonts/Geist-Italic-VariableFont_wght.woff2");
+const FONT_GEIST_MONO: &[u8] =
+    include_bytes!("scaffold/.zero/fonts/GeistMono-VariableFont_wght.woff2");
+const FONT_GEIST_MONO_ITALIC: &[u8] =
+    include_bytes!("scaffold/.zero/fonts/GeistMono-Italic-VariableFont_wght.woff2");
+const FONT_OFL_TXT: &[u8] = include_bytes!("scaffold/.zero/fonts/OFL.txt");
+
 /// An operation `zero update` (or `zero init`) intends to apply to a path
 /// under the project root. Paths are always relative to the project root.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -114,6 +126,7 @@ pub fn framework_manifest() -> Vec<(&'static str, &'static str)> {
         (".zero/styles/_layout.scss", TPL_LAYOUT_SCSS),
         (".zero/styles/_utilities.scss", TPL_UTILITIES_SCSS),
         (".zero/styles/_alignment.scss", TPL_ALIGNMENT_SCSS),
+        (".zero/styles/_typography.scss", TPL_TYPOGRAPHY_SCSS),
         (
             ".zero/styles/_components.scss",
             TPL_COMPONENTS_AGGREGATE_SCSS,
@@ -166,6 +179,33 @@ pub fn framework_manifest() -> Vec<(&'static str, &'static str)> {
     ]
 }
 
+/// Returns the canonical list of framework-owned binary assets written into
+/// `.zero/`. Each tuple is `(relative_path, bytes)`. Parallel to
+/// [`framework_manifest`] for text files; consulted by `zero init` and
+/// `zero update` so binary assets follow the same single-source-of-truth
+/// rule.
+///
+/// # Returns
+/// A vector of `(relative path, file bytes)` pairs.
+pub fn binary_manifest() -> Vec<(&'static str, &'static [u8])> {
+    vec![
+        (".zero/fonts/Geist-VariableFont_wght.woff2", FONT_GEIST),
+        (
+            ".zero/fonts/Geist-Italic-VariableFont_wght.woff2",
+            FONT_GEIST_ITALIC,
+        ),
+        (
+            ".zero/fonts/GeistMono-VariableFont_wght.woff2",
+            FONT_GEIST_MONO,
+        ),
+        (
+            ".zero/fonts/GeistMono-Italic-VariableFont_wght.woff2",
+            FONT_GEIST_MONO_ITALIC,
+        ),
+        (".zero/fonts/OFL.txt", FONT_OFL_TXT),
+    ]
+}
+
 /// Write the user-owned, one-shot scaffold files into `root_dir`. Includes
 /// `.gitignore`.
 ///
@@ -215,6 +255,13 @@ pub fn write_framework_files(root_dir: &Path) -> anyhow::Result<()> {
             fs::create_dir_all(parent)?;
         }
         fs::write(&abs, content)?;
+    }
+    for (rel, bytes) in binary_manifest() {
+        let abs = root_dir.join(rel);
+        if let Some(parent) = abs.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&abs, bytes)?;
     }
     Ok(())
 }
@@ -473,6 +520,18 @@ mod tests {
 
         let zero_scss = fs::read_to_string(root.join(".zero/styles/zero.scss")).unwrap();
         assert!(!zero_scss.is_empty());
+
+        for rel in [
+            ".zero/fonts/Geist-VariableFont_wght.woff2",
+            ".zero/fonts/Geist-Italic-VariableFont_wght.woff2",
+            ".zero/fonts/GeistMono-VariableFont_wght.woff2",
+            ".zero/fonts/GeistMono-Italic-VariableFont_wght.woff2",
+            ".zero/fonts/OFL.txt",
+        ] {
+            let p = root.join(rel);
+            let bytes = fs::read(&p).unwrap_or_else(|_| panic!("missing {rel}"));
+            assert!(!bytes.is_empty(), "{rel} is empty");
+        }
     }
 
     #[test]
@@ -637,6 +696,7 @@ mod tests {
             "@use 'layout'",
             "@use 'utilities'",
             "@use 'alignment'",
+            "@use 'typography'",
             "@use 'components'",
         ] {
             assert!(
@@ -738,6 +798,53 @@ mod tests {
     }
 
     #[test]
+    fn write_initial_project_emits_typography_partial() {
+        let (_dir, root) = fresh_scaffold();
+        let typo = fs::read_to_string(root.join(".zero/styles/_typography.scss")).unwrap();
+        assert!(
+            typo.contains("@layer components"),
+            "missing @layer components: {typo}"
+        );
+        for cls in [
+            ".text-display",
+            ".text-h1",
+            ".text-h2",
+            ".text-h3",
+            ".text-h4",
+            ".text-eyebrow",
+            ".text-body",
+            ".text-small",
+            ".text-muted",
+            ".text-code",
+            ".text-link",
+            ".divider",
+        ] {
+            assert!(typo.contains(cls), "_typography.scss missing {cls}: {typo}");
+        }
+        assert!(!typo.contains("!important"));
+    }
+
+    #[test]
+    fn binary_manifest_matches_expected_paths() {
+        let manifest = binary_manifest();
+        let actual: BTreeSet<&str> = manifest.iter().map(|(p, _)| *p).collect();
+        let expected: BTreeSet<&str> = [
+            ".zero/fonts/Geist-VariableFont_wght.woff2",
+            ".zero/fonts/Geist-Italic-VariableFont_wght.woff2",
+            ".zero/fonts/GeistMono-VariableFont_wght.woff2",
+            ".zero/fonts/GeistMono-Italic-VariableFont_wght.woff2",
+            ".zero/fonts/OFL.txt",
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(actual, expected, "binary manifest path-set drift");
+        assert_eq!(manifest.len(), 5, "binary manifest has duplicate keys");
+        for (_, bytes) in manifest {
+            assert!(!bytes.is_empty(), "binary manifest entry is empty");
+        }
+    }
+
+    #[test]
     fn framework_manifest_matches_expected_path_set() {
         let manifest = framework_manifest();
         let actual: BTreeSet<&str> = manifest.iter().map(|(p, _)| *p).collect();
@@ -758,6 +865,7 @@ mod tests {
             ".zero/styles/_layout.scss",
             ".zero/styles/_utilities.scss",
             ".zero/styles/_alignment.scss",
+            ".zero/styles/_typography.scss",
             ".zero/styles/_components.scss",
             ".zero/styles/zero.scss",
             // 14 components × (source, test, scss partial) = 42 entries.
@@ -814,6 +922,88 @@ mod tests {
         );
     }
 
+    fn compile_scaffold_css(root: &std::path::Path) -> String {
+        let app_scss_path = root.join("styles").join("app.scss");
+        let source = fs::read_to_string(&app_scss_path).unwrap();
+        let opts = zero_sass::SassOptions {
+            filename: "app.scss",
+            inline_source_map: false,
+            emit_source_map: false,
+            load_paths: &[],
+        };
+        zero_sass::compile_scss(&source, &app_scss_path, &opts)
+            .expect("compile app.scss")
+            .code
+    }
+
+    #[test]
+    fn compiled_zero_css_has_typography_and_fonts_and_no_element_selectors() {
+        let (_dir, root) = fresh_scaffold();
+        let css = compile_scaffold_css(&root);
+
+        // (a) every typography utility class appears.
+        for cls in [
+            ".text-display",
+            ".text-h1",
+            ".text-h2",
+            ".text-h3",
+            ".text-h4",
+            ".text-eyebrow",
+            ".text-body",
+            ".text-small",
+            ".text-muted",
+            ".text-code",
+            ".text-link",
+            ".divider",
+        ] {
+            assert!(css.contains(cls), "compiled CSS missing {cls}");
+        }
+
+        // (b) all four @font-face declarations present.
+        let face_count = css.matches("@font-face").count();
+        assert!(
+            face_count >= 4,
+            "expected >= 4 @font-face, got {face_count}"
+        );
+        let geist_faces = css.matches("font-family: \"Geist\"").count()
+            + css.matches("font-family:\"Geist\"").count();
+        assert_eq!(
+            geist_faces, 2,
+            "expected 2 Geist faces (normal + italic), got {geist_faces}"
+        );
+        let geist_mono_faces = css.matches("font-family: \"Geist Mono\"").count()
+            + css.matches("font-family:\"Geist Mono\"").count();
+        assert_eq!(
+            geist_mono_faces, 2,
+            "expected 2 Geist Mono faces, got {geist_mono_faces}"
+        );
+
+        // (c) no Google Fonts URL.
+        assert!(
+            !css.contains("fonts.googleapis.com"),
+            "compiled CSS still imports Google Fonts"
+        );
+
+        // (d) no top-level bare element selectors for typography tags.
+        for sel in [
+            "\nh1 ", "\nh2 ", "\nh3 ", "\nh4 ", "\nh5 ", "\nh6 ", "\np ", "\nsmall ", "\nhr ",
+            "\nh1{", "\nh2{", "\np{", "\nhr{",
+        ] {
+            assert!(
+                !css.contains(sel),
+                "compiled CSS contains forbidden element selector {sel:?}"
+            );
+        }
+        assert!(
+            !css.contains("\na {") && !css.contains("\na:hover"),
+            "compiled CSS still has bare a/a:hover rule"
+        );
+        assert!(
+            !css.contains("code, kbd, samp, pre"),
+            "compiled CSS still groups code/kbd/samp/pre"
+        );
+    }
+
     #[test]
     fn write_framework_files_writes_only_dot_zero() {
         let dir = tempdir().unwrap();
@@ -824,7 +1014,13 @@ mod tests {
         for (rel, _) in framework_manifest() {
             assert!(
                 root.join(rel).exists(),
-                "framework file missing after write: {rel}"
+                "framework text file missing after write: {rel}"
+            );
+        }
+        for (rel, _) in binary_manifest() {
+            assert!(
+                root.join(rel).exists(),
+                "framework binary file missing after write: {rel}"
             );
         }
 

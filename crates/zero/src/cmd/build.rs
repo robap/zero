@@ -67,16 +67,24 @@ pub async fn run(sourcemap_override: Option<bool>) -> anyhow::Result<()> {
     //    `/public/*` route so URLs resolve identically across dev and prod.
     let public_dir = root.join("public");
     let public_copied = if public_dir.is_dir() {
-        copy_public(&public_dir, &out_dir.join("public"))?
+        copy_tree(&public_dir, &out_dir.join("public"))?
+    } else {
+        0
+    };
+
+    let fonts_src = root.join(".zero").join("fonts");
+    let fonts_copied = if fonts_src.is_dir() {
+        copy_tree(&fonts_src, &out_dir.join(".zero").join("fonts"))?
     } else {
         0
     };
 
     println!(
-        "zero build — {} bytes JS, {} CSS file(s), {} public asset(s); output in {}/",
+        "zero build — {} bytes JS, {} CSS file(s), {} public asset(s), {} font asset(s); output in {}/",
         bundle_src.len(),
         css_pairs.len(),
         public_copied,
+        fonts_copied,
         out_dir.display()
     );
 
@@ -85,7 +93,7 @@ pub async fn run(sourcemap_override: Option<bool>) -> anyhow::Result<()> {
 
 /// Recursively copy every file under `src` into `dst`, preserving the
 /// relative tree. Returns the total file count copied.
-fn copy_public(src: &Path, dst: &Path) -> anyhow::Result<usize> {
+fn copy_tree(src: &Path, dst: &Path) -> anyhow::Result<usize> {
     std::fs::create_dir_all(dst)?;
     let mut count = 0usize;
     for entry in std::fs::read_dir(src)? {
@@ -93,7 +101,7 @@ fn copy_public(src: &Path, dst: &Path) -> anyhow::Result<usize> {
         let path = entry.path();
         let target = dst.join(entry.file_name());
         if path.is_dir() {
-            count += copy_public(&path, &target)?;
+            count += copy_tree(&path, &target)?;
         } else if path.is_file() {
             std::fs::copy(&path, &target)?;
             count += 1;
@@ -219,16 +227,32 @@ mod tests {
     }
 
     #[test]
-    fn copy_public_recurses_and_counts_files() {
+    fn copy_tree_recurses_and_counts_files() {
         let tmp = tempfile::tempdir().unwrap();
         let src = tmp.path().join("src_pub");
         let dst = tmp.path().join("dst_pub");
         std::fs::create_dir_all(src.join("nested")).unwrap();
         std::fs::write(src.join("a.txt"), "a").unwrap();
         std::fs::write(src.join("nested").join("b.txt"), "b").unwrap();
-        let n = copy_public(&src, &dst).unwrap();
+        let n = copy_tree(&src, &dst).unwrap();
         assert_eq!(n, 2);
         assert!(dst.join("a.txt").is_file());
         assert!(dst.join("nested").join("b.txt").is_file());
+    }
+
+    #[tokio::test]
+    async fn build_copies_dot_zero_fonts_into_dist() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _g = CwdGuard::enter(tmp.path());
+        write_minimal_project(tmp.path());
+        let fonts_dir = tmp.path().join("web").join(".zero").join("fonts");
+        std::fs::create_dir_all(&fonts_dir).unwrap();
+        std::fs::write(fonts_dir.join("Geist-VariableFont_wght.woff2"), b"stub").unwrap();
+        super::run(None).await.unwrap();
+        let out = tmp.path().join("dist").join(".zero").join("fonts");
+        assert!(
+            out.join("Geist-VariableFont_wght.woff2").is_file(),
+            "font not copied to dist/.zero/fonts/"
+        );
     }
 }

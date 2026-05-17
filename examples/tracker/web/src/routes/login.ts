@@ -36,7 +36,7 @@ export default function Login(): TemplateResult {
       ${Card({
         children: html`
           <form class="login-form stack gap-md" @submit=${onSubmit}>
-            <h1>Sign in</h1>
+            <h1 class="text-h1">Sign in</h1>
             ${Input({ value: name, label: "Name", placeholder: "Your display name" })}
             ${() =>
               error.val ? html`<p class="login-error" role="alert">${error.val}</p>` : html``}

@@ -536,6 +536,9 @@ The scaffold ships a built-in CSS design system: tokens, theme switching, layout
 | `_layout.scss` | Six layout primitive classes: `cluster`, `stack`, `frame`, `split`, `flank`, `grid`. |
 | `_utilities.scss` | Fifteen utility classes: `gap-{xs,sm,md,lg,xl}`, `pad-{xs,sm,md,lg,xl}`, `border`, `border-{t,r,b,l}`. |
 | `_alignment.scss` | Twenty-seven utility classes across six families: `align-*`, `justify-*`, `align-self-*`, `justify-self-*`, `text-*`, `flex-{row,row-reverse,col,col-reverse}`. |
+| `_typography.scss` | Twelve opt-in typography utility classes inside `@layer components`: `.text-display`, `.text-h1`–`.text-h4`, `.text-eyebrow`, `.text-body`, `.text-small`, `.text-muted`, `.text-code`, `.text-link`, `.divider`. |
+
+The four Geist `.woff2` files plus the SIL OFL license live under `.zero/fonts/`; `_base.scss` registers them via local `@font-face` declarations and the dev server / build pipeline serve and copy them.
 
 These partials live under `.zero/styles/` and are framework-owned — `zero update` refreshes them; do not edit them. To override a token, re-declare the CSS custom property in your `styles/app.scss` after the `@use` line. To add new utility classes, write them in `styles/app.scss` directly.
 
@@ -580,6 +583,31 @@ Six families of single-property utilities live in `_alignment.scss`. They overri
 | `flex-row` / `flex-row-reverse` / `flex-col` / `flex-col-reverse` | `flex-direction` (flip `cluster`, `flank`, etc.) | — |
 
 No `flex-left`/`flex-end`/physical-direction aliases. `text-justify`, `place-*` shorthands, `align-content`, and wrap utilities are intentionally out of v1.
+
+#### Typography utilities
+
+`_base.scss` styles only the `body` element. Bare `<h1>`–`<h6>`, `<p>`, `<a>`, `<small>`, `<code>`, and `<hr>` render with browser defaults. Pick a tag for semantics, then apply a class from `_typography.scss` for visual intent.
+
+| Class | Use for |
+| --- | --- |
+| `text-display` | Hero/landing-page headline. Largest size, bold weight. |
+| `text-h1` | Routine page title. |
+| `text-h2` / `text-h3` / `text-h4` | Section headings. Sizes step down in order. |
+| `text-eyebrow` | Small uppercase label that sits above a headline. Muted color, wide tracking. |
+| `text-body` | Default paragraph color + leading. |
+| `text-small` | Captions, footnotes; muted color + smaller size. |
+| `text-muted` | Color-only utility for de-emphasized inline text. |
+| `text-code` | Inline `<code>` rendered as a chip with surface background. |
+| `text-link` | Opt-in link styling. Apply to any `<a>` that should look like a link. |
+| `divider` | Reset + token-bound `<hr>` or block separator. |
+
+```html
+<h1 class="text-display">Hello, world.</h1>
+<p class="text-body">Body text in the default leading.</p>
+Use <code class="text-code">signal</code> for reactive state.
+```
+
+All twelve live inside `@layer components`, so a re-declaration in unlayered `styles/app.scss` always wins on override.
 
 #### Theme switching
 
