@@ -35,7 +35,12 @@ pub fn render_toml(input: &TomlInput) -> String {
     out.push_str(&format!("port = {}\n", input.port));
     match &input.proxy {
         Some(p) if !p.is_empty() => out.push_str(&format!("proxy = \"{p}\"\n")),
-        _ => out.push_str("# proxy = \"http://localhost:8080\"\n"),
+        _ => {
+            out.push_str("# Optional: forward unmatched requests to a backend dev server.\n");
+            out.push_str("# Your backend must serve HTML at `/`; zero dev injects dev scripts\n");
+            out.push_str("# into that response and continues to serve /src, /styles, /public.\n");
+            out.push_str("# proxy = \"http://localhost:8080\"\n");
+        }
     }
     out.push('\n');
 
@@ -69,6 +74,36 @@ mod tests {
     }
 
     #[test]
+    fn rendered_toml_omits_contract_comment_when_proxy_set() {
+        let input = TomlInput {
+            root: "web".to_string(),
+            port: 3000,
+            proxy: Some("http://localhost:8080".into()),
+            out: "dist".to_string(),
+        };
+        let text = render_toml(&input);
+        assert!(
+            !text.contains("# Optional: forward unmatched requests"),
+            "text: {text}"
+        );
+    }
+
+    #[test]
+    fn rendered_toml_contains_contract_comment_when_proxy_none() {
+        let input = TomlInput {
+            root: "web".to_string(),
+            port: 3000,
+            proxy: None,
+            out: "dist".to_string(),
+        };
+        let text = render_toml(&input);
+        assert!(
+            text.contains("# Optional: forward unmatched requests"),
+            "text: {text}"
+        );
+    }
+
+    #[test]
     fn rendered_toml_omits_proxy_when_none() {
         let input = TomlInput {
             root: "web".to_string(),
@@ -79,5 +114,6 @@ mod tests {
         let text = render_toml(&input);
         let cfg = Config::from_toml_str(&text).expect("should parse");
         assert!(cfg.dev.proxy.is_none());
+        assert_eq!(cfg.dev.port, 3000);
     }
 }

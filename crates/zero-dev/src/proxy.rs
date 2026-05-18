@@ -10,6 +10,107 @@ use reqwest::Client;
 
 use crate::inject::inject;
 
+/// The observed failure the explainer is describing.
+enum ExplainerFailure {
+    /// Upstream returned a non-2xx status.
+    UpstreamStatus(StatusCode),
+    /// Upstream is unreachable (connection refused, DNS failure, timeout).
+    Unreachable(String),
+}
+
+/// Render the diagnostic explainer page describing why proxy mode failed
+/// at the root.
+fn render_explainer_html(proxy_base: &url::Url, failure: &ExplainerFailure) -> String {
+    let base_str = proxy_base.as_str();
+    let base_trimmed = base_str.strip_suffix('/').unwrap_or(base_str);
+    let base_escaped = html_escape(base_trimmed);
+    let diagnostic = match failure {
+        ExplainerFailure::UpstreamStatus(code) => format!(
+            "Your backend at {base_escaped} returned {} for /",
+            code.as_u16()
+        ),
+        ExplainerFailure::Unreachable(err) => format!(
+            "Could not reach your backend at {base_escaped}: {}",
+            html_escape(err)
+        ),
+    };
+    format!(
+        "<!doctype html>\n\
+<html lang=\"en\">\n\
+<head>\n\
+  <meta charset=\"utf-8\">\n\
+  <title>zero dev — backend not serving /</title>\n\
+  <style>\n\
+    body {{ font-family: system-ui, sans-serif; max-width: 40rem; margin: 4rem auto; padding: 0 1rem; line-height: 1.5; color: #222; }}\n\
+    code {{ background: #f3f3f3; padding: 0 0.25rem; border-radius: 3px; }}\n\
+    h1 {{ font-size: 1.25rem; margin-bottom: 0.5rem; }}\n\
+    p.diagnostic {{ font-weight: 600; }}\n\
+  </style>\n\
+</head>\n\
+<body>\n\
+  <h1>zero dev</h1>\n\
+  <p class=\"diagnostic\">{diagnostic}</p>\n\
+  <p>\n\
+    In proxy mode, <code>zero dev</code> forwards requests to your backend.\n\
+    Your backend is expected to serve the HTML at <code>/</code>. <code>zero dev</code>\n\
+    will inject the dev scripts (import map, app entry, reload client)\n\
+    into that response automatically.\n\
+  </p>\n\
+</body>\n\
+</html>\n"
+    )
+}
+
+/// Build a `Response` carrying the rendered explainer page.
+///
+/// Sets `Content-Type: text/html; charset=utf-8` and `Content-Length`.
+fn explainer_response(
+    status: StatusCode,
+    proxy_base: &url::Url,
+    failure: ExplainerFailure,
+) -> Response {
+    let body = render_explainer_html(proxy_base, &failure);
+    let len = body.len();
+    let mut resp = Response::new(Body::from(body));
+    *resp.status_mut() = status;
+    let headers = resp.headers_mut();
+    headers.insert(
+        axum::http::header::CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    headers.insert(
+        axum::http::header::CONTENT_LENGTH,
+        HeaderValue::from(len as u64),
+    );
+    resp
+}
+
+/// Escape the five HTML-significant characters so a `reqwest::Error` string
+/// (or any other unsafe text) embeds safely in the rendered page.
+fn html_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#x27;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// True when the explainer should replace the upstream/error response.
+///
+/// The trigger is intentionally narrow: only `GET /` and `GET /index.html`
+/// — the paths a browser asks for when loading the dev server. Match is
+/// case-sensitive; the query string is ignored.
+fn is_root_html_request(method: &axum::http::Method, path: &str) -> bool {
+    method == axum::http::Method::GET && (path == "/" || path == "/index.html")
+}
+
 /// Hop-by-hop headers that must not be forwarded (RFC 7230 §6.1).
 static HOP_BY_HOP: &[&str] = &[
     "connection",
@@ -73,6 +174,9 @@ pub async fn proxy_request(
             .into_response();
     }
 
+    let req_method = req.method().clone();
+    let req_path = req.uri().path().to_string();
+
     let path_and_query = req
         .uri()
         .path_and_query()
@@ -90,7 +194,7 @@ pub async fn proxy_request(
     };
 
     let forward_headers = build_forward_headers(req.headers());
-    let method = req.method().clone();
+    let method = req_method.clone();
     let body_bytes = axum::body::to_bytes(req.into_body(), usize::MAX)
         .await
         .unwrap_or_default();
@@ -103,11 +207,26 @@ pub async fn proxy_request(
         .await
     {
         Ok(r) => r,
-        Err(e) => return bad_gateway_response(proxy_base, e),
+        Err(e) => {
+            if is_root_html_request(&req_method, &req_path) {
+                return explainer_response(
+                    StatusCode::BAD_GATEWAY,
+                    proxy_base,
+                    ExplainerFailure::Unreachable(e.to_string()),
+                );
+            }
+            return bad_gateway_response(proxy_base, e);
+        }
     };
 
     let status = StatusCode::from_u16(upstream_resp.status().as_u16())
         .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+
+    if is_root_html_request(&req_method, &req_path) && !status.is_success() {
+        let _ = upstream_resp.bytes().await;
+        return explainer_response(status, proxy_base, ExplainerFailure::UpstreamStatus(status));
+    }
+
     let mut resp_headers = filter_upstream_headers(upstream_resp.headers());
     let content_type = upstream_resp
         .headers()
@@ -304,6 +423,88 @@ mod tests {
         assert!(c.is_ok());
     }
 
+    #[tokio::test]
+    async fn explainer_response_sets_html_content_type_and_status() {
+        let base = url::Url::parse("http://localhost:5080").unwrap();
+        let resp = explainer_response(
+            StatusCode::NOT_FOUND,
+            &base,
+            ExplainerFailure::UpstreamStatus(StatusCode::NOT_FOUND),
+        );
+        let (status, headers, _body) = read_body(resp).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let ct = headers.get("content-type").unwrap().to_str().unwrap();
+        assert_eq!(ct, "text/html; charset=utf-8");
+    }
+
+    #[test]
+    fn render_explainer_html_has_no_script_tags() {
+        let base = url::Url::parse("http://localhost:5080").unwrap();
+        let body = render_explainer_html(
+            &base,
+            &ExplainerFailure::UpstreamStatus(StatusCode::NOT_FOUND),
+        );
+        assert!(!body.contains("<script"), "body: {body}");
+    }
+
+    #[test]
+    fn render_explainer_html_includes_contract_paragraph() {
+        let base = url::Url::parse("http://localhost:5080").unwrap();
+        let body = render_explainer_html(
+            &base,
+            &ExplainerFailure::UpstreamStatus(StatusCode::NOT_FOUND),
+        );
+        assert!(
+            body.contains("forwards requests to your backend"),
+            "body: {body}"
+        );
+        assert!(body.contains("serve the HTML at"), "body: {body}");
+    }
+
+    #[test]
+    fn render_explainer_html_includes_url_and_error_for_unreachable_variant() {
+        let base = url::Url::parse("http://localhost:5080").unwrap();
+        let body = render_explainer_html(
+            &base,
+            &ExplainerFailure::Unreachable("connection refused".into()),
+        );
+        assert!(body.contains("http://localhost:5080"), "body: {body}");
+        assert!(body.contains("connection refused"), "body: {body}");
+    }
+
+    #[test]
+    fn render_explainer_html_includes_upstream_url_and_status_for_status_variant() {
+        let base = url::Url::parse("http://localhost:5080").unwrap();
+        let body = render_explainer_html(
+            &base,
+            &ExplainerFailure::UpstreamStatus(StatusCode::NOT_FOUND),
+        );
+        assert!(body.contains("http://localhost:5080"), "body: {body}");
+        assert!(
+            !body.contains("http://localhost:5080/"),
+            "trailing slash should be stripped, got: {body}"
+        );
+        assert!(body.contains("404"), "body: {body}");
+    }
+
+    #[test]
+    fn is_root_html_request_matches_get_root_and_index_html() {
+        assert!(is_root_html_request(&axum::http::Method::GET, "/"));
+        assert!(is_root_html_request(
+            &axum::http::Method::GET,
+            "/index.html"
+        ));
+        assert!(!is_root_html_request(
+            &axum::http::Method::GET,
+            "/api/health"
+        ));
+        assert!(!is_root_html_request(&axum::http::Method::POST, "/"));
+        assert!(!is_root_html_request(
+            &axum::http::Method::GET,
+            "/Index.html"
+        ));
+    }
+
     #[test]
     fn proxy_state_new_constructs() {
         let s = ProxyState::new(url::Url::parse("http://127.0.0.1:9999").unwrap());
@@ -449,7 +650,7 @@ mod tests {
     async fn upstream_status_is_propagated() {
         let (addr, _h) = start_backend(|| {
             Router::new().route(
-                "/",
+                "/api/health",
                 get(|| async {
                     (
                         StatusCode::BAD_GATEWAY,
@@ -463,10 +664,173 @@ mod tests {
         .await;
         let client = build_client().unwrap();
         let base = url::Url::parse(&format!("http://{addr}")).unwrap();
-        let req = Request::builder().uri("/").body(Body::empty()).unwrap();
+        let req = Request::builder()
+            .uri("/api/health")
+            .body(Body::empty())
+            .unwrap();
         let resp = proxy_request(&base, &client, req, "/src/app.js").await;
         let (status, _, body) = read_body(resp).await;
         assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert_eq!(body, "upstream is down");
+    }
+
+    #[tokio::test]
+    async fn unreachable_backend_at_non_root_keeps_existing_502() {
+        let client = build_client().unwrap();
+        let base = url::Url::parse("http://127.0.0.1:1").unwrap();
+        let req = Request::builder()
+            .uri("/anything")
+            .body(Body::empty())
+            .unwrap();
+        let resp = proxy_request(&base, &client, req, "/src/app.js").await;
+        let (status, _, body) = read_body(resp).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert!(body.contains("Cannot reach backend"), "body: {body}");
+    }
+
+    #[tokio::test]
+    async fn unreachable_backend_at_root_returns_explainer() {
+        let client = build_client().unwrap();
+        // Port 1 should not be listening.
+        let base = url::Url::parse("http://127.0.0.1:1").unwrap();
+        let req = Request::builder().uri("/").body(Body::empty()).unwrap();
+        let resp = proxy_request(&base, &client, req, "/src/app.js").await;
+        let (status, _, body) = read_body(resp).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert!(
+            body.contains("Could not reach your backend"),
+            "body: {body}"
+        );
+        assert!(
+            body.contains("forwards requests to your backend"),
+            "body: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn successful_html_root_response_is_injected_not_replaced() {
+        let (addr, _h) = start_backend(|| {
+            Router::new().route(
+                "/",
+                get(|| async {
+                    (
+                        StatusCode::OK,
+                        [("content-type", "text/html; charset=utf-8")],
+                        "<html><head><title>X</title></head><body>hi</body></html>",
+                    )
+                        .into_response()
+                }),
+            )
+        })
+        .await;
+        let client = build_client().unwrap();
+        let base = url::Url::parse(&format!("http://{addr}")).unwrap();
+        let req = Request::builder().uri("/").body(Body::empty()).unwrap();
+        let resp = proxy_request(&base, &client, req, "/src/app.js").await;
+        let (status, _, body) = read_body(resp).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            body.contains(r#"<script type="importmap">"#),
+            "body: {body}"
+        );
+        assert!(
+            !body.contains("forwards requests to your backend"),
+            "body: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn non_root_404_passes_through_verbatim() {
+        let (addr, _h) = start_backend(|| {
+            Router::new().route(
+                "/api/health",
+                get(|| async {
+                    (
+                        StatusCode::NOT_FOUND,
+                        [("content-type", "text/plain")],
+                        "not found",
+                    )
+                        .into_response()
+                }),
+            )
+        })
+        .await;
+        let client = build_client().unwrap();
+        let base = url::Url::parse(&format!("http://{addr}")).unwrap();
+        let req = Request::builder()
+            .uri("/api/health")
+            .body(Body::empty())
+            .unwrap();
+        let resp = proxy_request(&base, &client, req, "/src/app.js").await;
+        let (status, _, body) = read_body(resp).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body, "not found");
+        assert!(
+            !body.contains("forwards requests to your backend"),
+            "body: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn explainer_replaces_upstream_404_at_index_html() {
+        let (addr, _h) = start_backend(|| {
+            Router::new().route(
+                "/index.html",
+                get(|| async {
+                    (
+                        StatusCode::NOT_FOUND,
+                        [("content-type", "text/plain")],
+                        "kestrel default 404",
+                    )
+                        .into_response()
+                }),
+            )
+        })
+        .await;
+        let client = build_client().unwrap();
+        let base = url::Url::parse(&format!("http://{addr}")).unwrap();
+        let req = Request::builder()
+            .uri("/index.html")
+            .body(Body::empty())
+            .unwrap();
+        let resp = proxy_request(&base, &client, req, "/src/app.js").await;
+        let (status, _, body) = read_body(resp).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(body.contains("returned 404 for /"), "body: {body}");
+        assert!(
+            body.contains("forwards requests to your backend"),
+            "body: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn explainer_replaces_upstream_404_at_root() {
+        let (addr, _h) = start_backend(|| {
+            Router::new().route(
+                "/",
+                get(|| async {
+                    (
+                        StatusCode::NOT_FOUND,
+                        [("content-type", "text/plain")],
+                        "kestrel default 404",
+                    )
+                        .into_response()
+                }),
+            )
+        })
+        .await;
+        let client = build_client().unwrap();
+        let base = url::Url::parse(&format!("http://{addr}")).unwrap();
+        let req = Request::builder().uri("/").body(Body::empty()).unwrap();
+        let resp = proxy_request(&base, &client, req, "/src/app.js").await;
+        let (status, headers, body) = read_body(resp).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(body.contains("returned 404 for /"), "body: {body}");
+        assert!(
+            body.contains("forwards requests to your backend"),
+            "body: {body}"
+        );
+        let ct = headers.get("content-type").unwrap().to_str().unwrap();
+        assert!(ct.starts_with("text/html"), "ct: {ct}");
     }
 }
