@@ -7,6 +7,7 @@ edition.workspace = true
 zero-bundler = { path = "../zero-bundler" }
 zero-config = { path = "../zero-config" }
 zero-dev = { path = "../zero-dev" }
+zero-lint = { path = "../zero-lint" }
 zero-runtime = { path = "../zero-runtime" }
 zero-sass = { path = "../zero-sass" }
 zero-scaffold = { path = "../zero-scaffold" }

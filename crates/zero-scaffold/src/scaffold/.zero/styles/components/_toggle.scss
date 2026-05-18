@@ -24,7 +24,7 @@
     display: inline-block;
     inline-size: calc(var(--space-xl) - 4px);
     block-size: calc(var(--space-md) + 6px);
-    border-radius: var(--radius-pill);
+    border-radius: var(--radius-3xl);
     background: var(--color-border-strong);
     position: relative;
     transition: background-color var(--duration-normal) var(--ease-out);

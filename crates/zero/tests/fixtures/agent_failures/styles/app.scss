@@ -1,0 +1,24 @@
+// Patterns extracted from improved_agent_usage.md and zero_demo — the
+// actual mistakes an agent made when building a demo without a feedback
+// loop. Each section should fire one or more lint rules.
+.chip {
+  font-weight: 600;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  padding: 4px 8px;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+// Centered inline-flex chip — agents reach for this instead of a
+// .cluster.align-center.justify-center composition.
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+}

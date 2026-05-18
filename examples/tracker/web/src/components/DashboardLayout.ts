@@ -16,7 +16,7 @@ export interface DashboardLayoutProps {
  */
 export default function DashboardLayout(props: DashboardLayoutProps): TemplateResult {
   return html`
-    <div class="dashboard-shell cluster">
+    <div class="dashboard-shell cluster align-stretch">
       <aside class="dashboard-nav stack gap-sm pad-md">
         <a class="text-link" href="/issues">Issues</a>
       </aside>

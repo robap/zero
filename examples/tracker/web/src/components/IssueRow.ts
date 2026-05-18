@@ -19,7 +19,7 @@ export interface IssueRowProps {
 export default function IssueRow(props: IssueRowProps): TemplateResult {
   const { issue } = props;
   return html`
-    <li class="issue-row cluster gap-md pad-sm" data-id=${issue.id}>
+    <li class="issue-row cluster gap-md pad-sm align-center" data-id=${issue.id}>
       ${Badge({
         children: statusLabel(issue.status),
         variant: issue.status === "open" ? "primary" : "default",

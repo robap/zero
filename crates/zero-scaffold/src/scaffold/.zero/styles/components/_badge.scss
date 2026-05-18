@@ -1,6 +1,6 @@
 // Badge — 5 variants × 2 sizes. Polished from v0.4:
 //   - filled-saturated → soft-tinted (uses *-soft fills with accent text)
-//   - rectangular → pill (--radius-pill)
+//   - rectangular → pill (--radius-3xl)
 //   - uppercase + tracking-wide for label clarity at small sizes
 //   - + 1px transparent border so size matches outlined adjacents
 @layer components {
@@ -10,7 +10,7 @@
     gap: var(--space-xs);
     padding-inline: var(--space-sm);
     padding-block: 2px;
-    border-radius: var(--radius-pill);
+    border-radius: var(--radius-3xl);
     font-size: 11px;
     font-weight: var(--weight-semi);
     line-height: var(--leading-tight);

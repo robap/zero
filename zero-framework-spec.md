@@ -902,7 +902,7 @@ The scaffold ships a built-in design-system layer in `.zero/styles/`: a color pa
 | Color palette (framework-internal) | Five families × 11 steps: `--gray-{50…950}`, `--blue-{50…950}`, `--red-{50…950}`, `--green-{50…950}`, `--amber-{50…950}`. Values from Open Color (MIT). Reserved for framework use; consume `--color-*` semantic tokens in app code. |
 | Semantic colors (public) | `--color-bg`, `--color-surface`, `--color-text`, `--color-text-muted`, `--color-border`, `--color-primary`, `--color-primary-fg`, `--color-success`, `--color-success-fg`, `--color-warning`, `--color-warning-fg`, `--color-danger`, `--color-danger-fg` |
 | Spacing | `--space-xs`, `--space-sm`, `--space-md`, `--space-lg`, `--space-xl` |
-| Radius | `--radius-sm`, `--radius-md`, `--radius-lg` |
+| Radius | `--radius-xs`, `--radius-sm`, `--radius-md`, `--radius-lg`, `--radius-xl`, `--radius-2xl`, `--radius-3xl` (largest step is the fully-rounded pill, 9999px) |
 | Font family | `--font-sans`, `--font-mono` |
 | Font size | `--font-size-sm`, `--font-size-md`, `--font-size-lg`, `--font-size-xl` |
 | Font weight | `--weight-normal`, `--weight-medium`, `--weight-bold` |
@@ -914,7 +914,18 @@ Theme variants override only the thirteen semantic `--color-*` tokens; everythin
 
 **Layout primitives.** Six classes in `_layout.scss`: `cluster`, `stack`, `frame`, `split`, `flank`, `grid`. Each is a single CSS rule; layout primitives never use `margin` for spacing.
 
-**Utility families.** Nine families across two partials, 42 utility classes total. `_utilities.scss`: `gap-{step}` (5), `pad-{step}` (5), `border` / `border-{t,r,b,l}` (5). `_alignment.scss`: `align-{start,center,end,stretch,baseline}` (5), `justify-{start,center,end,between,around,evenly}` (6), `align-self-{start,center,end,stretch,baseline}` (5), `justify-self-{start,center,end,stretch}` (4), `text-{start,center,end}` (3, logical-only), `flex-{row,row-reverse,col,col-reverse}` (4). No `!important`; override is by class-list order, and `_alignment.scss` is `@use`d after `_utilities.scss` in the aggregate so its rules win where they touch the same property.
+**When to reach for which primitive.** This table is mirrored verbatim into the scaffolded `AGENTS.md` so the lint diagnostic, the AGENTS.md table, and this spec all point at one canonical phrasing.
+
+| Primitive | Reach for it when… |
+| --- | --- |
+| `cluster` | Default choice for any horizontal layout. Wraps for free at narrow widths — use it whenever you'd otherwise reach for `display: flex` on a row of items (toolbars, button groups, chip lists, tag rows, inline metadata). |
+| `stack` | Vertical layout where items should *not* spread horizontally — a form body, a card's contents, a sidebar's list of links. (For headers and footers where the row should span full width, prefer `split` or `flank`.) |
+| `split` | Two end-anchored groups separated by stretched whitespace. Canonical case: page header with brand on the left and nav/actions on the right. Anywhere `justify-content: space-between` would have been the answer. |
+| `flank` | A fixed-size element next to a flexible one. Canonical case: a form row with a label on one side and an input that fills the rest; also media objects (avatar + comment body), inline icons next to flowing text. |
+| `grid` | A repeating column layout that auto-fits — card grids, tile lists, dashboard widgets. Override `--grid-min` to tune the breakpoint. Not for two-column page layouts (use `flank`). |
+| `frame` | Fixed-aspect-ratio media boxes — video embeds, image thumbnails, hero art. Override `--frame-ratio` to change the ratio. |
+
+**Utility families.** Nine families across two partials, 44 utility classes total. `_utilities.scss`: `gap-{step}` (6 — `0`, `xs`, `sm`, `md`, `lg`, `xl`), `pad-{step}` (6 — same set), `border` / `border-{t,r,b,l}` (5). The `0` step on `gap` and `pad` lets a layout primitive (`class="cluster gap-0"`) cancel its default spacing without writing raw CSS. `_alignment.scss`: `align-{start,center,end,stretch,baseline}` (5), `justify-{start,center,end,between,around,evenly}` (6), `align-self-{start,center,end,stretch,baseline}` (5), `justify-self-{start,center,end,stretch}` (4), `text-{start,center,end}` (3, logical-only), `flex-{row,row-reverse,col,col-reverse}` (4). No `!important`; override is by class-list order, and `_alignment.scss` is `@use`d after `_utilities.scss` in the aggregate so its rules win where they touch the same property.
 
 **Theme switching.** Each theme lives in its own partial under `.zero/styles/themes/` and defines a single Sass `@mixin tokens` containing its `--color-*` assignments. `_themes.scss` owns the selector strategy. Because every theme selector has the same CSS specificity — `:root` (pseudo-class) and `[data-theme="…"]` (attribute selector) are both `(0,1,0)` — the strategy uses source order to break ties: light is declared first on `:root`, the `@media (prefers-color-scheme: dark)` block emits dark next, and the `[data-theme="light"]` / `[data-theme="dark"]` rules are emitted last so an explicit attribute always wins over both the default and the OS preference. The net behavior: `prefers-color-scheme: dark` selects dark mode by default; set `data-theme="light"` or `data-theme="dark"` on `<html>` (or any ancestor) to override the system preference. Each theme mixin also emits `color-scheme: light` / `color-scheme: dark` so native UI (scrollbars, default form controls) inherits the theme. There is no JavaScript theme-toggle helper. Users authoring a brand theme declare the thirteen `--color-*` tokens in their own SCSS under a `[data-theme="brand"]` selector, then `@use` it from `styles/app.scss`.
 
@@ -1345,7 +1356,8 @@ State machines as a first-class primitive are deferred indefinitely. See Section
 - [x] `zero build` production output
 - [x] `zero test` integration
 - [ ] `zero check` type checking
-- [ ] `zero fmt` and `zero lint`
+- [x] `zero lint` design-system rules over user SCSS / CSS (eleven shipped rules: L01 font-weight, L02 font-size, L03 line-height, L04 letter-spacing, L05 color literals, L06 border-radius, L07 border/border-width, L08 padding, L09 margin, L10 gap, L11 layout-primitive detection)
+- [ ] `zero fmt`
 - [ ] `zero gen` code generation
 - [ ] `zero preview` static server
 

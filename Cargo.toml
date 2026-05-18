@@ -5,6 +5,7 @@ members = [
     "crates/zero-config",
     "crates/zero-dev",
     "crates/zero-runtime",
+    "crates/zero-lint",
     "crates/zero-sass",
     "crates/zero-scaffold",
     "crates/zero-test-runner",
@@ -36,6 +37,7 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 futures-util = "0.3"
 notify-debouncer-mini = "0.4"
 regex = "1"
+ignore = "0.4"
 swc_core = { version = "65", features = [
     "ecma_parser",
     "ecma_parser_typescript",

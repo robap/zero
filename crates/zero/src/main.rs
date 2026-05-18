@@ -59,6 +59,12 @@ enum Commands {
         #[arg(long, short = 'y', default_value_t = false)]
         yes: bool,
     },
+    /// Run the design-system lint over user SCSS / CSS.
+    Lint {
+        /// Drop the source-snippet line and caret per diagnostic.
+        #[arg(long, short = 'q', default_value_t = false)]
+        quiet: bool,
+    },
     /// Internal: run one mutant's tests in an isolated child process. Used
     /// by `zero mutate` to keep Boa-internal aborts from killing the parent.
     #[command(hide = true)]
@@ -114,6 +120,7 @@ async fn main() {
             std::process::exit(status.to_exit_code());
         }
         Commands::Update { yes } => cmd::update::run(yes).await,
+        Commands::Lint { quiet } => cmd::lint::run(quiet).await,
     };
     if let Err(err) = result {
         eprintln!("error: {err}");

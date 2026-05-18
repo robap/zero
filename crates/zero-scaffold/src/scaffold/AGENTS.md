@@ -521,6 +521,15 @@ The scaffold authors styles in SCSS. `zero dev` compiles `.scss` on the fly; `ze
 
 The framework forbids scoped styles, CSS modules, and CSS-in-JS. SCSS gives you variables and nesting; class names are still plain strings.
 
+### Reach for these first
+
+Before writing custom CSS, walk this ladder top-down and stop at the first match. The lint (`zero lint`) checks the lower rungs and pushes you up the ladder. Most "I need a custom class for this" instincts evaporate at rung 1 or 2.
+
+1. **Layout primitive class.** Is the rule body a `cluster`, `stack`, `split`, `flank`, `grid`, or `frame` shape? Use the primitive class (`class="cluster"`) — see "When to reach for which primitive" below. Don't write `display: flex` / `display: grid` inline.
+2. **Utility class.** Need a gap, padding, border, alignment, justification, text-align, flex-direction, or typography style? Apply a utility from `_utilities.scss`, `_alignment.scss`, or `_typography.scss` (e.g. `class="cluster gap-sm align-center pad-md"`). Don't re-declare `align-items: center` / `gap: 8px` inline.
+3. **Tokens in custom CSS.** When you do need a bespoke rule, read tokens with `var(--…)` — never hex literals, raw `px`/`rem`, or named colors. The lint flags every raw value with a token suggestion.
+4. **Raw CSS.** Last resort, for things the design system genuinely doesn't cover (a specific `aspect-ratio`, a `min-height: 100vh`, a `flex: 1` on a child). If you find yourself reaching for `border-radius: 999px` or `font-weight: 600`, you're skipping a rung.
+
 ### Design system
 
 The scaffold ships a built-in CSS design system: tokens, theme switching, layout primitives, and utility classes. The system lives in several partials plus an aggregate, all framework-owned in `.zero/styles/`, brought in by your `styles/app.scss` via `@use '../.zero/styles/zero';`:
@@ -528,13 +537,13 @@ The scaffold ships a built-in CSS design system: tokens, theme switching, layout
 | Partial | What it declares |
 | --- | --- |
 | `_palette.scss` | 55 framework-internal palette tokens: five families (`gray`, `blue`, `red`, `green`, `amber`) × 11 steps (`50`…`950`). Values from Open Color. Theme-invariant. |
-| `_tokens.scss` | Non-color design tokens (spacing, radius, font family/size/weight, line height, shadow, border). Theme-invariant. |
+| `_tokens.scss` | Non-color design tokens (spacing, seven-step radius scale `--radius-{xs,sm,md,lg,xl,2xl,3xl}`, font family/size/weight, tracking, line height, shadow, border). Theme-invariant. |
 | `_themes.scss` | Theme aggregator. Owns the selector strategy that wires light/dark to `:root`, `[data-theme="light"]`, `[data-theme="dark"]`, and `@media (prefers-color-scheme: dark)`. |
 | `themes/_light.scss` | A single Sass `@mixin tokens` mapping the public `--color-*` semantic surface to palette steps for the light theme. |
 | `themes/_dark.scss` | Same as `_light.scss` but for the dark theme. |
 | `_base.scss` | Box-sizing reset and a token-bound `body` rule. No heading or paragraph styling. |
 | `_layout.scss` | Six layout primitive classes: `cluster`, `stack`, `frame`, `split`, `flank`, `grid`. |
-| `_utilities.scss` | Fifteen utility classes: `gap-{xs,sm,md,lg,xl}`, `pad-{xs,sm,md,lg,xl}`, `border`, `border-{t,r,b,l}`. |
+| `_utilities.scss` | Seventeen utility classes: `gap-{0,xs,sm,md,lg,xl}`, `pad-{0,xs,sm,md,lg,xl}`, `border`, `border-{t,r,b,l}`. The `gap-0` / `pad-0` steps let a layout primitive (`class="cluster gap-0"`) cancel its default spacing without dropping into raw CSS. |
 | `_alignment.scss` | Twenty-seven utility classes across six families: `align-*`, `justify-*`, `align-self-*`, `justify-self-*`, `text-*`, `flex-{row,row-reverse,col,col-reverse}`. |
 | `_typography.scss` | Twelve opt-in typography utility classes inside `@layer components`: `.text-display`, `.text-h1`–`.text-h4`, `.text-eyebrow`, `.text-body`, `.text-small`, `.text-muted`, `.text-code`, `.text-link`, `.divider`. |
 
@@ -553,12 +562,25 @@ These partials live under `.zero/styles/` and are framework-owned — `zero upda
 | `flank` | First child is content-sized; second fills. Wraps when narrow. Default `gap: var(--space-md)`. |
 | `grid` | Auto-fitting columns of `minmax(min(100%, var(--grid-min, 16rem)), 1fr)`. Default `gap: var(--space-md)`. |
 
+### When to reach for which primitive
+
+Each primitive has a canonical case. Reach for the named class instead of `display: flex` / `display: grid` whenever the layout shape matches one of these:
+
+| Primitive | Reach for it when… |
+| --- | --- |
+| `cluster` | Default choice for any horizontal layout. Wraps for free at narrow widths — use it whenever you'd otherwise reach for `display: flex` on a row of items (toolbars, button groups, chip lists, tag rows, inline metadata). |
+| `stack` | Vertical layout where items should *not* spread horizontally — a form body, a card's contents, a sidebar's list of links. (For headers and footers where the row should span full width, prefer `split` or `flank`.) |
+| `split` | Two end-anchored groups separated by stretched whitespace. Canonical case: page header with brand on the left and nav/actions on the right. Anywhere `justify-content: space-between` would have been the answer. |
+| `flank` | A fixed-size element next to a flexible one. Canonical case: a form row with a label on one side and an input that fills the rest; also media objects (avatar + comment body), inline icons next to flowing text. |
+| `grid` | A repeating column layout that auto-fits — card grids, tile lists, dashboard widgets. Override `--grid-min` to tune the breakpoint. Not for two-column page layouts (use `flank`). |
+| `frame` | Fixed-aspect-ratio media boxes — video embeds, image thumbnails, hero art. Override `--frame-ratio` to change the ratio. |
+
 #### Spacing scale
 
-Five steps: `xs`, `sm`, `md`, `lg`, `xl`. Each is a CSS custom property (`--space-xs` … `--space-xl`).
+Five steps: `xs`, `sm`, `md`, `lg`, `xl`. Each is a CSS custom property (`--space-xs` … `--space-xl`). The radius scale is seven steps (`--radius-xs`, `--radius-sm`, `--radius-md`, `--radius-lg`, `--radius-xl`, `--radius-2xl`, `--radius-3xl`); the largest step (`--radius-3xl` at 9999px) is the "fully-rounded" pill radius.
 
-- `gap-{step}` sets `gap: var(--space-{step})` on any flex or grid container.
-- `pad-{step}` sets `padding: var(--space-{step})` on any element.
+- `gap-{step}` sets `gap: var(--space-{step})` on any flex or grid container. `gap-0` sets `gap: 0` — use it to suppress a layout primitive's default gap (e.g. `class="cluster gap-0"`).
+- `pad-{step}` sets `padding: var(--space-{step})` on any element. `pad-0` sets `padding: 0`.
 
 Composition is by class-list order: `class="cluster gap-lg"` overrides the cluster's default `var(--space-md)` because `gap-lg` follows `.cluster` in the compiled CSS. No `!important`, no axis variants — write `padding-inline` directly when you need axis-specific spacing.
 
@@ -628,6 +650,30 @@ document.documentElement.dataset.theme = "dark"
 The override applies only to the thirteen `--color-*` semantic tokens (`--color-bg`, `--color-surface`, `--color-text`, `--color-text-muted`, `--color-border`, `--color-primary`, `--color-primary-fg`, `--color-success`, `--color-success-fg`, `--color-warning`, `--color-warning-fg`, `--color-danger`, `--color-danger-fg`). The 55-token palette (`--gray-*`, `--blue-*`, etc.) is framework-internal and reserved — consume the semantic tokens in app code. Spacing, radius, type, shadow, and border widths are theme-invariant.
 
 To author a brand theme, declare the thirteen `--color-*` tokens under a `[data-theme="brand"]` selector in your own SCSS, then `@use` it from `styles/app.scss`. Apply via `<html data-theme="brand">`.
+
+---
+
+## Common mistakes (the lint will catch these)
+
+These are the patterns the design system replaces. `zero lint` flags them; this section is the answer.
+
+| Rule | Don't write | Use |
+| --- | --- | --- |
+| L01 | `font-weight: 600;` | `font-weight: var(--weight-semi);` |
+| L02 | `font-size: 0.875rem;` | `font-size: var(--font-size-sm);` — or apply a `text-*` utility (`.text-small`, `.text-body`, `.text-h2`, …) |
+| L03 | `line-height: 1.4;` | `line-height: var(--leading-snug);` |
+| L04 | `letter-spacing: 0.04em;` | `letter-spacing: var(--tracking-wide);` |
+| L05 | `background: #228be6;` / `color: red;` | `background: var(--color-primary);` / `color: var(--color-danger);` |
+| L06 | `border-radius: 999px;` / `border-radius: 50%;` | `border-radius: var(--radius-3xl);` |
+| L07 | `border: 1px solid var(--color-border);` | `class="border"` (utility) or `border-width: var(--border-thin);` |
+| L08 | `padding: 16px;` | `padding: var(--space-md);` or `class="pad-md"` |
+| L09 | `margin-top: 24px;` | `margin-top: var(--space-lg);` (no utility for margin — prefer `gap` on the parent primitive) |
+| L10 | `gap: 8px;` | `gap: var(--space-sm);` or `class="gap-sm"` |
+| L11 | `.toolbar { display: flex; flex-wrap: wrap; gap: var(--space-sm); }` | `class="cluster gap-sm"` (see "When to reach for which primitive" above) |
+| L12 | `align-items: center; justify-content: center;` | `class="… align-center justify-center"` (utility classes from `_alignment.scss`) |
+| L13 | `var(--radius-pill)` (renamed) / `var(--pad-sm)` (utility-class name, not a token) | The lint names the missing custom property. Either fix the typo, run `zero update`, or declare the token in `styles/app.scss`. |
+
+See `issues/design-system-lint/spec.md` for the rule catalog. Reach for layout primitives by name — see "When to reach for which primitive" above for canonical intent.
 
 ---
 

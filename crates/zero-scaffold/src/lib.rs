@@ -596,10 +596,42 @@ mod tests {
             "## JSDoc conventions",
             "## Common pitfalls",
             "## Best practices",
+            "## Common mistakes",
+            "### When to reach for which primitive",
+            "### Reach for these first",
         ] {
             assert!(
                 agents.contains(sentinel),
                 "AGENTS.md is missing section sentinel: {sentinel}"
+            );
+        }
+    }
+
+    #[test]
+    fn utilities_scss_has_zero_step_for_gap_and_pad() {
+        let (_dir, root) = fresh_scaffold();
+        let utilities = fs::read_to_string(root.join(".zero/styles/_utilities.scss")).unwrap();
+        assert!(
+            utilities.contains(".gap-0"),
+            "_utilities.scss missing .gap-0: {utilities}"
+        );
+        assert!(
+            utilities.contains(".pad-0"),
+            "_utilities.scss missing .pad-0: {utilities}"
+        );
+    }
+
+    #[test]
+    fn agents_md_lists_all_lint_rules() {
+        let (_dir, root) = fresh_scaffold();
+        let agents = fs::read_to_string(root.join("AGENTS.md")).unwrap();
+        for rule in [
+            "L01", "L02", "L03", "L04", "L05", "L06", "L07", "L08", "L09", "L10", "L11", "L12",
+            "L13",
+        ] {
+            assert!(
+                agents.contains(rule),
+                "AGENTS.md missing lint rule sentinel: {rule}"
             );
         }
     }
@@ -620,6 +652,26 @@ mod tests {
             index.contains(r#"<link rel="stylesheet" href="/styles/app.scss">"#),
             "index.html doesn't link to app.scss: {index}"
         );
+    }
+
+    #[test]
+    fn radius_scale_has_seven_steps() {
+        let (_dir, root) = fresh_scaffold();
+        let tokens = fs::read_to_string(root.join(".zero/styles/_tokens.scss")).unwrap();
+        for token in [
+            "--radius-xs:",
+            "--radius-sm:",
+            "--radius-md:",
+            "--radius-lg:",
+            "--radius-xl:",
+            "--radius-2xl:",
+            "--radius-3xl:",
+        ] {
+            assert!(
+                tokens.contains(token),
+                "_tokens.scss missing {token}: {tokens}"
+            );
+        }
     }
 
     #[test]
@@ -653,6 +705,10 @@ mod tests {
         assert!(
             !tokens.contains("$color-primary"),
             "_tokens.scss must not contain SCSS variable $color-primary: {tokens}"
+        );
+        assert!(
+            !tokens.contains("--radius-pill"),
+            "_tokens.scss must not contain legacy --radius-pill (renamed to --radius-3xl): {tokens}"
         );
 
         let light = fs::read_to_string(root.join(".zero/styles/themes/_light.scss")).unwrap();

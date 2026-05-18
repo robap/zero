@@ -16,11 +16,15 @@
   --space-lg: 1.5rem;    // 24px
   --space-xl: 3rem;      // 48px
 
-  // Radius
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 10px;
-  --radius-pill: 9999px;
+  // Radius — seven-step scale, no semantic aliases.
+  // --radius-3xl is the fully-rounded step (9999px).
+  --radius-xs:  2px;
+  --radius-sm:  4px;
+  --radius-md:  6px;
+  --radius-lg:  10px;
+  --radius-xl:  14px;
+  --radius-2xl: 20px;
+  --radius-3xl: 9999px;
 
   // Font family — Geist + hardened OS fallback
   --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
