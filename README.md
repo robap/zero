@@ -5,7 +5,6 @@ A zero-dependency frontend framework with a Rust CLI for scaffolding, developmen
 ## Prerequisites
 
 - Rust toolchain (`cargo`, `rustc`) — [install via rustup](https://rustup.rs)
-- Node.js — only needed to run the runtime's own test suite (`node --test`); not required for building or running apps
 
 ## Build the CLI
 
@@ -300,11 +299,13 @@ Validation rules:
 
 ## Running the runtime tests
 
-The framework's own JavaScript runtime tests use Node's built-in test runner:
+The framework's own JavaScript runtime tests run under `zero test`, the same runner user apps use. From the repo root:
 
 ```bash
-node --test runtime/*.test.js
+cargo run -p zero -- test
 ```
+
+Once the CLI is installed (`cargo install --path crates/zero --locked`), the same suite runs as `zero test`.
 
 ## Repository layout
 

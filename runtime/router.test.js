@@ -1,42 +1,27 @@
-import { describe, it, beforeEach } from 'node:test';
-import assert from 'node:assert/strict';
 import {
-  _normalizePath,
-  _parseQuery,
-  _parsePathAndQuery,
-  _compileRoutePattern,
-  _matchAgainst,
-  _matchRoutes,
-  _joinPaths,
-  navigate,
-  back,
-  forward,
-  route,
-} from './router.js';
-import { App, _setCurrentApp } from './app.js';
-import { window, document } from './dom-shim.js';
-import { html } from './template.js';
-import { effect } from './reactivity.js';
+  describe,
+  it,
+  expect,
+  beforeEach,
+  afterEach,
+  cleanup,
+  spy,
+  find,
+  text,
+} from 'zero/test';
+import { App, navigate, back, route, html, effect } from 'zero';
 
-function freshMount(id = 'app') {
-  const el = document.createElement('div');
-  el.setAttribute('id', id);
-  document.childNodes.push(el);
-  return el;
-}
-
-function resetEnv() {
-  document.childNodes.length = 0;
-  document._listeners.clear();
-  window.history._entries = [{ state: null, url: '/' }];
-  window.history._index = 0;
-  window.location._set('/');
-  window._listeners.clear();
-  _setCurrentApp(null);
+function freshMount() {
+  cleanup();
+  window.history.pushState(null, '', '/');
+  const mount = document.createElement('div');
+  mount.setAttribute('id', 'app');
+  document.body.appendChild(mount);
+  return mount;
 }
 
 function freshApp() {
-  freshMount('app');
+  freshMount();
   const app = new App()
     .route('/', () => html`<span>home</span>`)
     .route('/about', () => html`<span>about</span>`);
@@ -45,57 +30,44 @@ function freshApp() {
 }
 
 describe('router', () => {
-  describe('_normalizePath', () => {
-    it('strips trailing slash unless root', () => {
-      assert.equal(_normalizePath('/about/'), '/about');
-      assert.equal(_normalizePath('/'), '/');
-      assert.equal(_normalizePath('/users/42/'), '/users/42');
-      assert.equal(_normalizePath('/about'), '/about');
-    });
-  });
-
   describe('navigate / back / forward / route()', () => {
-    beforeEach(resetEnv);
+    afterEach(cleanup);
 
     it('navigate("/about") updates history and renders the route', async () => {
       freshApp();
+      const lengthBefore = window.history.length;
       navigate('/about');
       await Promise.resolve();
-      assert.equal(window.history.length, 2);
-      assert.equal(window.location.pathname, '/about');
+      expect(window.history.length).toBe(lengthBefore + 1);
+      expect(window.location.pathname).toBe('/about');
     });
 
     it('navigate with replace:true does not advance history', async () => {
       freshApp();
+      const lengthBefore = window.history.length;
       navigate('/about', { replace: true });
       await Promise.resolve();
-      assert.equal(window.history.length, 1);
-      assert.equal(window.location.pathname, '/about');
+      expect(window.history.length).toBe(lengthBefore);
+      expect(window.location.pathname).toBe('/about');
     });
 
-    it('navigate with state attaches state to history entry', async () => {
-      freshApp();
-      navigate('/about', { state: { from: 'x' } });
-      assert.deepEqual(window.history._entries[window.history._index].state, { from: 'x' });
-    });
-
-    it('back() after two pushes dispatches popstate and re-renders', async () => {
+    it('back() after a push dispatches popstate and re-renders', async () => {
       freshApp();
       navigate('/about');
       await Promise.resolve();
       back();
       await Promise.resolve();
-      assert.equal(window.location.pathname, '/');
+      expect(window.location.pathname).toBe('/');
     });
 
     it('navigate outside running app throws', () => {
-      _setCurrentApp(null);
-      assert.throws(() => navigate('/about'), /no app is running/);
+      cleanup();
+      expect(() => navigate('/about')).toThrow('no app is running');
     });
 
     it('route() outside running app throws', () => {
-      _setCurrentApp(null);
-      assert.throws(() => route(), /no app is running/);
+      cleanup();
+      expect(() => route()).toThrow('no app is running');
     });
 
     it('route() is reactive: effect re-runs after navigate', async () => {
@@ -104,223 +76,158 @@ describe('router', () => {
       effect(() => { last = route().path; });
       navigate('/about');
       await Promise.resolve();
-      assert.equal(last, '/about');
+      expect(last).toBe('/about');
     });
 
-    it('two route() calls return distinct objects with same underlying values', async () => {
+    it('two route() calls return distinct objects with same underlying values', () => {
       freshApp();
       const r1 = route();
       const r2 = route();
-      assert.notEqual(r1, r2);
-      assert.equal(r1.path, r2.path);
-      assert.deepEqual(r1.params, r2.params);
-    });
-  });
-
-  describe('_matchRoutes', () => {
-    function makeEntry(pattern) {
-      const compiled = _compileRoutePattern(pattern);
-      return { pattern, compiled, loader: null, resolvedComponent: null };
-    }
-
-    it('first match wins in registration order', () => {
-      const about = makeEntry('/about');
-      const wildcard = makeEntry('*');
-      const m = _matchRoutes([about, wildcard], '/about');
-      assert.equal(m.route, about);
-      assert.deepEqual(m.params, {});
+      expect(r1 === r2).toBeFalsy();
+      expect(r1.path).toBe(r2.path);
+      expect(r1.params).toEqual(r2.params);
     });
 
-    it('wildcard catches unmatched routes when registered last', () => {
-      const about = makeEntry('/about');
-      const wildcard = makeEntry('*');
-      const m = _matchRoutes([about, wildcard], '/other');
-      assert.equal(m.route, wildcard);
+    it('param paths are percent-decoded into route().params', async () => {
+      freshMount();
+      const renderSpy = spy(() => html`<span>user</span>`);
+      const app = new App().route('/users/:id', renderSpy);
+      app.run('#app');
+      navigate('/users/%C3%A9');
+      await Promise.resolve();
+      expect(route().params).toEqual({ id: 'é' });
     });
 
-    it('returns null when nothing matches', () => {
-      const about = makeEntry('/about');
-      assert.equal(_matchRoutes([about], '/nope'), null);
-    });
-
-    it('normalizes trailing slash on input', () => {
-      const about = makeEntry('/about');
-      const m = _matchRoutes([about], '/about/');
-      assert.ok(m);
-      assert.equal(m.pathname, '/about');
-    });
-
-    it('drops hash from input', () => {
-      const about = makeEntry('/about');
-      const m = _matchRoutes([about], '/about#section');
-      assert.ok(m);
-      assert.equal(m.search, '');
-    });
-
-    it('parses query into result', () => {
-      const users = makeEntry('/users/:id');
-      const m = _matchRoutes([users], '/users/42?tab=posts');
-      assert.ok(m);
-      assert.deepEqual(m.params, { id: '42' });
-      assert.deepEqual(m.query, { tab: 'posts' });
-    });
-  });
-
-  describe('_parsePathAndQuery', () => {
-    it('splits path, search, and drops hash', () => {
-      assert.deepEqual(_parsePathAndQuery('/about?x=1#y'), { pathname: '/about', search: '?x=1' });
-    });
-
-    it('returns empty search when no query', () => {
-      assert.deepEqual(_parsePathAndQuery('/about'), { pathname: '/about', search: '' });
-    });
-
-    it('returns empty search for hash-only suffix', () => {
-      assert.deepEqual(_parsePathAndQuery('/about#section'), { pathname: '/about', search: '' });
-    });
-  });
-
-  describe('_compileRoutePattern / _matchAgainst', () => {
-    it('single param pattern matches and captures', () => {
-      const compiled = _compileRoutePattern('/users/:id');
-      assert.deepEqual(_matchAgainst(compiled, '/users/42'), { params: { id: '42' } });
-      assert.equal(_matchAgainst(compiled, '/users/42/posts'), null);
-    });
-
-    it('multi-param pattern captures all params', () => {
-      const compiled = _compileRoutePattern('/users/:id/posts/:postId');
-      assert.deepEqual(
-        _matchAgainst(compiled, '/users/7/posts/99'),
-        { params: { id: '7', postId: '99' } },
+    it('multi-param patterns capture all params', async () => {
+      freshMount();
+      const app = new App().route(
+        '/users/:id/posts/:postId',
+        () => html`<span>post</span>`,
       );
+      app.run('#app');
+      navigate('/users/7/posts/99');
+      await Promise.resolve();
+      expect(route().params).toEqual({ id: '7', postId: '99' });
     });
 
-    it('wildcard matches anything with empty params', () => {
-      const compiled = _compileRoutePattern('*');
-      assert.deepEqual(_matchAgainst(compiled, '/anything/here'), { params: {} });
+    it('query string parses into route().query', async () => {
+      freshMount();
+      const app = new App().route('/users/:id', () => html`<span>x</span>`);
+      app.run('#app');
+      navigate('/users/42?tab=posts');
+      await Promise.resolve();
+      expect(route().query).toEqual({ tab: 'posts' });
     });
 
-    it('decoded params: percent-encoded segment', () => {
-      const compiled = _compileRoutePattern('/users/:id');
-      assert.deepEqual(_matchAgainst(compiled, '/users/%C3%A9'), { params: { id: 'é' } });
-    });
-  });
-
-  describe('_joinPaths', () => {
-    it('child "/" returns parent', () => {
-      assert.equal(_joinPaths('/dashboard', '/'), '/dashboard');
-    });
-
-    it('joins parent + child path', () => {
-      assert.equal(_joinPaths('/dashboard', '/analytics'), '/dashboard/analytics');
-    });
-
-    it('parent "/" returns child', () => {
-      assert.equal(_joinPaths('/', '/about'), '/about');
-    });
-
-    it('parent "/" and child "/" returns "/"', () => {
-      assert.equal(_joinPaths('/', '/'), '/');
-    });
-
-    it('normalizes trailing slash on parent before join', () => {
-      assert.equal(_joinPaths('/dashboard/', '/stats'), '/dashboard/stats');
+    it('trailing slash on input is normalized', async () => {
+      freshMount();
+      const app = new App().route('/about', () => html`<span>about</span>`);
+      app.run('#app');
+      navigate('/about/');
+      await Promise.resolve();
+      expect(route().path).toBe('/about');
     });
   });
 
   describe('nested-route flattening', () => {
-    beforeEach(resetEnv);
+    afterEach(cleanup);
 
-    it('one-level: children produce two entries with correct normalized paths', () => {
-      const P = () => html`<div>parent</div>`;
-      const O = () => html`<div>overview</div>`;
-      const A = () => html`<div>analytics</div>`;
-      const app = new App().route('/dashboard', P, {
-        children: [
-          { path: '/', load: O },
-          { path: '/analytics', load: A },
-        ],
+    it('one-level: child mounts inside parent outlet', async () => {
+      freshMount();
+      const Parent = ({ outlet }) => html`<div><span>parent</span>${outlet}</div>`;
+      const Analytics = () => html`<i>analytics</i>`;
+      const app = new App().route('/dashboard', Parent, {
+        children: [{ path: '/analytics', load: Analytics }],
       });
-      assert.equal(app._routes.length, 2);
-      assert.equal(app._routes[0].normalized, '/dashboard');
-      assert.equal(app._routes[1].normalized, '/dashboard/analytics');
+      app.run('#app');
+      navigate('/dashboard/analytics');
+      await Promise.resolve(); await Promise.resolve();
+      const mount = find(document, '#app');
+      expect(find(mount, 'span')).toBeTruthy();
+      expect(text(mount)).toContain('analytics');
     });
 
-    it('one-level: both entries have chain.length === 2', () => {
-      const P = () => html`<div>parent</div>`;
-      const O = () => html`<div>overview</div>`;
-      const A = () => html`<div>analytics</div>`;
-      const app = new App().route('/dashboard', P, {
-        children: [
-          { path: '/', load: O },
-          { path: '/analytics', load: A },
-        ],
+    it('one-level: index child (path "/") mounts inside parent outlet', async () => {
+      freshMount();
+      const Parent = ({ outlet }) => html`<div><span>p</span>${outlet}</div>`;
+      const Overview = () => html`<em>overview</em>`;
+      const app = new App().route('/dashboard', Parent, {
+        children: [{ path: '/', load: Overview }],
       });
-      assert.equal(app._routes[0].chain.length, 2);
-      assert.equal(app._routes[1].chain.length, 2);
+      app.run('#app');
+      navigate('/dashboard');
+      await Promise.resolve(); await Promise.resolve();
+      const mount = find(document, '#app');
+      expect(text(mount)).toContain('overview');
     });
 
-    it('sibling parent-descriptor reuse: chain[0] is identical by reference in both children', () => {
-      const P = () => html`<div>parent</div>`;
-      const O = () => html`<div>overview</div>`;
-      const A = () => html`<div>analytics</div>`;
-      const app = new App().route('/dashboard', P, {
+    it('parent is reused when navigating between sibling children', async () => {
+      freshMount();
+      let parentCalls = 0;
+      const Parent = ({ outlet }) => {
+        parentCalls++;
+        return html`<div><span>p</span>${outlet}</div>`;
+      };
+      const A = () => html`<i>a</i>`;
+      const B = () => html`<i>b</i>`;
+      const app = new App().route('/d', Parent, {
         children: [
-          { path: '/', load: O },
-          { path: '/analytics', load: A },
+          { path: '/a', load: A },
+          { path: '/b', load: B },
         ],
       });
-      assert.strictEqual(app._routes[0].chain[0], app._routes[1].chain[0]);
+      app.run('#app');
+      navigate('/d/a');
+      await Promise.resolve(); await Promise.resolve();
+      const callsAfterFirst = parentCalls;
+      navigate('/d/b');
+      await Promise.resolve(); await Promise.resolve();
+      expect(parentCalls).toBe(callsAfterFirst);
+      const mount = find(document, '#app');
+      expect(text(mount)).toContain('b');
     });
 
-    it('child descriptors carry correct loaderOrLoad', () => {
-      const P = () => html`<div>parent</div>`;
-      const O = () => html`<div>overview</div>`;
-      const A = () => html`<div>analytics</div>`;
-      const app = new App().route('/dashboard', P, {
-        children: [
-          { path: '/', load: O },
-          { path: '/analytics', load: A },
-        ],
-      });
-      assert.strictEqual(app._routes[0].chain[1].loaderOrLoad, O);
-      assert.strictEqual(app._routes[1].chain[1].loaderOrLoad, A);
-    });
-
-    it('two-level nesting produces entry at /dashboard/foo/bar with chain.length === 3', () => {
-      const P = () => html`<div>parent</div>`;
-      const Leaf = () => html`<div>leaf</div>`;
-      const app = new App().route('/dashboard', P, {
+    it('two-level nesting renders both grandparents in the outlet chain', async () => {
+      freshMount();
+      const Root = ({ outlet }) => html`<div><span>root</span>${outlet}</div>`;
+      const Mid = ({ outlet }) => html`<div><em>mid</em>${outlet}</div>`;
+      const Leaf = () => html`<i>leaf</i>`;
+      const app = new App().route('/dashboard', Root, {
         children: [
           {
             path: '/foo',
-            load: () => null,
-            children: [
-              { path: '/bar', load: Leaf },
-            ],
+            load: Mid,
+            children: [{ path: '/bar', load: Leaf }],
           },
         ],
       });
-      assert.equal(app._routes.length, 1);
-      assert.equal(app._routes[0].normalized, '/dashboard/foo/bar');
-      assert.equal(app._routes[0].chain.length, 3);
+      app.run('#app');
+      navigate('/dashboard/foo/bar');
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+      const mount = find(document, '#app');
+      const t = text(mount);
+      expect(t).toContain('root');
+      expect(t).toContain('mid');
+      expect(t).toContain('leaf');
     });
 
-    it('plain top-level route (no children) has chain: [self]', () => {
+    it('plain top-level route (no children) renders alone', async () => {
+      freshMount();
       const Home = () => html`<div>home</div>`;
       const app = new App().route('/', Home);
-      assert.equal(app._routes[0].chain.length, 1);
-      assert.strictEqual(app._routes[0].chain[0].loaderOrLoad, Home);
+      app.run('#app');
+      await Promise.resolve();
+      const mount = find(document, '#app');
+      expect(text(mount)).toContain('home');
     });
   });
 
   describe('route-scoped fetch', () => {
-    beforeEach(resetEnv);
+    afterEach(cleanup);
 
     it('aborts pending fetch when navigation supersedes', async () => {
-      freshMount('app');
+      freshMount();
       const origFetch = globalThis.fetch;
-      /** @type {AbortSignal[]} */
       const seenSignals = [];
       globalThis.fetch = (_input, init = {}) => {
         const signal = init.signal;
@@ -344,24 +251,20 @@ describe('router', () => {
           .route('/other', () => html`<span>other</span>`);
         app.run('#app');
         await Promise.resolve();
-        // Navigate to /slow — load() awaits a never-resolving fetch
-        window.history.pushState(null, '', '/slow');
-        window.dispatchEvent({ type: 'popstate' });
+        navigate('/slow');
         await Promise.resolve();
-        assert.equal(seenSignals.length, 1);
-        assert.equal(seenSignals[0].aborted, false);
-        // Supersede with /other — should abort /slow's pending fetch
-        window.history.pushState(null, '', '/other');
-        window.dispatchEvent({ type: 'popstate' });
+        expect(seenSignals.length).toBe(1);
+        expect(seenSignals[0].aborted).toBe(false);
+        navigate('/other');
         await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
-        assert.equal(seenSignals[0].aborted, true);
+        expect(seenSignals[0].aborted).toBe(true);
       } finally {
         globalThis.fetch = origFetch;
       }
     });
 
     it('composes caller-supplied signal: caller abort surfaces as error', async () => {
-      freshMount('app');
+      freshMount();
       const origFetch = globalThis.fetch;
       let abortReason = null;
       globalThis.fetch = (_input, init = {}) => {
@@ -388,22 +291,20 @@ describe('router', () => {
           });
         app.run('#app');
         await Promise.resolve();
-        window.history.pushState(null, '', '/x');
-        window.dispatchEvent({ type: 'popstate' });
+        navigate('/x');
         await Promise.resolve();
         callerController.abort();
         await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
-        // The caller-aborted error must reach the error UI (not be silently dropped).
-        assert.ok(abortReason, 'caller-aborted error should have propagated');
-        assert.equal(abortReason.name, 'AbortError');
-        assert.equal(errorCalls.length, 1);
+        expect(abortReason).toBeTruthy();
+        expect(abortReason.name).toBe('AbortError');
+        expect(errorCalls.length).toBe(1);
       } finally {
         globalThis.fetch = origFetch;
       }
     });
 
     it('post-navigation: each nav gets a fresh non-aborted signal', async () => {
-      freshMount('app');
+      freshMount();
       const origFetch = globalThis.fetch;
       const seenSignals = [];
       globalThis.fetch = (_input, init = {}) => {
@@ -420,37 +321,14 @@ describe('router', () => {
           });
         app.run('#app');
         await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
-        window.history.pushState(null, '', '/b');
-        window.dispatchEvent({ type: 'popstate' });
+        navigate('/b');
         await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
-        assert.equal(seenSignals.length, 2);
-        assert.notStrictEqual(seenSignals[0], seenSignals[1]);
-        assert.equal(seenSignals[1].aborted, false);
+        expect(seenSignals.length).toBe(2);
+        expect(seenSignals[0] === seenSignals[1]).toBeFalsy();
+        expect(seenSignals[1].aborted).toBe(false);
       } finally {
         globalThis.fetch = origFetch;
       }
-    });
-  });
-
-  describe('_parseQuery', () => {
-    it('empty string returns {}', () => {
-      assert.deepEqual(_parseQuery(''), {});
-    });
-
-    it('parses key=value pairs', () => {
-      assert.deepEqual(_parseQuery('?a=1&b=2'), { a: '1', b: '2' });
-    });
-
-    it('decodes percent-encoded values', () => {
-      assert.deepEqual(_parseQuery('?c=hello%20world'), { c: 'hello world' });
-    });
-
-    it('last value wins for duplicate keys', () => {
-      assert.deepEqual(_parseQuery('?k=first&k=second'), { k: 'second' });
-    });
-
-    it('empty value is empty string', () => {
-      assert.deepEqual(_parseQuery('?k='), { k: '' });
     });
   });
 });

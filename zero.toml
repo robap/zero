@@ -1,0 +1,5 @@
+[project]
+root = "runtime"
+
+[build]
+out = "target"

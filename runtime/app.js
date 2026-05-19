@@ -358,10 +358,12 @@ export class App {
       this._navigateTo(window.location.pathname + window.location.search);
     this._popstateListener = onPopstate;
     window.addEventListener("popstate", onPopstate);
+    this._rootScope.onCleanup(() => window.removeEventListener("popstate", onPopstate));
 
     const onClick = (e) => _onDocumentClick(e);
     this._clickListener = onClick;
     document.addEventListener("click", onClick);
+    this._rootScope.onCleanup(() => document.removeEventListener("click", onClick));
   }
 
   /**

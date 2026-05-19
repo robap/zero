@@ -1,6 +1,6 @@
 import { commit } from "./template.js";
 import { _createScope } from "./reactivity.js";
-import { _setCurrentApp } from "./app.js";
+import { _getCurrentApp, _setCurrentApp } from "./app.js";
 import { Event, KeyboardEvent, MouseEvent } from "./dom-shim.js";
 
 /**
@@ -91,6 +91,14 @@ export function afterAll(fn) {
   _current.afterAll.push(fn);
 }
 
+// ---------------------------------------------------------------------------
+// JS↔Rust ABI. The Rust harness in `crates/zero-test-runner/src/harness.rs`
+// calls `__getTestTree__()` to walk the test tree built up during module
+// evaluation, and `__resetTestTree__()` to rebuild it. Neither is part of
+// the public `zero/test` API. The contract is covered by the harness's own
+// Rust integration tests; do not assert on these from JS test files.
+// ---------------------------------------------------------------------------
+
 /**
  * Return the root of the test tree collected during module evaluation.
  * @internal
@@ -101,7 +109,7 @@ export function __getTestTree__() {
 }
 
 /**
- * Reinitialize the test tree (used only by node:test self-tests; under Boa each file gets a fresh context).
+ * Reinitialize the test tree.
  * @internal
  * @returns {void}
  */
@@ -204,12 +212,16 @@ export function fire(el, type, data = {}) {
  * Order is intentional — scopes dispose first so their teardown callbacks can
  * still touch storage / timers; then storage clears; then timers cancel; then
  * document fields reset. Each block is feature-detected so the same function
- * works in both Boa and node:test.
+ * works wherever the runtime is loaded.
  * @returns {void}
  */
 export function cleanup() {
   for (const { scope } of _renderTracker) scope.dispose();
   _renderTracker.length = 0;
+  const runningApp = _getCurrentApp();
+  if (runningApp && runningApp._rootScope && typeof runningApp._rootScope.dispose === "function") {
+    runningApp._rootScope.dispose();
+  }
   _setCurrentApp(null);
 
   if (typeof globalThis.localStorage !== "undefined" && typeof globalThis.localStorage.clear === "function") {

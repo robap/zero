@@ -1,6 +1,5 @@
-import { describe, it } from 'node:test';
-import assert from 'node:assert/strict';
-import { createHttp, HttpError } from './http.js';
+import { describe, it, expect } from 'zero/test';
+import { createHttp, HttpError } from 'zero/http';
 
 /**
  * Build a stub fetch that delegates to `handler(req)` and asserts only
@@ -33,7 +32,7 @@ describe('zero/http — createHttp', () => {
     );
     const client = createHttp({ fetch: fetchStub });
     const body = await client.get('http://api.test/data');
-    assert.deepEqual(body, { value: 42 });
+    expect(body).toEqual({ value: 42 });
   });
 
   it('POST with plain object body sends JSON with Content-Type', async () => {
@@ -48,8 +47,8 @@ describe('zero/http — createHttp', () => {
     });
     const client = createHttp({ fetch: fetchStub });
     await client.post('http://api.test/items', { name: 'x' });
-    assert.equal(seen.ct, 'application/json');
-    assert.equal(seen.body, '{"name":"x"}');
+    expect(seen.ct).toBe('application/json');
+    expect(seen.body).toBe('{"name":"x"}');
   });
 
   it('non-2xx JSON response rejects with HttpError carrying status + body', async () => {
@@ -61,16 +60,16 @@ describe('zero/http — createHttp', () => {
       }),
     );
     const client = createHttp({ fetch: fetchStub });
-    await assert.rejects(
-      () => client.get('http://api.test/missing'),
-      (err) => {
-        assert.ok(err instanceof HttpError, 'expected HttpError instance');
-        assert.equal(err.status, 404);
-        assert.equal(err.statusText, 'Not Found');
-        assert.deepEqual(err.body, { message: 'nope' });
-        return true;
-      },
-    );
+    let err;
+    try {
+      await client.get('http://api.test/missing');
+    } catch (e) {
+      err = e;
+    }
+    expect(err instanceof HttpError).toBeTruthy();
+    expect(err.status).toBe(404);
+    expect(err.statusText).toBe('Not Found');
+    expect(err.body).toEqual({ message: 'nope' });
   });
 
   it('aborted caller signal rejects with AbortError', async () => {
@@ -94,7 +93,14 @@ describe('zero/http — createHttp', () => {
     const controller = new AbortController();
     const p = client.get('http://api.test/slow', { signal: controller.signal });
     controller.abort();
-    await assert.rejects(p, (err) => err.name === 'AbortError');
+    let err;
+    try {
+      await p;
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeTruthy();
+    expect(err.name).toBe('AbortError');
   });
 
   it('middleware ordering follows onion model', async () => {
@@ -110,7 +116,7 @@ describe('zero/http — createHttp', () => {
       .use(async (req, next) => { log.push('B in'); const r = await next(req); log.push('B out'); return r; })
       .use(async (req, next) => { log.push('C in'); const r = await next(req); log.push('C out'); return r; });
     await client.get('http://api.test/x');
-    assert.deepEqual(log, ['A in', 'B in', 'C in', 'C out', 'B out', 'A out']);
+    expect(log).toEqual(['A in', 'B in', 'C in', 'C out', 'B out', 'A out']);
   });
 
   it('middleware can short-circuit by returning a Response without calling next', async () => {
@@ -124,8 +130,8 @@ describe('zero/http — createHttp', () => {
         }),
       );
     const body = await client.get('http://api.test/x');
-    assert.deepEqual(body, { short: true });
-    assert.equal(baseCalls, 0);
+    expect(body).toEqual({ short: true });
+    expect(baseCalls).toBe(0);
   });
 
   it('middleware can inject headers seen by base fetch', async () => {
@@ -144,7 +150,7 @@ describe('zero/http — createHttp', () => {
         return next(new Request(req, { headers }));
       });
     await client.get('http://api.test/secret');
-    assert.equal(seenAuth, 'Bearer x');
+    expect(seenAuth).toBe('Bearer x');
   });
 
   it('per-call fetch override is used instead of constructor-time fetch', async () => {
@@ -161,9 +167,9 @@ describe('zero/http — createHttp', () => {
     });
     const client = createHttp({ fetch: baseFetch });
     const body = await client.get('http://api.test/x', { fetch: overrideFetch });
-    assert.deepEqual(body, { from: 'override' });
-    assert.equal(overrideCalls, 1);
-    assert.equal(baseFetch.calls.length, 0);
+    expect(body).toEqual({ from: 'override' });
+    expect(overrideCalls).toBe(1);
+    expect(baseFetch.calls.length).toBe(0);
   });
 
   it('non-JSON 2xx response returns the raw Response object (escape hatch)', async () => {
@@ -175,7 +181,7 @@ describe('zero/http — createHttp', () => {
     );
     const client = createHttp({ fetch: fetchStub });
     const result = await client.get('http://api.test/file');
-    assert.ok(result instanceof Response, 'expected raw Response');
-    assert.equal(await result.text(), 'binary');
+    expect(result instanceof Response).toBeTruthy();
+    expect(await result.text()).toBe('binary');
   });
 });

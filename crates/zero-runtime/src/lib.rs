@@ -116,7 +116,9 @@ pub fn http_module() -> String {
 /// # Returns
 /// A complete ES module string ready to register under `"zero/test"`.
 pub fn test_module() -> String {
-    let mut s = String::from("import { _setCurrentApp, _createScope, commit } from \"zero\";\n");
+    let mut s = String::from(
+        "import { _setCurrentApp, _getCurrentApp, _createScope, commit } from \"zero\";\n",
+    );
     s.push_str(ZERO_TEST_BODY);
     if !s.ends_with('\n') {
         s.push('\n');
