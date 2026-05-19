@@ -223,6 +223,10 @@ export function cleanup() {
     globalThis.__clearAllTimers__();
   }
 
+  if (typeof globalThis.__resetFetch__ === "function") {
+    globalThis.__resetFetch__();
+  }
+
   if (typeof globalThis.document !== "undefined") {
     const doc = globalThis.document;
     if ("_activeElement" in doc) doc._activeElement = null;

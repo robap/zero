@@ -978,6 +978,67 @@ import { render, find, findAll, text, fire, cleanup } from "z/test"
 
 This is possible **because components are plain functions**, not web components. They don't depend on `HTMLElement`, `customElements`, or `shadowRoot`. A component is just a function that calls `signal()` and returns `html\`...\``. Both work without a browser.
 
+### Web Platform surface in `zero test`
+
+`zero test` ships hand-written implementations of the Web Platform APIs that
+real apps and the framework's own modules reach for at test time. Anything on
+this list is present on `globalThis` as soon as a test file imports
+`"zero/test"`; anything not on this list is outside the test environment's
+scope and surfaces as Boa's standard `ReferenceError` — stub it in your test
+setup.
+
+**Fetch API**
+- `Headers` — case-insensitive, `get`/`set`/`has`/`delete`/`append`/`forEach`/iteration.
+- `Request` / `Response` — constructors, `text()` / `json()`. Streaming
+  bodies (`arrayBuffer()`, `blob()`) reject with a clear stub message.
+- `fetch` — default rejects with: "zero test: globalThis.fetch is not
+  implemented. Stub it in your test's beforeEach (or pass init.fetch to
+  the call) — see runtime/http.test.js for the pattern." `cleanup()`
+  restores the default after each test.
+- `AbortController` / `AbortSignal` — full standard shape, including
+  `AbortSignal.abort(reason)`, `AbortSignal.timeout(ms)`,
+  `AbortSignal.any([...])`.
+
+**URLs**
+- `URL` — constructor, getters/setters for protocol/hostname/port/
+  pathname/search/hash, `searchParams`, `toString`, `URL.canParse`.
+- `URLSearchParams` — constructor from string/object/array/instance,
+  `get`/`getAll`/`set`/`append`/`has`/`delete`/`sort`, iteration,
+  `toString`.
+
+**Encoding**
+- `TextEncoder` / `TextDecoder` — UTF-8 only. No `encodeInto`, no
+  streaming `decode`. `new TextDecoder('latin1')` throws a clear stub
+  message.
+
+**Binary data**
+- `Blob` — constructor, `text()`, `arrayBuffer()`, `slice()`, `size`,
+  `type`.
+- `File` — extends `Blob`; adds `name`, `lastModified`.
+- `FormData` — `append`/`set`/`get`/`getAll`/`has`/`delete`, iteration.
+  `new FormData(htmlForm)` is not supported and throws.
+
+**Cloning & scheduling**
+- `structuredClone` — plain objects/arrays/Date/RegExp/Map/Set/Error/
+  ArrayBuffer/typed arrays. Functions, DOM nodes, Promises throw a
+  `DataCloneError`-shaped error.
+- `queueMicrotask` — schedules via Boa's job queue, same path the timer
+  host uses.
+- `Promise.withResolvers` — provided by Boa 0.21 (ES2024); no shim.
+
+**The "clear error" discipline.** Any API the shim installs but does not
+implement throws an error of the form
+`"zero test: <API> is not implemented. <one-sentence action the user
+can take>."` This is the only mechanism that surfaces gaps as actionable
+messages; everything else outside this list surfaces as `ReferenceError`.
+
+**Out of scope** (restated for completeness): streaming APIs
+(`ReadableStream` / `WritableStream` / `TransformStream`), `WebSocket` /
+`EventSource`, Web Workers, `IndexedDB`, `SubtleCrypto.digest`,
+`Notifications`, `Geolocation`, `MediaDevices`, `WebRTC`. Reach for them
+inside a test and stub them yourself; the test environment does not pretend
+to provide them.
+
 ### Testing Signals
 
 ```ts
@@ -1444,3 +1505,4 @@ remaining item and stays unscheduled.)
 | Distribution | Single CLI binary | Zero npm dependencies, one install, everything included |
 | Component library | 15 components shipped under `.zero/components/`; CSS wrapped in `@layer components` | Real apps shouldn't rebuild the same primitives; `@layer` keeps user overrides predictable without prefixing |
 | HTTP client | `"zero/http"` module with middleware (onion model) and per-call `init.fetch` override | Every real app fetches; shipping one obvious wrapper avoids divergent conventions across adopters and threads cleanly with the route-scoped abort signal |
+| Web Platform shim | Hand-written, closed enumerated list under `runtime/*-shim.js` (Fetch, URL, encoding, binary data, structuredClone, queueMicrotask) | Boa ships nothing from the Web Platform; jsdom/happy-dom is too heavy for Boa; widening the fence from "DOM" to "Web Platform" closes the gap behind one audit pass — see §8 "Web Platform surface in `zero test`" |

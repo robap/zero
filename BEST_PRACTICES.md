@@ -525,6 +525,47 @@ test code already. If a test needs to swap a global wholesale (e.g.
 restore the original in `beforeEach` — `cleanup()` does not
 auto-restore reassigned globals.
 
+### Testing against the Web Platform
+
+`zero test` ships hand-written implementations of the Web Platform APIs
+real apps use at test time: `Headers` / `Request` / `Response` / `fetch`,
+`AbortController` / `AbortSignal`, `URL` / `URLSearchParams`,
+`TextEncoder` / `TextDecoder`, `Blob` / `File` / `FormData`,
+`structuredClone`, and `queueMicrotask`. See `zero-framework-spec.md` §8
+"Web Platform surface in `zero test`" for the closed list and per-API
+contracts.
+
+`fetch` is the one intentional stub: its default implementation rejects
+with a clear, actionable message. Override `globalThis.fetch` per test
+and `cleanup()` restores the default automatically. The canonical
+pattern (mirrored on `runtime/http.test.js::makeStubFetch`):
+
+```ts
+import { beforeEach, afterEach, cleanup } from "zero/test";
+
+function makeStubFetch(routes: Record<string, unknown>) {
+  return async (input: RequestInfo | URL) => {
+    const url = typeof input === "string"
+      ? input
+      : input instanceof Request ? input.url : input.toString();
+    const body = routes[url];
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+}
+
+beforeEach(() => { globalThis.fetch = makeStubFetch({ "/x": { value: 42 } }); });
+afterEach(cleanup);  // restores the default-rejecting stub
+```
+
+Anything outside the audited list surfaces as a `ReferenceError`. If your
+code needs `ReadableStream`, `WebSocket`, `IndexedDB`, or any other
+browser API the runner doesn't ship, stub it yourself in `beforeEach` and
+restore in `afterEach`. The runner deliberately refuses to silently mock
+— a missing global is meant to be visible.
+
 ---
 
 ## 10. Performance

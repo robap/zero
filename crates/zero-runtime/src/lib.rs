@@ -229,6 +229,23 @@ mod tests {
     }
 
     #[test]
+    fn zero_dom_shim_body_concatenates_web_platform_sibling_files() {
+        for f in [
+            "fetch-shim.js",
+            "url-shim.js",
+            "encoding-shim.js",
+            "binary-shim.js",
+            "clone-shim.js",
+        ] {
+            let needle = format!("/* === {f} === */");
+            assert!(
+                ZERO_DOM_SHIM_BODY.contains(&needle),
+                "ZERO_DOM_SHIM_BODY should contain separator `{needle}`"
+            );
+        }
+    }
+
+    #[test]
     fn test_module_contains_describe_and_expect() {
         let m = test_module();
         assert!(

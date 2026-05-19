@@ -15,6 +15,17 @@ use regex::Regex;
 /// Runtime files in dependency order; `dom-shim.js` and `test.js` are handled separately.
 const RUNTIME_FILES: &[&str] = &["reactivity.js", "template.js", "router.js", "app.js"];
 
+/// Web Platform shim files concatenated after `dom-shim.js` into
+/// `ZERO_DOM_SHIM_BODY`. Each file is a script body (no import/export) that
+/// installs identifiers on `globalThis`.
+const WEB_PLATFORM_FILES: &[&str] = &[
+    "fetch-shim.js",
+    "url-shim.js",
+    "encoding-shim.js",
+    "binary-shim.js",
+    "clone-shim.js",
+];
+
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     // Walk up from crates/zero-runtime/ to the workspace root and into runtime/.
@@ -32,6 +43,9 @@ fn main() {
         "cargo:rerun-if-changed={}",
         runtime_dir.join("dom-shim.js").display()
     );
+    for f in WEB_PLATFORM_FILES {
+        println!("cargo:rerun-if-changed={}", runtime_dir.join(f).display());
+    }
     println!(
         "cargo:rerun-if-changed={}",
         runtime_dir.join("test.js").display()
@@ -114,6 +128,20 @@ fn main() {
     }
     if !alias_lines.is_empty() {
         shim_body.push_str(&alias_lines);
+    }
+    for f in WEB_PLATFORM_FILES {
+        let path = runtime_dir.join(f);
+        let raw = fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+        let (cleaned, alias_lines) = strip(&raw);
+        shim_body.push_str(&format!("\n/* === {f} === */\n"));
+        shim_body.push_str(&cleaned);
+        if !cleaned.ends_with('\n') {
+            shim_body.push('\n');
+        }
+        if !alias_lines.is_empty() {
+            shim_body.push_str(&alias_lines);
+        }
     }
     let out_path = out_dir.join("zero_dom_shim_body.js");
     fs::write(&out_path, &shim_body)
