@@ -482,6 +482,49 @@ non-trivial component. The patterns:
 `examples/todos/web/src/routes/home.test.ts`, and
 `examples/tracker/web/src/routes/issues/issue.test.ts`.
 
+### Testing browser APIs
+
+The test runner ships real in-memory implementations of the browser
+APIs apps reach for: `localStorage` / `sessionStorage`, `matchMedia`,
+`navigator`, `crypto.randomUUID`, `setTimeout` / `setInterval` /
+`requestAnimationFrame`, `IntersectionObserver` /
+`ResizeObserver` / `MutationObserver`, and real `Event` /
+`KeyboardEvent` / `MouseEvent` constructors with capture/target/bubble
+dispatch. App code that calls these globals runs unmodified under
+`zero test` — no `typeof window === "undefined"` guards needed at
+test time.
+
+Per-test mutable state (storage maps, pending timers, focused
+element, document title, body/head subtree) is reset automatically by
+`cleanup()` from `zero/test`. The scaffolded `afterEach(cleanup)`
+already wires this in.
+
+To assert that a store called a specific Web API, wrap the method
+with `spy()` and check the recorded calls:
+
+```ts
+import { spy, cleanup } from "zero/test";
+
+beforeEach(() => {
+  localStorage.setItem = spy(localStorage.setItem.bind(localStorage));
+});
+afterEach(cleanup);
+
+it("persists the new todo to localStorage", () => {
+  addTodo("buy milk");
+  expect(localStorage.setItem).toHaveBeenCalledWith("todos", JSON.stringify([{ text: "buy milk" }]));
+});
+```
+
+Timers fire in **registration order**, not by wall-clock `ms` — there
+is no event loop with real time. The natural way to drain pending
+timers in a test is to `await Promise.resolve()` between scheduling
+and the assertion; that's what the harness does for promise-driven
+test code already. If a test needs to swap a global wholesale (e.g.
+`window.matchMedia = (q) => ({ matches: q.includes("dark"), ... })`),
+restore the original in `beforeEach` — `cleanup()` does not
+auto-restore reassigned globals.
+
 ---
 
 ## 10. Performance

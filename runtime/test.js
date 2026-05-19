@@ -1,6 +1,7 @@
 import { commit } from "./template.js";
 import { _createScope } from "./reactivity.js";
 import { _setCurrentApp } from "./app.js";
+import { Event, KeyboardEvent, MouseEvent } from "./dom-shim.js";
 
 /**
  * @typedef {{ name: string, parent: DescribeNode|null, children: Array<DescribeNode|ItNode>, beforeAll: Function[], afterAll: Function[], beforeEach: Function[], afterEach: Function[] }} DescribeNode
@@ -178,32 +179,64 @@ export function text(el, selector) {
 }
 
 /**
- * Dispatch a synthetic event on `el`.
+ * Dispatch a synthetic event on `el`. Uses the appropriate Event/KeyboardEvent/
+ * MouseEvent constructor based on `type`, then layers any extra `data` fields
+ * onto the event so older test code that passed e.g. `{target: {value: ...}}`
+ * still observes the same shape inside handlers.
  * @param {object} el
  * @param {string} type
  * @param {Record<string, unknown>} [data]
  * @returns {void}
  */
 export function fire(el, type, data = {}) {
-  let prevented = false;
-  el.dispatchEvent({
-    type,
-    ...data,
-    preventDefault() { prevented = true; },
-    stopPropagation() {},
-    get defaultPrevented() { return prevented; },
-  });
+  const ctor =
+    type.startsWith("key") ? KeyboardEvent
+      : (type === "click" || type === "dblclick" || type.startsWith("mouse")) ? MouseEvent
+        : Event;
+  const ev = new ctor(type, { bubbles: true, cancelable: true, ...data });
+  Object.assign(ev, data);
+  el.dispatchEvent(ev);
 }
 
 /**
- * Dispose all scopes created by `render()` since the last `cleanup()`,
- * clear the current-app stub, and empty the render tracker.
+ * Reset per-test mutable shim state: render scopes, current app, web storage,
+ * pending timers, focused element, document title, and document subtree.
+ * Order is intentional — scopes dispose first so their teardown callbacks can
+ * still touch storage / timers; then storage clears; then timers cancel; then
+ * document fields reset. Each block is feature-detected so the same function
+ * works in both Boa and node:test.
  * @returns {void}
  */
 export function cleanup() {
   for (const { scope } of _renderTracker) scope.dispose();
   _renderTracker.length = 0;
   _setCurrentApp(null);
+
+  if (typeof globalThis.localStorage !== "undefined" && typeof globalThis.localStorage.clear === "function") {
+    globalThis.localStorage.clear();
+  }
+  if (typeof globalThis.sessionStorage !== "undefined" && typeof globalThis.sessionStorage.clear === "function") {
+    globalThis.sessionStorage.clear();
+  }
+
+  if (typeof globalThis.__clearAllTimers__ === "function") {
+    globalThis.__clearAllTimers__();
+  }
+
+  if (typeof globalThis.document !== "undefined") {
+    const doc = globalThis.document;
+    if ("_activeElement" in doc) doc._activeElement = null;
+    if ("_title" in doc) doc._title = "";
+    // Empty body and head; documentElement itself is left in place so that
+    // `document.body` / `document.head` remain attached children.
+    for (const root of [doc.body, doc.head]) {
+      if (root && Array.isArray(root.childNodes)) {
+        for (const c of [...root.childNodes]) {
+          if (typeof root.removeChild === "function") root.removeChild(c);
+        }
+      }
+    }
+  }
 }
 
 /** @internal */

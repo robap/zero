@@ -210,6 +210,633 @@ function _cloneNode(node, deep) {
   return clone;
 }
 
+/**
+ * Resolve an `addEventListener` `options` argument (boolean or object) into a
+ * `{capture, once}` record. Extracted into a top-level helper so the branch
+ * doesn't sit inline with `createElement` (see boa-maplock-finalizer note).
+ * @internal
+ * @param {boolean|object|undefined} options
+ * @returns {{ capture: boolean, once: boolean }}
+ */
+function _normalizeListenerOptions(options) {
+  if (typeof options === "boolean") return { capture: options, once: false };
+  const opts = options || {};
+  return { capture: Boolean(opts.capture), once: Boolean(opts.once) };
+}
+
+/**
+ * Resolve a `removeEventListener` `options` argument (boolean or object) to a
+ * `capture` flag.
+ * @internal
+ * @param {boolean|object|undefined} options
+ * @returns {boolean}
+ */
+function _resolveRemoveCapture(options) {
+  if (typeof options === "boolean") return options;
+  return Boolean(options && options.capture);
+}
+
+/**
+ * Append a listener entry to `el._listeners` keyed by `event`.
+ * @internal
+ * @param {object} el
+ * @param {string} event
+ * @param {Function} handler
+ * @param {boolean|object|undefined} options
+ * @returns {void}
+ */
+function _addListener(el, event, handler, options) {
+  const { capture, once } = _normalizeListenerOptions(options);
+  if (!el._listeners.has(event)) el._listeners.set(event, []);
+  el._listeners.get(event).push({ handler, once, capture });
+}
+
+/**
+ * Remove a listener entry from `el._listeners` matching `handler` and capture
+ * flag.
+ * @internal
+ * @param {object} el
+ * @param {string} event
+ * @param {Function} handler
+ * @param {boolean|object|undefined} options
+ * @returns {void}
+ */
+function _removeListener(el, event, handler, options) {
+  if (!el._listeners.has(event)) return;
+  const wantCapture = _resolveRemoveCapture(options);
+  const list = el._listeners
+    .get(event)
+    .filter(e => !(e.handler === handler && e.capture === wantCapture));
+  el._listeners.set(event, list);
+}
+
+/**
+ * Decorate a legacy plain-object event (no preventDefault/stopPropagation) with
+ * the methods the dispatch walker reads from. Allows callers that still pass
+ * `{type, ...}` bag-of-fields to round-trip through dispatchEvent.
+ * @internal
+ * @param {object} event
+ * @returns {object} the same object, mutated
+ */
+function _ensureEventShape(event) {
+  if (typeof event.preventDefault !== "function") {
+    event.preventDefault = () => { event.defaultPrevented = true; };
+  }
+  if (typeof event.stopPropagation !== "function") {
+    event.stopPropagation = () => { event._stopPropagation = true; };
+  }
+  if (typeof event.stopImmediatePropagation !== "function") {
+    event.stopImmediatePropagation = () => {
+      event._stopPropagation = true;
+      event._stopImmediate = true;
+    };
+  }
+  if (event._stopPropagation == null) event._stopPropagation = false;
+  if (event._stopImmediate == null) event._stopImmediate = false;
+  if (event.defaultPrevented == null) event.defaultPrevented = false;
+  return event;
+}
+
+/**
+ * Fire listeners registered on `node` for `event.type` whose `capture` flag
+ * matches `capture`. Respects stopImmediatePropagation and removes
+ * `{once: true}` entries after firing.
+ * @internal
+ * @param {object} node
+ * @param {object} event
+ * @param {boolean} capture
+ * @returns {void}
+ */
+function _fireListenersOn(node, event, capture) {
+  const listeners = node._listeners;
+  if (!listeners) return;
+  const list = listeners.get(event.type);
+  if (!list) return;
+  event.currentTarget = node;
+  const snapshot = [...list];
+  for (const entry of snapshot) {
+    if (entry.capture !== capture) continue;
+    if (event._stopImmediate) break;
+    entry.handler.call(node, event);
+    if (entry.once) {
+      const idx = list.indexOf(entry);
+      if (idx >= 0) list.splice(idx, 1);
+    }
+  }
+}
+
+/**
+ * Dispatch `event` on `target` using real-DOM capture/target/bubble ordering.
+ * Returns `false` only when `event.cancelable && event.defaultPrevented`.
+ * @internal
+ * @param {object} target
+ * @param {object} event
+ * @returns {boolean}
+ */
+function _dispatchEvent(target, event) {
+  _ensureEventShape(event);
+  if (event.target == null) event.target = target;
+
+  const path = [];
+  let n = target;
+  while (n) { path.push(n); n = n.parentNode; }
+
+  event.eventPhase = 1;
+  for (let i = path.length - 1; i >= 1; i--) {
+    if (event._stopPropagation) break;
+    _fireListenersOn(path[i], event, true);
+  }
+  if (!event._stopPropagation) {
+    event.eventPhase = 2;
+    _fireListenersOn(target, event, false);
+    if (!event._stopImmediate) _fireListenersOn(target, event, true);
+  }
+  if (event.bubbles && !event._stopPropagation) {
+    event.eventPhase = 3;
+    for (let i = 1; i < path.length; i++) {
+      if (event._stopPropagation) break;
+      _fireListenersOn(path[i], event, false);
+    }
+  }
+  event.eventPhase = 0;
+  event.currentTarget = null;
+  return !(event.cancelable && event.defaultPrevented);
+}
+
+/**
+ * Set `name` on `el`'s attribute map, special-casing `style` so the style map
+ * stays in sync.
+ * @internal
+ * @param {object} el
+ * @param {string} name
+ * @param {unknown} value
+ * @returns {void}
+ */
+function _setAttribute(el, name, value) {
+  if (name === "style") {
+    _writeStyleAttribute(el, value);
+    return;
+  }
+  el.attributes.set(name, String(value));
+}
+
+/**
+ * Read `name` from `el`'s attribute map; for `style` serialize the style map.
+ * @internal
+ * @param {object} el
+ * @param {string} name
+ * @returns {string|null}
+ */
+function _getAttribute(el, name) {
+  if (name === "style") return _readStyleAttribute(el);
+  return el.attributes.has(name) ? el.attributes.get(name) : null;
+}
+
+/**
+ * `hasAttribute` for `el`, special-casing `style` to consider the live style
+ * map.
+ * @internal
+ * @param {object} el
+ * @param {string} name
+ * @returns {boolean}
+ */
+function _hasAttribute(el, name) {
+  if (name === "style") {
+    return (el._styleMap && el._styleMap.size > 0) || el.attributes.has("style");
+  }
+  return el.attributes.has(name);
+}
+
+/**
+ * Remove `name` from `el`'s attribute map and clear the style map when needed.
+ * @internal
+ * @param {object} el
+ * @param {string} name
+ * @returns {void}
+ */
+function _removeAttribute(el, name) {
+  if (name === "style" && el._styleMap) el._styleMap.clear();
+  el.attributes.delete(name);
+}
+
+/**
+ * Read the element's current class attribute as a token array.
+ * @internal
+ * @param {object} el
+ * @returns {string[]}
+ */
+function _classTokens(el) {
+  const v = el.getAttribute("class");
+  if (v == null) return [];
+  return v.split(/\s+/).filter(Boolean);
+}
+
+/**
+ * Write a token array back to the class attribute (or remove the attribute
+ * when empty).
+ * @internal
+ * @param {object} el
+ * @param {string[]} tokens
+ * @returns {void}
+ */
+function _writeClassTokens(el, tokens) {
+  if (tokens.length === 0) {
+    el.removeAttribute("class");
+  } else {
+    el.setAttribute("class", tokens.join(" "));
+  }
+}
+
+/**
+ * Build a DOMTokenList-shaped object backed by the element's class attribute.
+ * @internal
+ * @param {object} el
+ * @returns {object}
+ */
+function _makeClassList(el) {
+  return {
+    add(...names) {
+      const t = _classTokens(el);
+      for (const n of names) if (!t.includes(n)) t.push(n);
+      _writeClassTokens(el, t);
+    },
+    remove(...names) {
+      const t = _classTokens(el).filter(x => !names.includes(x));
+      _writeClassTokens(el, t);
+    },
+    toggle(name, force) {
+      const t = _classTokens(el);
+      const has = t.includes(name);
+      const shouldHave = force === undefined ? !has : Boolean(force);
+      if (shouldHave && !has) {
+        t.push(name);
+        _writeClassTokens(el, t);
+        return true;
+      }
+      if (!shouldHave && has) {
+        _writeClassTokens(el, t.filter(x => x !== name));
+        return false;
+      }
+      return shouldHave;
+    },
+    contains(name) {
+      return _classTokens(el).includes(name);
+    },
+    replace(oldName, newName) {
+      const t = _classTokens(el);
+      const i = t.indexOf(oldName);
+      if (i < 0) return false;
+      t[i] = newName;
+      _writeClassTokens(el, t);
+      return true;
+    },
+    get length() { return _classTokens(el).length; },
+    item(i) { return _classTokens(el)[i] ?? null; },
+  };
+}
+
+/**
+ * Convert a camelCase identifier to its kebab-case form.
+ * @internal
+ * @param {string} s
+ * @returns {string}
+ */
+function _camelToKebab(s) {
+  return s.replace(/[A-Z]/g, c => "-" + c.toLowerCase());
+}
+
+/**
+ * Convert a kebab-case identifier to its camelCase form.
+ * @internal
+ * @param {string} s
+ * @returns {string}
+ */
+function _kebabToCamel(s) {
+  return s.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+}
+
+/**
+ * Build a DOMStringMap-shaped Proxy backed by the element's `data-*`
+ * attributes.
+ * @internal
+ * @param {object} el
+ * @returns {object}
+ */
+function _makeDataset(el) {
+  return new Proxy({}, {
+    get(_target, key) {
+      if (typeof key !== "string") return undefined;
+      const attr = "data-" + _camelToKebab(key);
+      const v = el.getAttribute(attr);
+      return v == null ? undefined : v;
+    },
+    set(_target, key, value) {
+      if (typeof key !== "string") return false;
+      el.setAttribute("data-" + _camelToKebab(key), String(value));
+      return true;
+    },
+    has(_target, key) {
+      if (typeof key !== "string") return false;
+      return el.hasAttribute("data-" + _camelToKebab(key));
+    },
+    deleteProperty(_target, key) {
+      if (typeof key !== "string") return true;
+      el.removeAttribute("data-" + _camelToKebab(key));
+      return true;
+    },
+    ownKeys() {
+      const keys = [];
+      for (const k of el.attributes.keys()) {
+        if (k.startsWith("data-")) keys.push(_kebabToCamel(k.slice(5)));
+      }
+      return keys;
+    },
+    getOwnPropertyDescriptor(_target, key) {
+      if (typeof key !== "string") return undefined;
+      const attr = "data-" + _camelToKebab(key);
+      if (!el.hasAttribute(attr)) return undefined;
+      return {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: el.getAttribute(attr),
+      };
+    },
+  });
+}
+
+/**
+ * Serialize a style map to a CSS declaration string.
+ * @internal
+ * @param {Map<string, string>} map
+ * @returns {string}
+ */
+function _styleSerialize(map) {
+  const parts = [];
+  for (const [k, v] of map) parts.push(`${k}: ${v}`);
+  return parts.join("; ");
+}
+
+/**
+ * Parse a CSS declaration string into the given style map (clears it first).
+ * Known limitation: ignores quoted values and !important; the component
+ * surface in the repo doesn't use these.
+ * @internal
+ * @param {Map<string, string>} map
+ * @param {string} str
+ * @returns {void}
+ */
+function _styleParseInto(map, str) {
+  map.clear();
+  if (!str) return;
+  for (const decl of str.split(";")) {
+    const idx = decl.indexOf(":");
+    if (idx < 0) continue;
+    const name = decl.slice(0, idx).trim();
+    const value = decl.slice(idx + 1).trim();
+    if (name) map.set(name, value);
+  }
+}
+
+/**
+ * Resolve a property key (camelCase or `--custom`) to its CSS property name.
+ * @internal
+ * @param {string} key
+ * @returns {string}
+ */
+function _styleKeyToProp(key) {
+  if (key.startsWith("--")) return key;
+  return _camelToKebab(key);
+}
+
+/**
+ * Build a CSSStyleDeclaration-shaped Proxy backed by an internal Map. Style
+ * mutations write into the map; `el.getAttribute('style')` reads back via
+ * `_styleSerialize`.
+ * @internal
+ * @param {object} el
+ * @param {Map<string, string>} map
+ * @returns {object}
+ */
+function _makeStyle(el, map) {
+  const api = {
+    setProperty(name, value) { map.set(String(name), String(value)); },
+    removeProperty(name) { map.delete(String(name)); },
+    getPropertyValue(name) { return map.get(String(name)) ?? ""; },
+    get cssText() { return _styleSerialize(map); },
+    set cssText(v) { _styleParseInto(map, String(v)); },
+  };
+  return new Proxy(api, {
+    get(target, key) {
+      if (typeof key === "string" && !(key in target)) {
+        return map.get(_styleKeyToProp(key)) ?? "";
+      }
+      return target[key];
+    },
+    set(target, key, value) {
+      if (typeof key === "string" && !(key in target)) {
+        map.set(_styleKeyToProp(key), String(value));
+        return true;
+      }
+      target[key] = value;
+      return true;
+    },
+  });
+  // `el` is referenced for future enhancements (e.g. firing mutation hooks).
+  // Leaving it unused is intentional for now.
+  // eslint-disable-next-line no-unreachable
+  void el;
+}
+
+/**
+ * Read concatenated text content of all descendant text nodes.
+ * @internal
+ * @param {object} el
+ * @returns {string}
+ */
+function _readTextContent(el) {
+  let out = "";
+  (function walk(node) {
+    if (node.nodeType === TEXT_NODE) out += node.nodeValue;
+    if (node.childNodes) for (const c of node.childNodes) walk(c);
+  })(el);
+  return out;
+}
+
+/**
+ * Remove every child of `el` then append a single text node with `text` (when
+ * non-empty).
+ * @internal
+ * @param {object} el
+ * @param {string} text
+ * @returns {void}
+ */
+function _writeTextContent(el, text) {
+  while (el.childNodes.length > 0) _removeChild(el, el.childNodes[0]);
+  if (text !== "") _appendChild(el, createTextNode(text));
+}
+
+/**
+ * Define `name` as a string property on `el` coupled to attribute `attrName`.
+ * @internal
+ * @param {object} el
+ * @param {string} prop
+ * @param {string} attrName
+ * @returns {void}
+ */
+function _defineStringAttrProp(el, prop, attrName) {
+  Object.defineProperty(el, prop, {
+    get() { return _getAttribute(el, attrName) ?? ""; },
+    set(v) { _setAttribute(el, attrName, v == null ? "" : String(v)); },
+    configurable: true,
+    enumerable: true,
+  });
+}
+
+/**
+ * Define `name` as a boolean property on `el` coupled to attribute presence.
+ * @internal
+ * @param {object} el
+ * @param {string} prop
+ * @param {string} attrName
+ * @returns {void}
+ */
+function _defineBoolAttrProp(el, prop, attrName) {
+  Object.defineProperty(el, prop, {
+    get() { return _hasAttribute(el, attrName); },
+    set(v) {
+      if (v) _setAttribute(el, attrName, "");
+      else _removeAttribute(el, attrName);
+    },
+    configurable: true,
+    enumerable: true,
+  });
+}
+
+/**
+ * @internal
+ * @param {object} el
+ * @returns {void}
+ */
+function _attachClassList(el) {
+  Object.defineProperty(el, "classList", {
+    value: _makeClassList(el),
+    configurable: true,
+  });
+}
+
+/**
+ * @internal
+ * @param {object} el
+ * @returns {void}
+ */
+function _attachDataset(el) {
+  Object.defineProperty(el, "dataset", {
+    value: _makeDataset(el),
+    configurable: true,
+  });
+}
+
+/**
+ * @internal
+ * @param {object} el
+ * @returns {void}
+ */
+function _attachStyle(el) {
+  const styleMap = new Map();
+  el._styleMap = styleMap;
+  Object.defineProperty(el, "style", {
+    value: _makeStyle(el, styleMap),
+    configurable: true,
+  });
+}
+
+/**
+ * @internal
+ * @param {object} el
+ * @returns {void}
+ */
+function _attachTextContent(el) {
+  Object.defineProperty(el, "textContent", {
+    get() { return _readTextContent(el); },
+    set(v) { _writeTextContent(el, v == null ? "" : String(v)); },
+    configurable: true,
+    enumerable: true,
+  });
+}
+
+/**
+ * @internal
+ * @param {object} el
+ * @returns {void}
+ */
+function _attachClassNameProp(el) {
+  Object.defineProperty(el, "className", {
+    get() { return _getAttribute(el, "class") ?? ""; },
+    set(v) { _setAttribute(el, "class", v == null ? "" : String(v)); },
+    configurable: true,
+    enumerable: true,
+  });
+}
+
+/**
+ * @internal
+ * @param {object} el
+ * @returns {void}
+ */
+function _attachInputProps(el) {
+  _defineStringAttrProp(el, "value", "value");
+  _defineBoolAttrProp(el, "checked", "checked");
+  _defineBoolAttrProp(el, "disabled", "disabled");
+  _defineBoolAttrProp(el, "selected", "selected");
+  _defineStringAttrProp(el, "name", "name");
+  _defineStringAttrProp(el, "type", "type");
+  _defineStringAttrProp(el, "placeholder", "placeholder");
+  _defineStringAttrProp(el, "htmlFor", "for");
+}
+
+/**
+ * Attach the element property surface (classList, dataset, style, textContent,
+ * className, input-shaped properties) onto `el`. Each group lives in its own
+ * helper to keep `createElement`'s body trim — see boa-maplock-finalizer notes.
+ * @internal
+ * @param {object} el
+ * @returns {void}
+ */
+function _attachElementProps(el) {
+  _attachClassList(el);
+  _attachDataset(el);
+  _attachStyle(el);
+  _attachTextContent(el);
+  _attachClassNameProp(el);
+  _attachInputProps(el);
+}
+
+/**
+ * Read the `style` attribute by serializing the element's style map.
+ * @internal
+ * @param {object} el
+ * @returns {string|null}
+ */
+function _readStyleAttribute(el) {
+  if (!el._styleMap || el._styleMap.size === 0) {
+    return el.attributes.has("style") ? el.attributes.get("style") : null;
+  }
+  return _styleSerialize(el._styleMap);
+}
+
+/**
+ * Write the `style` attribute by parsing it into the element's style map.
+ * @internal
+ * @param {object} el
+ * @param {string} value
+ * @returns {void}
+ */
+function _writeStyleAttribute(el, value) {
+  el.attributes.set("style", String(value));
+  if (el._styleMap) _styleParseInto(el._styleMap, String(value));
+}
+
 function createElement(tagName) {
   const el = {
     nodeType: ELEMENT_NODE,
@@ -221,29 +848,19 @@ function createElement(tagName) {
     parentNode: null,
     _listeners: new Map(),
 
-    setAttribute(name, value) { this.attributes.set(name, String(value)); },
-    removeAttribute(name) { this.attributes.delete(name); },
-    getAttribute(name) { return this.attributes.has(name) ? this.attributes.get(name) : null; },
-    hasAttribute(name) { return this.attributes.has(name); },
+    setAttribute(name, value) { _setAttribute(this, name, value); },
+    removeAttribute(name) { _removeAttribute(this, name); },
+    getAttribute(name) { return _getAttribute(this, name); },
+    hasAttribute(name) { return _hasAttribute(this, name); },
 
     addEventListener(event, handler, options) {
-      if (!this._listeners.has(event)) this._listeners.set(event, []);
-      this._listeners.get(event).push({ handler, once: options?.once ?? false });
+      _addListener(this, event, handler, options);
     },
-    removeEventListener(event, handler) {
-      if (!this._listeners.has(event)) return;
-      const list = this._listeners.get(event).filter(e => e.handler !== handler);
-      this._listeners.set(event, list);
+    removeEventListener(event, handler, options) {
+      _removeListener(this, event, handler, options);
     },
     dispatchEvent(event) {
-      const list = this._listeners.get(event.type);
-      if (!list) return;
-      const toRemove = [];
-      for (const entry of [...list]) {
-        entry.handler(event);
-        if (entry.once) toRemove.push(entry.handler);
-      }
-      for (const h of toRemove) this.removeEventListener(event.type, h);
+      return _dispatchEvent(this, event);
     },
 
     querySelector(selector) {
@@ -279,14 +896,13 @@ function createElement(tagName) {
     removeChild(child) { return _removeChild(this, child); },
     cloneNode(deep = false) { return _cloneNode(this, deep); },
 
-    // No-ops present on real HTMLElement; component code routinely calls these
-    // after DOM mutations and they must not throw under the test shim.
-    focus() {},
-    blur() {},
+    focus() { _focusElement(this); },
+    blur() { _blurElement(this); },
     click() {},
     scrollIntoView() {},
   };
   _applySiblingGetters(el, () => el.parentNode);
+  _attachElementProps(el);
   return el;
 }
 
@@ -332,6 +948,92 @@ function createDocumentFragment() {
   return frag;
 }
 
+/**
+ * Construct a real-DOM-shaped Event with capture/target/bubble metadata.
+ * @internal
+ * @param {string} type
+ * @param {{ bubbles?: boolean, cancelable?: boolean, composed?: boolean }} [init]
+ * @returns {object}
+ */
+function _makeEvent(type, init) {
+  init = init || {};
+  const ev = {
+    type: String(type),
+    bubbles: Boolean(init.bubbles),
+    cancelable: Boolean(init.cancelable),
+    composed: Boolean(init.composed),
+    defaultPrevented: false,
+    target: null,
+    currentTarget: null,
+    eventPhase: 0,
+    _stopPropagation: false,
+    _stopImmediate: false,
+    preventDefault() { if (ev.cancelable) ev.defaultPrevented = true; },
+    stopPropagation() { ev._stopPropagation = true; },
+    stopImmediatePropagation() { ev._stopPropagation = true; ev._stopImmediate = true; },
+  };
+  return ev;
+}
+
+/**
+ * @param {string} type
+ * @param {object} [init]
+ * @returns {object}
+ */
+export function Event(type, init) {
+  return _makeEvent(type, init);
+}
+
+/**
+ * @param {string} type
+ * @param {{ detail?: unknown } & object} [init]
+ * @returns {object}
+ */
+export function CustomEvent(type, init) {
+  const ev = _makeEvent(type, init);
+  ev.detail = init && "detail" in init ? init.detail : null;
+  return ev;
+}
+
+/**
+ * @param {string} type
+ * @param {{ key?: string, code?: string, altKey?: boolean, ctrlKey?: boolean, metaKey?: boolean, shiftKey?: boolean, repeat?: boolean } & object} [init]
+ * @returns {object}
+ */
+export function KeyboardEvent(type, init) {
+  const ev = _makeEvent(type, init);
+  init = init || {};
+  ev.key = init.key ?? "";
+  ev.code = init.code ?? "";
+  ev.altKey = Boolean(init.altKey);
+  ev.ctrlKey = Boolean(init.ctrlKey);
+  ev.metaKey = Boolean(init.metaKey);
+  ev.shiftKey = Boolean(init.shiftKey);
+  ev.repeat = Boolean(init.repeat);
+  return ev;
+}
+
+/**
+ * @param {string} type
+ * @param {{ clientX?: number, clientY?: number, screenX?: number, screenY?: number, button?: number, buttons?: number, altKey?: boolean, ctrlKey?: boolean, metaKey?: boolean, shiftKey?: boolean } & object} [init]
+ * @returns {object}
+ */
+export function MouseEvent(type, init) {
+  const ev = _makeEvent(type, init);
+  init = init || {};
+  ev.clientX = init.clientX ?? 0;
+  ev.clientY = init.clientY ?? 0;
+  ev.screenX = init.screenX ?? 0;
+  ev.screenY = init.screenY ?? 0;
+  ev.button = init.button ?? 0;
+  ev.buttons = init.buttons ?? 0;
+  ev.altKey = Boolean(init.altKey);
+  ev.ctrlKey = Boolean(init.ctrlKey);
+  ev.metaKey = Boolean(init.metaKey);
+  ev.shiftKey = Boolean(init.shiftKey);
+  return ev;
+}
+
 function _makeEventTarget() {
   const _listeners = new Map();
   return {
@@ -369,6 +1071,60 @@ function createElementNS(ns, tagName) {
   return el;
 }
 
+/**
+ * Update `document._activeElement` to `el`, dispatching a `blur` on the
+ * previously focused element and a `focus` on `el`.
+ * @internal
+ * @param {object} el
+ * @returns {void}
+ */
+function _focusElement(el) {
+  const prev = document._activeElement;
+  if (prev === el) return;
+  if (prev) {
+    document._activeElement = null;
+    _dispatchEvent(prev, _makeEvent("blur", {}));
+  }
+  document._activeElement = el;
+  _dispatchEvent(el, _makeEvent("focus", {}));
+}
+
+/**
+ * Clear `document._activeElement` when `el` currently holds focus and
+ * dispatch a `blur` event on it.
+ * @internal
+ * @param {object} el
+ * @returns {void}
+ */
+function _blurElement(el) {
+  if (document._activeElement !== el) return;
+  document._activeElement = null;
+  _dispatchEvent(el, _makeEvent("blur", {}));
+}
+
+const _documentElement = createElement("html");
+const _head = createElement("head");
+const _body = createElement("body");
+_appendChild(_documentElement, _head);
+_appendChild(_documentElement, _body);
+
+/**
+ * Walk descendants of `_documentElement` looking for the first element with
+ * matching id attribute.
+ * @internal
+ * @param {string} id
+ * @returns {object|null}
+ */
+function _getElementById(id) {
+  let found = null;
+  _walkDescendants(_documentElement, node => {
+    if (!found && node.nodeType === ELEMENT_NODE && node.getAttribute("id") === id) {
+      found = node;
+    }
+  });
+  return found;
+}
+
 export const document = Object.assign(
   {
     createElement,
@@ -376,7 +1132,16 @@ export const document = Object.assign(
     createTextNode,
     createComment,
     createDocumentFragment,
-    childNodes: [],
+    childNodes: [_documentElement],
+    _activeElement: null,
+    _title: "",
+    get documentElement() { return _documentElement; },
+    get head() { return _head; },
+    get body() { return _body; },
+    get activeElement() { return this._activeElement; },
+    get title() { return this._title; },
+    set title(v) { this._title = v == null ? "" : String(v); },
+    getElementById(id) { return _getElementById(String(id)); },
     appendChild(child) { return _appendChild(this, child); },
     querySelector(selector) {
       let found = null;
@@ -395,6 +1160,7 @@ export const document = Object.assign(
   },
   _makeEventTarget(),
 );
+_documentElement.parentNode = document;
 
 const _windowEventTarget = _makeEventTarget();
 
@@ -454,6 +1220,256 @@ export const window = Object.assign(_windowEventTarget, {
   history: _history,
 });
 
+/**
+ * Build an in-memory Storage-shaped object (`getItem`, `setItem`, `removeItem`,
+ * `clear`, `key`, `length`). Backed by a plain object plus an insertion-order
+ * array instead of a `Map` so Boa's MapLock GC bug stays out of reach.
+ * @internal
+ * @returns {object}
+ */
+function _makeStorage() {
+  const data = Object.create(null);
+  const order = [];
+  return {
+    getItem(k) {
+      const key = String(k);
+      return key in data ? data[key] : null;
+    },
+    setItem(k, v) {
+      const key = String(k);
+      if (!(key in data)) order.push(key);
+      data[key] = String(v);
+    },
+    removeItem(k) {
+      const key = String(k);
+      if (key in data) {
+        delete data[key];
+        const idx = order.indexOf(key);
+        if (idx >= 0) order.splice(idx, 1);
+      }
+    },
+    clear() {
+      for (const k of order) delete data[k];
+      order.length = 0;
+    },
+    key(i) { return order[i] ?? null; },
+    get length() { return order.length; },
+  };
+}
+
+export const localStorage = _makeStorage();
+export const sessionStorage = _makeStorage();
+
+/**
+ * Install `setTimeout` / `clearTimeout` / `setInterval` / `clearInterval` /
+ * `requestAnimationFrame` / `cancelAnimationFrame` on `globalThis`, backed by
+ * a single JS-side registry whose microtask wrapper drains pending ids from a
+ * queue. `ms` is ignored — all pending timers fire in FIFO order on the next
+ * job-queue drain (typically the next `await`). Returns the registry so tests
+ * can introspect.
+ *
+ * Implemented entirely in JS so the Boa host does not need any unsafe closure
+ * captures of `JsValue` — every cross-call piece of state lives on the
+ * registry object that lives on `globalThis`.
+ * @internal
+ * @returns {void}
+ */
+function _installTimerHost() {
+  if (typeof globalThis.setTimeout === "function") return;
+  const state = {
+    next: 0,
+    cb: Object.create(null),
+    cancelled: Object.create(null),
+    intervals: Object.create(null),
+    raf: Object.create(null),
+    queue: [],
+    rafCounter: 0,
+  };
+  function fire() {
+    if (state.queue.length === 0) return;
+    const id = state.queue.shift();
+    if (state.cancelled[id]) {
+      delete state.cb[id];
+      delete state.cancelled[id];
+      delete state.intervals[id];
+      delete state.raf[id];
+      return;
+    }
+    const cb = state.cb[id];
+    const isInterval = Boolean(state.intervals[id]);
+    const isRaf = Boolean(state.raf[id]);
+    if (!isInterval) delete state.cb[id];
+    if (typeof cb !== "function") return;
+    if (isRaf) {
+      delete state.raf[id];
+      state.rafCounter += 16;
+      cb(state.rafCounter);
+    } else {
+      cb();
+    }
+    if (isInterval && !state.cancelled[id]) {
+      state.queue.push(id);
+      Promise.resolve().then(fire);
+    }
+  }
+  function schedule(cb, isInterval, isRaf) {
+    const id = ++state.next;
+    state.cb[id] = cb;
+    if (isInterval) state.intervals[id] = true;
+    if (isRaf) state.raf[id] = true;
+    state.queue.push(id);
+    Promise.resolve().then(fire);
+    return id;
+  }
+  function cancel(id) {
+    if (id != null) state.cancelled[id] = true;
+  }
+  function clearAll() {
+    for (let i = 1; i <= state.next; i++) state.cancelled[i] = true;
+  }
+  globalThis.__zero_timers__ = state;
+  globalThis.setTimeout = (cb, _ms) => schedule(cb, false, false);
+  globalThis.setInterval = (cb, _ms) => schedule(cb, true, false);
+  globalThis.requestAnimationFrame = cb => schedule(cb, false, true);
+  globalThis.clearTimeout = cancel;
+  globalThis.clearInterval = cancel;
+  globalThis.cancelAnimationFrame = cancel;
+  globalThis.__clearAllTimers__ = clearAll;
+}
+
+/**
+ * Build a MediaQueryList-shaped object. The shim's `.matches` is always
+ * `false`; tests that want a specific outcome reassign `window.matchMedia`.
+ * @internal
+ * @param {string} query
+ * @returns {object}
+ */
+function _makeMediaQueryList(query) {
+  const target = _makeEventTarget();
+  const mql = Object.assign(target, {
+    media: String(query),
+    matches: false,
+    onchange: null,
+    addListener(fn) { target.addEventListener("change", fn); },
+    removeListener(fn) { target.removeEventListener("change", fn); },
+  });
+  const baseDispatch = target.dispatchEvent.bind(target);
+  mql.dispatchEvent = function(event) {
+    baseDispatch(event);
+    if (typeof mql.onchange === "function" && event.type === "change") {
+      mql.onchange.call(mql, event);
+    }
+  };
+  return mql;
+}
+
+/**
+ * @internal
+ * @returns {object}
+ */
+function _makeNavigator() {
+  return {
+    userAgent: "zero-test-shim/1.0",
+    language: "en-US",
+    languages: ["en-US"],
+    onLine: true,
+    platform: "",
+  };
+}
+
+/**
+ * Build a {@link Crypto}-shaped object. Not cryptographically strong — uses
+ * `Math.random()` to fill bytes. Use case is store IDs, not secrets.
+ * @internal
+ * @returns {object}
+ */
+function _makeCrypto() {
+  function randomUUID() {
+    const bytes = new Array(16);
+    for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = bytes.map(b => b.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+  function getRandomValues(arr) {
+    for (let i = 0; i < arr.length; i++) {
+      arr[i] = Math.floor(Math.random() * 0x100000000);
+    }
+    return arr;
+  }
+  return { randomUUID, getRandomValues };
+}
+
+/**
+ * Build an Observer constructor (Intersection/Resize/Mutation). The shim's
+ * observers never fire automatically — tests trigger callbacks manually.
+ * @internal
+ * @param {boolean} withTakeRecords
+ * @returns {Function}
+ */
+function _makeObserver(withTakeRecords) {
+  return function Observer(callback) {
+    this.callback = callback;
+    this.observations = [];
+    this.observe = (target, options) => {
+      this.observations.push({ target, options });
+    };
+    this.unobserve = (target) => {
+      this.observations = this.observations.filter(o => o.target !== target);
+    };
+    this.disconnect = () => { this.observations.length = 0; };
+    if (withTakeRecords) this.takeRecords = () => [];
+  };
+}
+
+/**
+ * @internal
+ * @returns {object}
+ */
+function _makeComputedStyle() {
+  return {
+    getPropertyValue() { return ""; },
+    setProperty() { throw new Error("getComputedStyle result is read-only"); },
+    length: 0,
+  };
+}
+
+window.matchMedia = function(query) { return _makeMediaQueryList(query); };
+window.navigator = _makeNavigator();
+window.getComputedStyle = function() { return _makeComputedStyle(); };
+
+const _IntersectionObserver = _makeObserver(false);
+const _ResizeObserver = _makeObserver(false);
+const _MutationObserver = _makeObserver(true);
+
+Object.defineProperty(globalThis, "navigator", {
+  value: window.navigator,
+  writable: true,
+  configurable: true,
+});
+Object.defineProperty(globalThis, "crypto", {
+  value: _makeCrypto(),
+  writable: true,
+  configurable: true,
+});
+window.crypto = globalThis.crypto;
+Object.defineProperty(globalThis, "IntersectionObserver", {
+  value: _IntersectionObserver,
+  writable: true,
+  configurable: true,
+});
+Object.defineProperty(globalThis, "ResizeObserver", {
+  value: _ResizeObserver,
+  writable: true,
+  configurable: true,
+});
+Object.defineProperty(globalThis, "MutationObserver", {
+  value: _MutationObserver,
+  writable: true,
+  configurable: true,
+});
+
 // Forward-reference alias so _history.back/forward can reference window after construction.
 const exports_window = window;
 
@@ -464,3 +1480,15 @@ if (typeof globalThis.document === 'undefined') {
 if (typeof globalThis.window === 'undefined') {
   globalThis.window = window;
 }
+
+if (typeof globalThis.Event === 'undefined') globalThis.Event = Event;
+if (typeof globalThis.CustomEvent === 'undefined') globalThis.CustomEvent = CustomEvent;
+if (typeof globalThis.KeyboardEvent === 'undefined') globalThis.KeyboardEvent = KeyboardEvent;
+if (typeof globalThis.MouseEvent === 'undefined') globalThis.MouseEvent = MouseEvent;
+
+Object.defineProperty(globalThis, 'localStorage', { value: localStorage, writable: true, configurable: true });
+Object.defineProperty(globalThis, 'sessionStorage', { value: sessionStorage, writable: true, configurable: true });
+window.localStorage = localStorage;
+window.sessionStorage = sessionStorage;
+
+_installTimerHost();

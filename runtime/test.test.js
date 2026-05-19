@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { document, window } from "./dom-shim.js";
+import { document, window, localStorage, sessionStorage } from "./dom-shim.js";
 import { signal } from "./reactivity.js";
 import { html } from "./template.js";
 import { inject } from "./app.js";
@@ -23,10 +23,14 @@ import {
   __resetTestTree__,
 } from "./test.js";
 
-// Ensure a clean env before the suite
+// Ensure a clean env before the suite. `document.childNodes` always starts with
+// `[documentElement]` after the Step 3 dom-shim changes; preserving that lets
+// subsequent tests still find `document.body` etc.
 beforeEach(() => {
   __resetTestTree__();
-  document.childNodes.length = 0;
+  document.childNodes.length = 1;
+  document.body.childNodes.length = 0;
+  document.head.childNodes.length = 0;
   document._listeners.clear();
   window._listeners.clear();
 });
@@ -179,6 +183,44 @@ describe("DOM helpers", () => {
     counter.set(99);
     // After cleanup, the effect should be disposed and not fire
     assert.equal(renderCount, countBefore, "effect should not fire after cleanup");
+  });
+
+  describe("cleanup() extensions", () => {
+    it("clears localStorage and sessionStorage", () => {
+      localStorage.setItem("a", "1");
+      sessionStorage.setItem("b", "2");
+      cleanup();
+      assert.equal(localStorage.length, 0);
+      assert.equal(sessionStorage.length, 0);
+    });
+
+    it("resets document.title and document.activeElement", () => {
+      document.title = "hi";
+      const el = document.createElement("input");
+      el.focus();
+      cleanup();
+      assert.equal(document.title, "");
+      assert.equal(document.activeElement, null);
+    });
+
+    it("empties document.body / head / documentElement childNodes", () => {
+      document.body.appendChild(document.createElement("div"));
+      document.head.appendChild(document.createElement("meta"));
+      cleanup();
+      assert.equal(document.body.childNodes.length, 0);
+      assert.equal(document.head.childNodes.length, 0);
+    });
+
+    it("cancels pending timers via __clearAllTimers__ when present", () => {
+      let called = 0;
+      globalThis.__clearAllTimers__ = () => { called++; };
+      try {
+        cleanup();
+        assert.equal(called, 1);
+      } finally {
+        delete globalThis.__clearAllTimers__;
+      }
+    });
   });
 
   it("fire dispatches event and handler is called", () => {

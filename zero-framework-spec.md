@@ -974,7 +974,7 @@ import { render, find, findAll, text, fire, cleanup } from "z/test"
 
 ### No Browser Required
 
-`zero test` uses a minimal DOM implementation (~500 lines) that supports only the DOM APIs that z's template system uses. No jsdom, no happy-dom, no headless browser.
+`zero test` uses an in-memory DOM implementation (~1500 lines) that covers what real apps reach for during tests: real-DOM event constructors with capture/target/bubble dispatch, `classList` / `dataset` / `style` / input-shaped element properties, `document.body` / `head` / `documentElement` / `activeElement` / `title`, web storage (`localStorage` / `sessionStorage`), `matchMedia`, `navigator`, `crypto`, observer constructors, and host timers (`setTimeout` / `setInterval` / `requestAnimationFrame`, scheduled through Boa's job queue). No jsdom, no happy-dom, no headless browser. Per-test mutable state — storage, timers, focus, title — auto-resets via `cleanup()`.
 
 This is possible **because components are plain functions**, not web components. They don't depend on `HTMLElement`, `customElements`, or `shadowRoot`. A component is just a function that calls `signal()` and returns `html\`...\``. Both work without a browser.
 
@@ -1385,10 +1385,10 @@ State machines as a first-class primitive are deferred indefinitely. See Section
 - [x] Tested with `zero test` — one `*.test.ts` per component, plus framework-side integration tests (`tests/showcase_build.rs`, `tests/showcase_dev.rs`, `tests/component_library.rs`)
 
 ### Phase 10 — Internal Quality
-- [ ] Identify oversized functions across the Rust codebase (target: any function above ~80 lines, or with high cyclomatic complexity)
-- [ ] Refactor into smaller units with named intermediate steps; cover the seams with unit tests
-- [ ] Candidates to investigate first: `src/scaffold.rs::write_to` (will be split as part of Phase 7), `src/build/bundler.rs`, `src/dev/server.rs`, anything inside `src/test_runner/`
-- [ ] No behavioral changes — purely structural
+- [x] Identify oversized functions across the Rust codebase (target: any function above ~80 lines, or with high cyclomatic complexity)
+- [x] Refactor into smaller units with named intermediate steps; cover the seams with unit tests
+- [x] Candidates to investigate first: `src/scaffold.rs::write_to` (will be split as part of Phase 7), `src/build/bundler.rs`, `src/dev/server.rs`, anything inside `src/test_runner/`
+- [x] No behavioral changes — purely structural
 
 ### Phase 11 — Decorators (deferred indefinitely)
 
@@ -1405,6 +1405,14 @@ slot; three of the four shipped under `issues/test-improvements/`:
 source-mapped failure locations + snippets, `zero test --coverage`, and
 `zero mutate` as a dedicated subcommand. Watch mode is the one
 remaining item and stays unscheduled.)
+
+### Phase 13 — DOM shim expansion (`issues/dom-shim/spec.md`)
+- [x] Real `Event` / `CustomEvent` / `KeyboardEvent` / `MouseEvent` constructors with capture/target/bubble dispatch
+- [x] Element property surface (`classList`, `dataset`, `style`, `textContent`, `className`, input-shaped properties)
+- [x] Document additions (`documentElement` / `head` / `body` / `getElementById` / `activeElement` / `title`)
+- [x] Web storage (`localStorage` / `sessionStorage`) with auto-clear in `cleanup()`
+- [x] Auxiliary globals (`matchMedia`, `navigator`, `crypto`, Observers, `getComputedStyle`)
+- [x] Job-queue-backed timers (`setTimeout` / `setInterval` / `requestAnimationFrame` + `clearXxx`); `cleanup()` cancels pending work via `__clearAllTimers__`
 
 ### Phase 12 — Best Practices & Example Applications
 - [x] Three shipped example projects under `examples/`: `counter` (~50 LOC), `todos` (mid-size, structured signal + localStorage), `tracker` (full app — auth, routes, guards, HTTP, comments)
