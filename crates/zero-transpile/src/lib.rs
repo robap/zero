@@ -3,6 +3,36 @@
 //! Wraps `swc_core` with a narrow function-call API. Type-strip only; decorators
 //! and JSX are intentionally disabled.
 
+pub use swc_core::common::{BytePos, SourceMap, Span, sync::Lrc};
+pub use swc_core::ecma::ast;
+
+/// Parsed module + its `SourceMap`, returned by [`parse_module`].
+pub struct ParsedModule {
+    /// The parsed SWC AST module.
+    pub module: ast::Module,
+    /// The `SourceMap` the module was parsed against. Callers use it to
+    /// translate `Span`s into line / column positions.
+    pub source_map: Lrc<SourceMap>,
+}
+
+/// Parse `source` as a TypeScript module and return the AST + its `SourceMap`.
+///
+/// # Parameters
+/// - `source`: the TS/JS source text.
+/// - `filename`: logical filename used for diagnostics + source-map source paths.
+///
+/// # Returns
+/// `Ok(ParsedModule)` on success, `Err(TranspileError)` with line / column /
+/// message on parse failure.
+pub fn parse_module(source: &str, filename: &str) -> Result<ParsedModule, TranspileError> {
+    let cm: Lrc<SourceMap> = Default::default();
+    let module = parse_ts_source(&cm, source, filename)?;
+    Ok(ParsedModule {
+        module,
+        source_map: cm,
+    })
+}
+
 /// Options controlling a single `transpile_typescript` invocation.
 pub struct TranspileOptions<'a> {
     /// Logical filename used for diagnostics and source-map source paths.
@@ -59,11 +89,10 @@ pub fn transpile_typescript(
     source: &str,
     opts: &TranspileOptions<'_>,
 ) -> Result<TranspileOutput, TranspileError> {
-    use swc_core::common::SourceMap;
-    use swc_core::common::sync::Lrc;
-
-    let cm: Lrc<SourceMap> = Default::default();
-    let module = parse_ts_source(&cm, source, opts.filename)?;
+    let ParsedModule {
+        module,
+        source_map: cm,
+    } = parse_module(source, opts.filename)?;
     let module = strip_types(module);
     let (mut code, srcmap_buf) = emit_js(&cm, &module, opts.filename)?;
     let source_map_json = if opts.inline_source_map || opts.emit_source_map {
@@ -444,6 +473,30 @@ export const v = 1;
         let src = "@foo class C {}";
         let err = transpile_typescript(src, &opts("dec.ts"))
             .expect_err("expected error because decorators are disabled");
+        assert!(!err.message.is_empty(), "message empty");
+    }
+
+    #[test]
+    fn parse_module_returns_ast_and_source_map() {
+        use swc_core::common::Spanned as _;
+        let parsed = parse_module("const x: number = 1;", "a.ts").expect("ok");
+        assert_eq!(
+            parsed.module.body.len(),
+            1,
+            "expected exactly one top-level item"
+        );
+        let span = parsed.module.body[0].span();
+        let pos = parsed.source_map.lookup_char_pos(span.lo);
+        assert_eq!(pos.line, 1, "expected first item on line 1");
+    }
+
+    #[test]
+    fn parse_module_surfaces_parse_error_with_position() {
+        let err = match parse_module("const x: = ;", "bad.ts") {
+            Ok(_) => panic!("expected parse error"),
+            Err(e) => e,
+        };
+        assert!(err.line >= 1, "expected line >= 1, got {}", err.line);
         assert!(!err.message.is_empty(), "message empty");
     }
 }

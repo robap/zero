@@ -675,6 +675,25 @@ These are the patterns the design system replaces. `zero lint` flags them; this 
 
 See `issues/design-system-lint/spec.md` for the rule catalog. Reach for layout primitives by name — see "When to reach for which primitive" above for canonical intent.
 
+`zero lint` also runs a JS/TS idiom pass over `src/**.{ts,js,tsx,jsx}`:
+
+| Rule | Don't write | Use |
+| --- | --- | --- |
+| R01 | ``html`${count.val}` `` | ``html`${count}` `` — pass the signal, not its current value |
+| R02 | `count.val = 5;` | `count.set(5)` / `count.update(n => n + 1)` |
+| R03 | top-level `signal()` / `effect()` / `computed()` outside `src/stores/**` and `src/app.{ts,js,tsx,jsx}` | wrap in a function, the app entry, or a store factory under `src/stores/**` |
+| T01 | `el.addEventListener("click", h)` in components/routes | ``html`<button @click=${h}>` `` |
+| T02 | `@click.captuer=${h}` (typo) | one of: `prevent`, `stop`, `once`, `throttle`, `debounce`, `enter`, `escape`, `space`, `tab`, `up`, `down`, `left`, `right` |
+| T03 | `each(items, render)` | `each(items, render, item => item.id)` |
+| T04 | `document.querySelector(".x")` / `el.appendChild(child)` in components/routes | `ref()` — `myRef.el.appendChild(child)` |
+| C01 | `class Counter { ... }` in components/routes | `function Counter() { return html`...`; }` |
+| C02 | `customElements.define("x-el", X);` | (deferred to `'z/wc'` escape hatch) |
+| I01 | `import x from "lodash";` / `"node:fs"` / `"npm:..."` | `"zero"`, `"zero/components"`, `"zero/http"`, `"zero/test"`, or a relative path |
+| I02 | `import x from "../.zero/components/Button.ts";` | `import { Button } from "zero/components";` |
+| S01 | one 200-line function | split into named helpers (target ≤ 80 lines) |
+
+Tests (`*.test.{ts,js,tsx,jsx}` / `*.spec.{ts,js,tsx,jsx}`) are exempt from the T-rules and R03; the other rules still apply.
+
 ---
 
 ## Component library

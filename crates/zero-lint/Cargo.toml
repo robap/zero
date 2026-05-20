@@ -10,6 +10,8 @@ ignore = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+swc_core = { workspace = true }
+zero-transpile = { path = "../zero-transpile" }
 
 [dev-dependencies]
 tempfile = { workspace = true }

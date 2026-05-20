@@ -26,7 +26,7 @@ export default function Home(): TemplateResult {
             ${AddTodoForm()}
             ${FilterBar()}
             <ul class="todo-list stack gap-sm">
-              ${each(visible, (todo) => TodoItem({ todo }))}
+              ${each(visible, (todo) => TodoItem({ todo }), (todo) => todo.id)}
             </ul>
           </div>
         `,

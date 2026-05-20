@@ -3903,7 +3903,9 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "swc_core",
  "tempfile",
+ "zero-transpile",
 ]
 
 [[package]]

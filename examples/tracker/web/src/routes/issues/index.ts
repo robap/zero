@@ -56,7 +56,7 @@ export default function IssuesIndex(props: IssuesIndexProps): TemplateResult {
             <h1 class="text-h1">Issues</h1>
             ${IssueFilters({ current: filter })}
             <ul class="issues-list stack gap-xs">
-              ${each(visible, (issue) => IssueRow({ issue }))}
+              ${each(visible, (issue) => IssueRow({ issue }), (issue) => issue.id)}
             </ul>
           </div>
         `,

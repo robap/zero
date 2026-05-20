@@ -7,6 +7,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+pub mod js;
 pub mod rules;
 pub mod scan;
 pub mod tokens;
@@ -50,6 +51,13 @@ pub fn lint_project(root: &Path) -> anyhow::Result<Vec<Diagnostic>> {
             Err(_) => continue,
         };
         out.extend(lint_source_with_ctx(&file, &source, &ctx));
+    }
+    for file in js::walk::user_js_files(root) {
+        let source = match std::fs::read_to_string(&file) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        out.extend(js::lint_js_file(&file, &source, root));
     }
     out.sort_by(|a, b| {
         a.file
