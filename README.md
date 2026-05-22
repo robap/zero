@@ -132,3 +132,9 @@ Going deeper:
 Numbers and claims are coarse and age fast; the table is for
 orienting an evaluator, not for benchmarking. Pick the framework
 that matches your problem, not the one that wins the table.
+
+---
+
+## License
+
+[MIT](LICENSE)
