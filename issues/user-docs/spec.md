@@ -468,7 +468,7 @@ supported-themes list to avoid a workflow file.
   search; `minima` is the safe minimal choice. Plan phase picks
   one. Both are on GitHub Pages' supported list.
 - **Pages URL.** The repo's GitHub URL determines the final
-  `https://<owner>.github.io/<repo>/` path. README links to the
+  `https://robap.github.io/zero/` path. README links to the
   Pages site need this resolved before the README rewrite ships.
 - **Tier 3 comparison table — which frameworks?** Spec proposes
   React, Vue, Solid, Svelte. Plan should confirm; a five-column

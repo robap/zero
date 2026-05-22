@@ -10,8 +10,8 @@ GitHub Pages setup (one-time, manual via repo Settings):
   Save. First build takes ~1 minute.
 
 The aux_links and any absolute Pages URLs in this site use the
-literal <OWNER>/<REPO> placeholder; replace with the actual
-GitHub <owner>/<repo> before publishing.
+literal robap/zero placeholder; replace with the actual
+GitHub robap/zero before publishing.
 -->
 
 # zero
@@ -20,7 +20,7 @@ A zero-dependency frontend framework with a Rust CLI. One binary,
 no `node_modules`, signals instead of hooks, no virtual DOM.
 
 If you're new to zero, start with [the README on
-GitHub](https://github.com/<OWNER>/<REPO>) for the pitch and the
+GitHub](https://github.com/robap/zero) for the pitch and the
 install command; this site is the user guide for the framework
 once you've got it running.
 

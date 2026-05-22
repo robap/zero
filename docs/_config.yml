@@ -7,7 +7,7 @@ heading_anchors: true
 nav_external_links: []
 aux_links:
   "GitHub":
-    - "https://github.com/<OWNER>/<REPO>"
+    - "https://github.com/robap/zero"
 # exclude README and the issues tree from the Jekyll build
 exclude:
   - README.md

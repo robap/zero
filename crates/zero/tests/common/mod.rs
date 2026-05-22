@@ -88,7 +88,7 @@ pub fn prepare_example(name: &str) -> tempfile::TempDir {
 
 /// Resolve the workspace root from `crates/zero/`'s manifest dir.
 ///
-/// `env!("CARGO_MANIFEST_DIR")` resolves to `<repo>/crates/zero` post-split,
+/// `env!("CARGO_MANIFEST_DIR")` resolves to `zero/crates/zero` post-split,
 /// so walking up two levels lands at the workspace root where `showcase/`,
 /// `examples/`, and `runtime/` live.
 #[allow(dead_code)]

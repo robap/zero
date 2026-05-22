@@ -42,7 +42,7 @@ zero dev
 
 Open `http://localhost:3000`.
 
-→ Full documentation: <https://<OWNER>.github.io/<REPO>/>
+→ Full documentation: <https://robap.github.io/zero/>
 
 ---
 
@@ -113,7 +113,7 @@ zero preview       # serve dist/ locally
 ```
 
 Going deeper:
-[Best Practices](https://<OWNER>.github.io/<REPO>/best-practices.html)
+[Best Practices](https://robap.github.io/zero/best-practices.html)
 — application patterns for real apps.
 
 ---

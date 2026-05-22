@@ -1,6 +1,6 @@
 # Zero — Agent & Developer Reference
 
-`zero` is a zero-dependency frontend framework distributed as a single CLI binary. This file is a condensed in-tree reference for agents working inside a scaffolded project. The full user guide lives at <https://<OWNER>.github.io/<REPO>/> — every section below links to its long-form chapter.
+`zero` is a zero-dependency frontend framework distributed as a single CLI binary. This file is a condensed in-tree reference for agents working inside a scaffolded project. The full user guide lives at <https://robap.github.io/zero/> — every section below links to its long-form chapter.
 
 The framework exposes three import paths:
 
@@ -25,7 +25,7 @@ zero preview     # serve the production build locally
 zero lint        # SCSS + JS/TS idiom checks
 ```
 
-Full CLI reference: <https://<OWNER>.github.io/<REPO>/config-and-cli.html>.
+Full CLI reference: <https://robap.github.io/zero/config-and-cli.html>.
 
 Generated project layout:
 
@@ -95,8 +95,8 @@ export default function Counter() {
 Props are plain objects; children are just a `children` prop. Templates,
 attribute/event binding, modifiers, `each`, `ref` are documented in full at:
 
-- <https://<OWNER>.github.io/<REPO>/components.html>
-- <https://<OWNER>.github.io/<REPO>/templates.html>
+- <https://robap.github.io/zero/components.html>
+- <https://robap.github.io/zero/templates.html>
 
 ---
 
@@ -114,7 +114,7 @@ const total = computed(() => price.val * 1.2);
 effect(() => console.log("total:", total.val));
 ```
 
-Full chapter, including the React mental-model bridge: <https://<OWNER>.github.io/<REPO>/reactivity.html>.
+Full chapter, including the React mental-model bridge: <https://robap.github.io/zero/reactivity.html>.
 
 ---
 
@@ -133,7 +133,7 @@ new App()
 Builder methods (`state`, `use`, `route`, `layout`, `loading`, `error`)
 all return the same instance and **all throw if called after `run()`**.
 
-Routing reference: <https://<OWNER>.github.io/<REPO>/routing.html>.
+Routing reference: <https://robap.github.io/zero/routing.html>.
 
 ---
 
@@ -150,7 +150,7 @@ optional `meta`. `load` runs before render; the framework awaits it. Use
 it to hydrate a store; the component reads via `inject`.
 
 Full chapter (params, guards, nested routes, route-scoped fetch, lifecycle):
-<https://<OWNER>.github.io/<REPO>/routing.html>.
+<https://robap.github.io/zero/routing.html>.
 
 ---
 
@@ -159,7 +159,7 @@ Full chapter (params, guards, nested routes, route-scoped fetch, lifecycle):
 SCSS is the canonical authoring layer. Tokens are CSS custom properties on
 `:root`; theme variants override only the thirteen public `--color-*`
 tokens. Layout primitives, utilities, and theme switching are documented
-at <https://<OWNER>.github.io/<REPO>/theming.html>.
+at <https://robap.github.io/zero/theming.html>.
 
 ### Reach for these first
 
@@ -190,7 +190,7 @@ at <https://<OWNER>.github.io/<REPO>/theming.html>.
 ## Common mistakes
 
 `zero lint` enforces these. Full chapter (rationale + cross-links to the
-teaching pages): <https://<OWNER>.github.io/<REPO>/linting.html>.
+teaching pages): <https://robap.github.io/zero/linting.html>.
 
 ### SCSS rules
 
@@ -236,7 +236,7 @@ from the T-rules and R03; everything else still applies.
 
 Imported from `"zero/components"`. Plain function components; stateful
 props accept signals directly. Full reference with prop tables and usage
-snippets: <https://<OWNER>.github.io/<REPO>/components.html#component-library-reference>.
+snippets: <https://robap.github.io/zero/components.html#component-library-reference>.
 
 | Component  | Stateful prop(s)                                  |
 |------------|---------------------------------------------------|
@@ -314,7 +314,7 @@ Clicks are **not** intercepted when the click is modified (Cmd/Ctrl/Shift/Alt/mi
 button), the anchor has `target="_blank"` / `download` / `data-external`,
 or the href is hash-only / cross-origin.
 
-Active-link styling and full routing semantics: <https://<OWNER>.github.io/<REPO>/routing.html>.
+Active-link styling and full routing semantics: <https://robap.github.io/zero/routing.html>.
 
 ---
 
@@ -365,7 +365,7 @@ into `afterEach`. Selectors are simple (`tag`, `#id`, `.class`,
 
 Spies, the matcher list, and the in-memory DOM / Web Platform surface
 (Fetch, URL, encoding, binary, structuredClone, queueMicrotask) are
-documented at <https://<OWNER>.github.io/<REPO>/testing.html>.
+documented at <https://robap.github.io/zero/testing.html>.
 
 ---
 
@@ -454,4 +454,4 @@ and their `meta` co-located in one file per route.
   `app.run()`. Inside `load()`, thread the route-scoped fetch via
   `init.fetch` so navigation aborts cancel in-flight requests.
 
-For longer rationale and worked examples, see the [Best Practices](https://<OWNER>.github.io/<REPO>/best-practices.html) chapter of the user guide.
+For longer rationale and worked examples, see the [Best Practices](https://robap.github.io/zero/best-practices.html) chapter of the user guide.

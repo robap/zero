@@ -26,7 +26,7 @@ encodes these decisions; no further user input is needed.
 2. **Pages URL** — derived at PR-time. Plan steps reference the URL
    as `<PAGES_URL>`; Step 18 resolves it from
    `git remote get-url origin` (form
-   `https://<owner>.github.io/<repo>/`) and the README links it
+   `https://robap.github.io/zero/`) and the README links it
    absolutely so the file reads correctly on github.com.
 3. **Tier 3 comparison table** — four columns: React, Vue, Solid,
    Svelte. Six rows: build tool, npm dependencies, state model,
@@ -127,7 +127,7 @@ yet.
    nav_external_links: []
    aux_links:
      "GitHub":
-       - "https://github.com/<OWNER>/<REPO>"
+       - "https://github.com/robap/zero"
    # exclude README and the issues tree from the Jekyll build
    exclude:
      - README.md
@@ -142,7 +142,7 @@ yet.
      - Cargo.toml
      - Cargo.lock
    ```
-   `<OWNER>/<REPO>` is left literal in this step and filled in by
+   `robap/zero` is left literal in this step and filled in by
    Step 15 once the Pages URL is resolved.
 
 2. **Each chapter stub** is a front-matter-only file:
@@ -747,7 +747,7 @@ deletion in Step 17 becomes safe.
 
 **Files:**
 - `docs/index.md` (replace stub)
-- `docs/_config.yml` (modify — replace `<OWNER>/<REPO>` placeholder)
+- `docs/_config.yml` (modify — replace `robap/zero` placeholder)
 
 **Changes:**
 
@@ -763,9 +763,9 @@ deletion in Step 17 becomes safe.
 
 2. **Resolve the Pages URL.** From the working directory, run
    `git remote get-url origin` to discover the GitHub remote.
-   Derive `<OWNER>` and `<REPO>` and rewrite `_config.yml`'s
+   Derive `robap` and `zero` and rewrite `_config.yml`'s
    `aux_links` accordingly. Pages URL for later steps:
-   `https://<OWNER>.github.io/<REPO>/`. Save it as a note in
+   `https://robap.github.io/zero/`. Save it as a note in
    `issues/user-docs/plan.md` near this step (or pass to the
    executor); Step 18 needs it.
 
@@ -846,9 +846,9 @@ rewrite; the file moves verbatim.
    ```
    to:
    ```
-   For longer rationale and worked examples, see the [Best Practices](https://<OWNER>.github.io/<REPO>/best-practices.html) chapter of the user guide.
+   For longer rationale and worked examples, see the [Best Practices](https://robap.github.io/zero/best-practices.html) chapter of the user guide.
    ```
-   Replace `<OWNER>/<REPO>` with the resolved values from
+   Replace `robap/zero` with the resolved values from
    Step 15.
 
 5. **Forward-links from chapters into best-practices.** Append a
@@ -925,7 +925,7 @@ its content has been migrated by this point.
    ```
    Replace with:
    ```
-   See the [user guide](https://<OWNER>.github.io/<REPO>/) for
+   See the [user guide](https://robap.github.io/zero/) for
    the full reference; this section is a working primer.
    ```
    The README will be rewritten end-to-end in Step 18; this
