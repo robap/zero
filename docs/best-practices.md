@@ -1,10 +1,16 @@
-# Zero Best Practices
+---
+title: Best Practices
+nav_order: 14
+---
 
-This is the long-form companion to `zero-framework-spec.md`. The spec
-defines what the framework *does*; this document covers how to
-*organize* a real application built on it. Every section ends with a
-`→ See …` pointer at a concrete file in the shipped examples
-(`examples/counter/`, `examples/todos/`, `examples/tracker/`).
+# Best Practices
+
+This is the long-form companion to the [user guide](./index.html).
+The chapters there define what the framework *does*; this
+document covers how to *organize* a real application built on it.
+Every section ends with a `→ See …` pointer at a concrete file in
+the shipped examples (`../examples/counter/`, `../examples/todos/`,
+`../examples/tracker/`).
 
 The framework is intentionally light on opinions in code — it ships
 primitives and a small component library, then leaves layout decisions
@@ -90,7 +96,7 @@ singular/plural pair reads naturally; no bracket syntax is needed
 because the router takes the pattern from `app.route(...)`, not from
 the filename.
 
-→ See `examples/tracker/web/src/`.
+→ See `../examples/tracker/web/src/`.
 
 ---
 
@@ -141,8 +147,8 @@ single-source-of-truth guarantee.
 - **Separate signals** when fields update independently. Theme and the
   open-sidebar boolean are the canonical case.
 
-→ See `examples/tracker/web/src/state.ts` and
-`examples/todos/web/src/state.ts`.
+→ See `../examples/tracker/web/src/state.ts` and
+`../examples/todos/web/src/state.ts`.
 
 ---
 
@@ -172,8 +178,8 @@ The same rule applies to derived state: prefer a `computed()` in the
 component that reads `inject(Keys.Foo).val` over a duplicated signal
 mirroring it.
 
-→ See `examples/tracker/web/src/stores/issues.ts` and
-`examples/todos/web/src/stores/todos.ts`.
+→ See `../examples/tracker/web/src/stores/issues.ts` and
+`../examples/todos/web/src/stores/todos.ts`.
 
 ---
 
@@ -208,7 +214,7 @@ export function login(name: string): Promise<void> {
 }
 ```
 
-→ See `examples/tracker/web/src/stores/auth.ts`.
+→ See `../examples/tracker/web/src/stores/auth.ts`.
 
 ---
 
@@ -264,8 +270,8 @@ Two patterns worth pinning:
   `{ protected: true }` flag plus a `requireAuth` guard composes a
   surprising amount of behavior with no framework extension.
 
-→ See `examples/tracker/web/src/routes/issues/issue.ts` and
-`examples/tracker/web/src/app.ts`.
+→ See `../examples/tracker/web/src/routes/issues/issue.ts` and
+`../examples/tracker/web/src/app.ts`.
 
 ---
 
@@ -332,8 +338,8 @@ Non-2xx responses reject with `HttpError` carrying `status`,
 `statusText`, and (if JSON) the parsed body. Network failures surface
 the underlying `TypeError`; aborts surface as `AbortError`.
 
-→ See `examples/tracker/web/src/lib/api.ts` and
-  `examples/tracker/web/src/app.ts`.
+→ See `../examples/tracker/web/src/lib/api.ts` and
+  `../examples/tracker/web/src/app.ts`.
 
 ---
 
@@ -351,7 +357,7 @@ cases:
 
 1. **The shipped component cannot express the required behavior.**
    The canonical example is
-   `examples/todos/web/src/components/FilterBar.ts`: the button's variant
+   `../examples/todos/web/src/components/FilterBar.ts`: the button's variant
    must track a filter signal reactively, and `Button.variant` is not
    a reactive prop. Drop a `//` comment naming the missing capability
    so a reader knows why the rule is broken.
@@ -367,9 +373,9 @@ Plain DOM containers (`<main>`, `<section>`, `<header>`, `<nav>`,
 `<ul>`, `<li>`, `<form>`, `<label>`, `<span>`, `<a>`, `<svg>`) are not
 "components" under this rule — use them freely.
 
-→ See `examples/tracker/web/src/components/Header.ts`,
-`examples/tracker/web/src/components/ThemeToggle.ts`, and
-`examples/todos/web/src/components/FilterBar.ts`.
+→ See `../examples/tracker/web/src/components/Header.ts`,
+`../examples/tracker/web/src/components/ThemeToggle.ts`, and
+`../examples/todos/web/src/components/FilterBar.ts`.
 
 ---
 
@@ -478,9 +484,9 @@ non-trivial component. The patterns:
   Route `load()` functions are *not* invoked by `render()` —
   pre-seed the store the route reads from, then render the page.
 
-→ See `examples/todos/web/src/stores/todos.test.ts`,
-`examples/todos/web/src/routes/home.test.ts`, and
-`examples/tracker/web/src/routes/issues/issue.test.ts`.
+→ See `../examples/todos/web/src/stores/todos.test.ts`,
+`../examples/todos/web/src/routes/home.test.ts`, and
+`../examples/tracker/web/src/routes/issues/issue.test.ts`.
 
 ### Testing browser APIs
 
@@ -531,9 +537,9 @@ auto-restore reassigned globals.
 real apps use at test time: `Headers` / `Request` / `Response` / `fetch`,
 `AbortController` / `AbortSignal`, `URL` / `URLSearchParams`,
 `TextEncoder` / `TextDecoder`, `Blob` / `File` / `FormData`,
-`structuredClone`, and `queueMicrotask`. See `zero-framework-spec.md` §8
-"Web Platform surface in `zero test`" for the closed list and per-API
-contracts.
+`structuredClone`, and `queueMicrotask`. See
+[Testing § Web Platform surface](./testing.html#web-platform-surface)
+for the closed list and per-API contracts.
 
 `fetch` is the one intentional stub: its default implementation rejects
 with a clear, actionable message. Override `globalThis.fetch` per test
@@ -589,14 +595,14 @@ A handful of high-leverage rules:
   that reorders or churns.** `each()` diffs by key; `.map()`
   rebuilds the whole subtree.
 
-→ See `examples/tracker/web/src/routes/issues/index.ts` for the
+→ See `../examples/tracker/web/src/routes/issues/index.ts` for the
 `each(visible, ...)` pattern.
 
 ---
 
 ## Related docs
 
-- `zero-framework-spec.md` — capability reference.
-- `src/scaffold/AGENTS.md` — agent-facing guidance shipped with every
-  scaffolded project; gains a short "Best practices" section that
-  forward-points here.
+- [API](./api.html) — flat reference of every public export.
+- `crates/zero-scaffold/src/scaffold/AGENTS.md` — agent-facing
+  guidance shipped with every scaffolded project; forward-points
+  back here.

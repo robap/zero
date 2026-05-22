@@ -10,8 +10,9 @@ The roadmap item to refine is: $ARGUMENTS
 
 Read these files before asking any questions:
 
-- `zero-framework-spec.md` — understand all planned work and where this item fits in the larger sequence
-- All files under `src/` — understand what exists already
+- `docs/index.md` — overview of every shipped capability and where the user-facing reference lives.
+- `issues/` — browse the spec/plan of any past or in-flight item adjacent to the new one.
+- Skim `crates/` (Rust workspace) and `runtime/` (JS runtime) to understand the shape of the code touched by the item.
 
 Do not ask any questions until you have read all of these.
 

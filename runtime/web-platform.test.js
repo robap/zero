@@ -1,8 +1,7 @@
 /**
  * Smoke test for the Web Platform surface that `zero test` ships. One `it`
  * per audited API; if every test passes, the closed enumeration documented
- * in `zero-framework-spec.md` §8 "Web Platform surface in `zero test`"
- * works under Boa.
+ * in `docs/testing.md` (Web Platform surface) works under Boa.
  */
 
 import { describe, it, expect } from 'zero/test';

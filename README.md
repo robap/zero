@@ -1,354 +1,134 @@
-# Zero Framework
+# zero
 
-A zero-dependency frontend framework with a Rust CLI for scaffolding, development, and production builds.
+A zero-dependency frontend framework. Single Rust binary; no
+`node_modules`; signals instead of hooks.
 
-## Prerequisites
+```js
+import { App, html, signal } from "zero";
 
-- Rust toolchain (`cargo`, `rustc`) — [install via rustup](https://rustup.rs)
+function Counter() {
+  const count = signal(0);
+  return html`
+    <button @click=${() => count.update(n => n + 1)}>
+      Clicked ${count} times
+    </button>
+  `;
+}
 
-## Build the CLI
-
-```bash
-cargo build --release
-# Binary is at ./target/release/zero
+new App().route("/", Counter).run("#app");
 ```
 
-To use it globally, copy or symlink it somewhere on your PATH:
+- **Zero npm dependencies.** The CLI is the framework.
+- **One binary.** Dev server, transpiler, test runner, builder,
+  linter, formatter, generator.
+- **No virtual DOM.** Granular reactive updates via signals.
+- **Components are plain functions.** No classes, no JSX.
 
-```bash
-cp target/release/zero ~/.local/bin/zero
+## Install
+
+```sh
+cargo install zero --locked
 ```
 
-## Quick start
+A Rust toolchain (`cargo`) is the only prerequisite — install
+via [rustup.rs](https://rustup.rs).
 
-```bash
-# 1. Create a project directory and enter it
-mkdir my-app && cd my-app
+## Get started
 
-# 2. Scaffold a zero app (interactive wizard, or pre-write zero.toml to skip prompts)
+```sh
 zero init
-
-# 3. Start the dev server
 zero dev
-
-# 4. Open http://localhost:3000 in a browser
 ```
 
-## Commands
+Open `http://localhost:3000`.
 
-### `zero init`
+→ Full documentation: <https://<OWNER>.github.io/<REPO>/>
 
-Scaffolds a new zero app into the current directory.
+---
 
-- **If `zero.toml` is absent**: runs an interactive wizard to collect four settings (app folder name, dev port, optional backend proxy URL, build output folder), writes `zero.toml`, then creates the scaffold.
-- **If `zero.toml` is present**: reads it and scaffolds into `./<root>/` without prompting. Useful for scripted or CI environments — write the toml first, then run `zero init`.
+## Quickstart
 
-The scaffold creates:
-
-```
-<root>/
-├── index.html               # entry HTML; script tags are injected by zero dev/build
-├── src/
-│   ├── app.js               # app entry point
-│   └── routes/
-│       └── home.js          # home route component
-└── styles/
-    └── app.css
+```sh
+mkdir my-app && cd my-app
+zero init
 ```
 
-`zero init` refuses to overwrite a non-empty `<root>/` directory.
-
-### `zero dev`
-
-Starts the development server. Reads `zero.toml` from the current directory (exits with a clear error if absent).
+`zero init` runs an interactive wizard (app folder, dev port,
+optional backend proxy, build output folder), then scaffolds a
+working app under `./web/`:
 
 ```
+my-app/
+├── zero.toml
+├── tsconfig.json
+└── web/
+    ├── index.html
+    ├── src/
+    │   ├── app.ts
+    │   └── routes/
+    │       └── home.ts
+    ├── styles/
+    │   └── app.scss
+    └── .zero/        # auto-managed by `zero update`
+```
+
+Start the dev server:
+
+```sh
 zero dev
 # Listening on http://127.0.0.1:3000
 ```
 
-The server handles:
+Open the URL. The home route renders "Hello from zero" with a
+working counter. Edits to `web/src/**` trigger a full reload —
+the dev server transpiles `.ts` on the fly, no install step
+beyond Cargo.
 
-| Path | Behaviour |
-|------|-----------|
-| `GET /zero.js` | Returns the embedded runtime as an ES module |
-| `GET /src/**` | Serves files from `./<root>/src/` |
-| `GET /styles/**` | Serves files from `./<root>/styles/` |
-| `GET /public/**` | Serves files from `./<root>/public/` |
-| `/favicon.ico`, `/robots.txt` | Served from `./<root>/` if present |
-| Everything else (no proxy) | Returns `./<root>/index.html` with scripts injected — SPA fallback |
-| Everything else (proxy set) | Forwards to the configured backend; injects scripts into HTML responses |
+A minimal component:
 
-Every response includes `Cache-Control: no-store` and related no-cache headers so browser refreshes always fetch the latest.
-
-**With a backend proxy** — set `[dev] proxy` in `zero.toml`:
-
-```toml
-[dev]
-proxy = "http://localhost:8080"
-```
-
-`zero dev` becomes a single origin: the browser talks only to `http://localhost:3000`, which proxies API and page requests to your backend. No CORS configuration needed.
-
-**Graceful shutdown**: Ctrl-C.
-
-### `zero build`
-
-Produces a deployable bundle in `./<out>/` (default `dist/`). Reads `zero.toml` from the current directory.
-
-```
-zero build
-```
-
-Output:
-
-```
-dist/
-├── assets/
-│   ├── app.<hash>.js        # bundled runtime + user code
-│   └── app.<hash>.css       # hashed copy of styles/app.css
-├── manifest.json            # logical name → hashed filename
-└── index.html               # static index with script/link tags pre-injected
-```
-
-**Using the build output in your backend**:
-
-1. Serve `dist/assets/` as static files.
-2. Read `dist/manifest.json` to get the hashed filenames:
-   ```json
-   {
-     "app.js": "assets/app.a3f2b1c4.js",
-     "styles/app.css": "assets/app.5e8d9f01.css"
-   }
-   ```
-3. Inject `<script type="module" src="...">` and `<link rel="stylesheet" href="...">` into your server-rendered HTML.
-
-For static deploys (no backend), `dist/index.html` is ready to upload directly to any static host.
-
-## Writing a zero app
-
-The framework is exposed as a single ES module imported from the bare specifier `"zero"` (resolved by `zero dev` and `zero build`). The full surface is documented in `zero-framework-spec.md`; this section is a working primer.
-
-### App entry (`src/app.js`)
-
-The app object owns the route table, app-level state, and middleware. Build it, then call `.run()` to mount.
-
-```js
-import { App, signal } from "zero";
-import Home from "./routes/home.js";
-
-const app = new App();
-app.state("count", signal(0));   // app-level state — read anywhere via inject()
-app.route("/", Home);            // first match wins; register more routes here
-app.run("#app");                 // mount into <div id="app"></div>
-```
-
-`new App()` is chainable: `.state()`, `.route()`, `.layout()`, `.use()`, `.loading()`, `.error()` all return the app. Call them all before `.run()` — they throw afterward.
-
-### Components
-
-Components are plain functions that return a `TemplateResult` from the `html` tag. They run **once** when committed; the framework wires up granular reactive updates for any signals or `() => ...` blocks inside.
-
-```js
+```ts
 import { html, signal } from "zero";
+import type { TemplateResult } from "zero";
 
-export default function Counter() {
-  const count = signal(0);
+export default function Home(): TemplateResult {
+  const name = signal("world");
   return html`
-    <p>Count: ${count}</p>
-    <button @click=${() => count.update(n => n + 1)}>+</button>
+    <main class="stack pad-xl align-center">
+      <h1>Hello ${name}</h1>
+      <input value=${name} @input=${(e: Event) =>
+        name.set((e.target as HTMLInputElement).value)} />
+    </main>
   `;
 }
 ```
 
-Props are a plain object passed when invoking the component as a function:
+When the input changes, the `<h1>` text patches in place —
+no re-render, no diff. That's the whole reactive model.
 
-```js
-function Greeting(props) {
-  return html`<h1>Hello ${props.name}</h1>`;
-}
+Build for production:
 
-// usage inside another template:
-html`<div>${Greeting({ name: "Ada" })}</div>`
+```sh
+zero build         # outputs dist/ (manifest.json, assets/, index.html)
+zero preview       # serve dist/ locally
 ```
 
-If a prop is a signal, reactivity flows through it — the parent doesn't re-render, only the bound text/attribute node updates.
+Going deeper:
+[Best Practices](https://<OWNER>.github.io/<REPO>/best-practices.html)
+— application patterns for real apps.
 
-### Signals
+---
 
-`signal(initial)` returns `{ val, set(v), update(fn) }`.
+## How zero compares
 
-- `count.val` — read (inside an `html` template or `effect`, this auto-subscribes)
-- `count.set(5)` — replace
-- `count.update(n => n + 1)` — functional update
+|                   | zero       | React      | Vue        | Solid      | Svelte     |
+|-------------------|------------|------------|------------|------------|------------|
+| Build tool        | built-in   | Vite (etc) | Vite (etc) | Vite (etc) | Vite       |
+| npm dependencies  | 0          | many       | many       | many       | many       |
+| State model       | signals    | hooks      | refs       | signals    | runes      |
+| Virtual DOM       | no         | yes        | yes        | no         | no         |
+| Component model   | functions  | functions  | functions  | functions  | files      |
+| Bundle posture    | ~4 KB rt   | ~40 KB     | ~30 KB     | ~7 KB      | compiled   |
 
-`computed(fn)` derives a read-only signal that re-evaluates lazily when its dependencies change. `effect(fn)` runs `fn` immediately and re-runs it whenever any signal it reads changes; the return value is a `stop()` function.
-
-### Templates (`html`)
-
-The `html` tag parses once per call-site (cached) and clones a `DocumentFragment` each render. Inside `${...}` you can place:
-
-| Value | Behaviour |
-|-------|-----------|
-| `string` / `number` | rendered as text |
-| `boolean` | for attributes — `false`/`null`/`undefined` removes the attribute, `true` sets it to `""` |
-| `Signal` | auto-subscribes; updates the target text node or attribute in place |
-| `() => value` | reactive block — re-evaluates when its dependencies change |
-| `TemplateResult` | nested template |
-| array of the above | inserts each item in order |
-
-Attribute and event bindings:
-
-```js
-html`<input value=${name} @input=${e => name.set(e.target.value)} />`
-html`<button @click.prevent.stop=${submit}>Go</button>`     // event modifiers
-html`<input @keydown.enter=${submit} />`                    // key filters
-html`<input ref=${inputRef} />`                             // DOM ref (see below)
-```
-
-Event modifiers: `.prevent`, `.stop`, `.once`, `.throttle` (100ms), `.debounce` (100ms), and key filters (`.enter`, `.escape`, `.space`, `.tab`, `.up`, `.down`, `.left`, `.right`).
-
-### Lists with `each`
-
-For keyed list rendering with per-item scopes:
-
-```js
-import { html, signal, each } from "zero";
-
-const todos = signal([{ id: 1, text: "Learn zero" }]);
-
-html`
-  <ul>
-    ${each(todos, todo => html`<li>${todo.text}</li>`)}
-  </ul>
-`;
-```
-
-Removing an item disposes only that item's effects; reordering moves DOM nodes rather than re-creating them.
-
-### Refs
-
-`ref()` returns `{ el: null }`. Pass it to a `ref=${...}` binding; after commit, `.el` points at the DOM node.
-
-```js
-import { html, ref, effect } from "zero";
-
-function AutoFocus() {
-  const input = ref();
-  effect(() => input.el?.focus());
-  return html`<input ref=${input} />`;
-}
-```
-
-### App-level state via `inject`
-
-Register state on the app, read it from any component — no prop drilling.
-
-```js
-// app.js
-app.state("count", signal(0));
-```
-
-```js
-// any component
-import { inject } from "zero";
-
-function Counter() {
-  const count = inject("count");
-  return html`<p>${count}</p>`;
-}
-```
-
-`inject(key)` throws if no app is running or the key isn't registered. Use this for genuinely app-wide state (auth, theme, current user); prefer props for state that only belongs to one branch of the tree.
-
-### Routing
-
-`app.route(pattern, componentOrLoader, opts?)` registers a route. Patterns support `:param` segments and a bare `*` wildcard. First match wins.
-
-```js
-app.route("/", Home);
-app.route("/users/:id", UserPage);
-app.route("/admin", AdminPage, { guard: ({ redirect }) => { if (!loggedIn()) redirect("/login"); } });
-app.route("/blog/:slug", () => import("./routes/post.js"));   // lazy — code-split
-app.route("*", NotFound);
-```
-
-The route component receives `{ params, query, state, route }`. Use plain `<a href="/path">` for navigation — the framework intercepts same-origin clicks.
-
-## Configuration (`zero.toml`)
-
-Place this file at the project root (the directory you run `zero` commands from):
-
-```toml
-[project]
-root = "web"                         # required; zero app lives in ./web/
-
-[dev]
-port = 3000                          # default 3000
-proxy = "http://localhost:8080"      # optional; omit for static SPA mode
-
-[build]
-out = "dist"                         # default "dist"
-```
-
-Validation rules:
-- `root` and `out` must be relative paths with no `..` or absolute components.
-- `port` must be 1–65535.
-- `proxy`, if set, must use `http://` (not `https://`).
-- Unknown keys are rejected (typo protection).
-
-## Running the runtime tests
-
-The framework's own JavaScript runtime tests run under `zero test`, the same runner user apps use. From the repo root:
-
-```bash
-cargo run -p zero -- test
-```
-
-Once the CLI is installed (`cargo install --path crates/zero --locked`), the same suite runs as `zero test`.
-
-## Repository layout
-
-```
-build.rs                 # compile-time runtime concatenation
-runtime/                 # JavaScript runtime (reactivity, template, router, app)
-src/
-├── main.rs              # CLI entry point
-├── lib.rs               # public modules (for integration tests)
-├── config.rs            # zero.toml parsing and validation
-├── runtime.rs           # embedded ZERO_RUNTIME_BODY constant
-├── scaffold.rs          # embedded scaffold templates
-├── prompts.rs           # zero init wizard
-├── toml_writer.rs       # render zero.toml from wizard answers
-├── cmd/                 # subcommand implementations
-│   ├── init.rs
-│   ├── dev.rs
-│   └── build.rs
-├── dev/                 # dev server modules
-│   ├── server.rs
-│   ├── files.rs
-│   ├── inject.rs
-│   ├── local.rs
-│   ├── proxy.rs
-│   └── headers.rs
-└── build/               # bundler modules
-    ├── bundler.rs
-    ├── resolver.rs
-    ├── css.rs
-    ├── manifest.rs
-    └── index_html.rs
-tests/                   # integration tests
-```
-
-## Development workflow
-
-```bash
-# Run all Rust tests
-cargo test
-
-# Check for lint issues
-cargo clippy --all-targets
-
-# Format code
-cargo fmt
-```
+Numbers and claims are coarse and age fast; the table is for
+orienting an evaluator, not for benchmarking. Pick the framework
+that matches your problem, not the one that wins the table.
