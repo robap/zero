@@ -117,6 +117,7 @@ pub enum Operation {
 /// A vector of `(relative path, file contents)` pairs.
 pub fn framework_manifest() -> Vec<(&'static str, &'static str)> {
     vec![
+        ("AGENTS.md", TPL_AGENTS_MD),
         (".zero/zero.d.ts", zero_runtime::ZERO_TYPES_BODY),
         (".zero/zero-test.d.ts", zero_runtime::ZERO_TEST_TYPES_BODY),
         (".zero/zero-http.d.ts", zero_runtime::ZERO_HTTP_TYPES_BODY),
@@ -239,7 +240,6 @@ pub fn write_user_files(root_dir: &Path, ctx: &ScaffoldContext) -> anyhow::Resul
         TPL_HOME_TEST_TS,
     )?;
     fs::write(root_dir.join("styles").join("app.scss"), TPL_APP_SCSS)?;
-    fs::write(root_dir.join("AGENTS.md"), TPL_AGENTS_MD)?;
     fs::write(root_dir.join(".gitignore"), TPL_GITIGNORE)?;
     Ok(())
 }
@@ -475,9 +475,6 @@ mod tests {
 
         let app_scss = fs::read_to_string(root.join("styles/app.scss")).unwrap();
         assert!(!app_scss.is_empty());
-
-        let agents = fs::read_to_string(root.join("AGENTS.md")).unwrap();
-        assert!(!agents.is_empty());
     }
 
     #[test]
@@ -528,6 +525,9 @@ mod tests {
 
         let zero_scss = fs::read_to_string(root.join(".zero/styles/zero.scss")).unwrap();
         assert!(!zero_scss.is_empty());
+
+        let agents = fs::read_to_string(root.join("AGENTS.md")).unwrap();
+        assert!(!agents.is_empty(), "AGENTS.md is empty");
 
         for rel in [
             ".zero/fonts/Geist-VariableFont_wght.woff2",
@@ -605,6 +605,10 @@ mod tests {
                 "AGENTS.md is missing section sentinel: {sentinel}"
             );
         }
+        assert!(
+            agents.contains("framework-owned just like the files under `.zero/`"),
+            "AGENTS.md missing framework-ownership note in the .zero/ section: {agents}"
+        );
     }
 
     #[test]
@@ -909,10 +913,19 @@ mod tests {
     }
 
     #[test]
+    fn framework_manifest_includes_agents_md_first() {
+        let manifest = framework_manifest();
+        let first = manifest.first().expect("manifest is non-empty");
+        assert_eq!(first.0, "AGENTS.md", "AGENTS.md must be first entry");
+        assert!(!first.1.is_empty(), "AGENTS.md template is empty");
+    }
+
+    #[test]
     fn framework_manifest_matches_expected_path_set() {
         let manifest = framework_manifest();
         let actual: BTreeSet<&str> = manifest.iter().map(|(p, _)| *p).collect();
         let expected: BTreeSet<&str> = [
+            "AGENTS.md",
             // Type declarations + style aggregate.
             ".zero/zero.d.ts",
             ".zero/zero-test.d.ts",
@@ -1072,7 +1085,7 @@ mod tests {
     }
 
     #[test]
-    fn write_framework_files_writes_only_dot_zero() {
+    fn write_framework_files_writes_only_dot_zero_and_agents_md() {
         let dir = tempdir().unwrap();
         let root = dir.path().join("web");
         fs::create_dir_all(&root).unwrap();
@@ -1091,13 +1104,15 @@ mod tests {
             );
         }
 
-        let entries: Vec<_> = fs::read_dir(&root).unwrap().collect();
+        let mut entries: Vec<String> = fs::read_dir(&root)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        entries.sort();
         assert_eq!(
-            entries.len(),
-            1,
-            "write_framework_files wrote outside .zero/: {entries:?}"
+            entries,
+            vec![".zero".to_string(), "AGENTS.md".to_string()],
+            "write_framework_files wrote unexpected root-level entries: {entries:?}"
         );
-        let only = entries.into_iter().next().unwrap().unwrap();
-        assert_eq!(only.file_name(), ".zero");
     }
 }

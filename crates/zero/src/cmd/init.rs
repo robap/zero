@@ -87,7 +87,6 @@ fn render_init_plan() -> String {
     for path in [
         "index.html",
         "tsconfig.json",
-        "AGENTS.md",
         ".gitignore",
         "src/app.ts",
         "src/routes/home.ts",
@@ -167,6 +166,25 @@ mod tests {
         assert!(
             plan.contains("Proceed? [Y/n]"),
             "missing Proceed? prompt: {plan}"
+        );
+    }
+
+    #[test]
+    fn init_plan_lists_agents_md_under_framework_files() {
+        let plan = render_init_plan();
+        let framework_idx = plan
+            .find("framework files (regenerable, under .zero/)")
+            .expect("framework header present");
+        let user_idx = plan.find("user files").expect("user header present");
+        let agents_idx = plan.find("AGENTS.md").expect("AGENTS.md present in plan");
+        assert!(
+            agents_idx > framework_idx && agents_idx < user_idx,
+            "AGENTS.md must be under framework files, not user files: {plan}"
+        );
+        assert_eq!(
+            plan.matches("AGENTS.md").count(),
+            1,
+            "AGENTS.md should appear exactly once: {plan}"
         );
     }
 

@@ -293,14 +293,15 @@ pub fn apply(root: &Path, ops: &[Operation]) -> anyhow::Result<()> {
     let text_manifest = framework_manifest();
     let bin_manifest = binary_manifest();
     let dot_zero = root.join(".zero");
+    let agents_md = root.join("AGENTS.md");
     for op in ops {
         let rel = match op {
             Operation::Add(p) | Operation::Update(p) | Operation::Remove(p) => p,
         };
         let abs = root.join(rel);
-        if !abs.starts_with(&dot_zero) {
+        if !abs.starts_with(&dot_zero) && abs != agents_md {
             anyhow::bail!(
-                "zero update: refusing to touch path outside .zero/: {}",
+                "zero update: refusing to touch path outside .zero/ (other than AGENTS.md): {}",
                 abs.display()
             );
         }
@@ -586,12 +587,72 @@ mod tests {
     }
 
     #[test]
+    fn update_with_modified_agents_md_proposes_update() {
+        let (_dir, root) = scaffold();
+        fs::write(root.join("AGENTS.md"), b"# mutated\n").unwrap();
+        let plan = compute_plan(&root).unwrap();
+        assert!(
+            plan.contains(&Operation::Update(PathBuf::from("AGENTS.md"))),
+            "plan missing Update for AGENTS.md: {plan:?}"
+        );
+    }
+
+    #[test]
+    fn update_with_missing_agents_md_proposes_add() {
+        let (_dir, root) = scaffold();
+        fs::remove_file(root.join("AGENTS.md")).unwrap();
+        let plan = compute_plan(&root).unwrap();
+        assert!(
+            plan.contains(&Operation::Add(PathBuf::from("AGENTS.md"))),
+            "plan missing Add for AGENTS.md: {plan:?}"
+        );
+    }
+
+    #[test]
+    fn update_does_not_propose_remove_for_root_files() {
+        let (_dir, root) = scaffold();
+        fs::write(root.join("README.md"), b"# stray root file\n").unwrap();
+        let plan = compute_plan(&root).unwrap();
+        for op in &plan {
+            if let Operation::Remove(p) = op {
+                assert!(
+                    p.starts_with(".zero/"),
+                    "compute_plan proposed Remove for a non-.zero/ path: {p:?}"
+                );
+            }
+        }
+        assert!(
+            !plan.contains(&Operation::Remove(PathBuf::from("README.md"))),
+            "plan must not Remove root-level files: {plan:?}"
+        );
+    }
+
+    #[test]
+    fn apply_permits_agents_md_at_root() {
+        let (_dir, root) = scaffold();
+        fs::write(root.join("AGENTS.md"), b"# mutated\n").unwrap();
+        let ops = vec![Operation::Update(PathBuf::from("AGENTS.md"))];
+        apply(&root, &ops).expect("apply must accept AGENTS.md at root");
+
+        let after = fs::read_to_string(root.join("AGENTS.md")).unwrap();
+        assert!(
+            !after.contains("# mutated"),
+            "AGENTS.md not restored from manifest: {after}"
+        );
+        assert!(
+            after.contains("# Zero — Agent & Developer Reference"),
+            "AGENTS.md missing canonical heading after apply: {after}"
+        );
+    }
+
+    #[test]
     fn apply_refuses_path_outside_dot_zero() {
         let (_dir, root) = scaffold();
         let bad = vec![Operation::Add(PathBuf::from("outside.txt"))];
         let err = apply(&root, &bad).expect_err("should refuse outside-.zero/ path");
         assert!(
-            err.to_string().contains("outside .zero/"),
+            err.to_string()
+                .contains("outside .zero/ (other than AGENTS.md)"),
             "unexpected error: {err}"
         );
     }
@@ -667,10 +728,15 @@ mod tests {
             }
         }
         let plan = compute_plan(&root).unwrap();
+        let expected_adds = framework_manifest()
+            .iter()
+            .filter(|(p, _)| p.starts_with(".zero/"))
+            .count()
+            + zero_scaffold::binary_manifest().len();
         assert_eq!(
             plan.len(),
-            framework_manifest().len() + zero_scaffold::binary_manifest().len(),
-            "expected one Add per manifest entry, got {plan:?}"
+            expected_adds,
+            "expected one Add per .zero/ manifest entry, got {plan:?}"
         );
         for op in &plan {
             assert!(

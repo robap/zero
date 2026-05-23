@@ -67,6 +67,28 @@ fn update_restores_modified_recreates_deleted_removes_stray() {
 }
 
 #[test]
+fn update_restores_modified_agents_md() {
+    let tmp = tempdir().unwrap();
+    let web = init_project(tmp.path());
+    let original = fs::read(web.join("AGENTS.md")).unwrap();
+    fs::write(web.join("AGENTS.md"), b"# mutated\n").unwrap();
+
+    Command::cargo_bin("zero")
+        .unwrap()
+        .arg("update")
+        .arg("--yes")
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read(web.join("AGENTS.md")).unwrap(),
+        original,
+        "AGENTS.md not restored to embedded template"
+    );
+}
+
+#[test]
 fn update_on_clean_project_is_noop() {
     let tmp = tempdir().unwrap();
     let _web = init_project(tmp.path());

@@ -293,6 +293,13 @@ writes here. Files currently shipped:
 
 Update with `zero update` (interactive plan) or `zero update --yes` (CI).
 
+`AGENTS.md` itself sits at the project root (so Claude Code, Cursor, and
+other tools that read a root-level `AGENTS.md` find it) but is
+framework-owned just like the files under `.zero/`. `zero update`
+refreshes it. Do not put project-specific agent guidance here — it will
+be overwritten on the next update. Keep your own notes in a separate
+file you maintain.
+
 ---
 
 ## Navigation

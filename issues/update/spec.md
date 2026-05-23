@@ -1,3 +1,10 @@
+> **Note:** The decision to keep `AGENTS.md` user-owned (see this
+> spec's Problem Statement and the constraint "`zero update` never
+> writes outside `.zero/`") is superseded by
+> `issues/agents-update/spec.md`. `AGENTS.md` is now framework-owned
+> and refreshed by `zero update`. It remains at the project root via
+> a single named exception to the `.zero/`-only write boundary.
+
 # Spec: `zero update` and the `.zero/` framework directory
 
 ## Problem Statement
