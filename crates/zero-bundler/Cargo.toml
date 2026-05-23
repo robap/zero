@@ -15,6 +15,11 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 regex = { workspace = true }
 sourcemap = { workspace = true }
+swc_core = { workspace = true }
+
+[features]
+test-internals = []
 
 [dev-dependencies]
 tempfile = { workspace = true }
+boa_engine = { workspace = true }

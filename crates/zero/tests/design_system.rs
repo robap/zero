@@ -222,11 +222,11 @@ fn build_design_system_passes_contrast_smoke() {
     let css = std::fs::read_to_string(assets_dir.join(&css_file)).unwrap();
 
     assert!(
-        css.contains("color: var(--color-text)"),
+        css.contains("color:var(--color-text)") || css.contains("color: var(--color-text)"),
         "body color token not wired: {css}"
     );
     assert!(
-        css.contains("background: var(--color-bg)"),
+        css.contains("background:var(--color-bg)") || css.contains("background: var(--color-bg)"),
         "body background token not wired: {css}"
     );
 }

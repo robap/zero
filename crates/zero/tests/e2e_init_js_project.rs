@@ -82,7 +82,8 @@ export default function Home() {
         .expect("expected app.<hash>.js");
     let bundled = fs::read_to_string(&bundle).unwrap();
     assert!(
-        bundled.contains("__zero_require('./src/app.js')"),
+        bundled.contains(r#"__zero_require("./src/app.js")"#)
+            || bundled.contains("__zero_require('./src/app.js')"),
         "bundle missing JS entry require"
     );
 }

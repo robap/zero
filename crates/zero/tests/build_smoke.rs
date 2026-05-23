@@ -50,12 +50,18 @@ fn build_produces_hashed_bundle() {
     let bundle_path = entries[0].path();
     let bundle = std::fs::read_to_string(&bundle_path).unwrap();
     assert!(!bundle.is_empty(), "bundle should not be empty");
+    // Identifiers inside the runtime/route factories are local — they get
+    // mangled. Their *exported* names are properties, which the minifier
+    // preserves by design (mangle.props = None).
     assert!(
-        bundle.contains("function signal("),
-        "bundle missing signal()"
+        bundle.contains("exports.signal"),
+        "bundle missing signal export"
     );
-    assert!(bundle.contains("class App"), "bundle missing App class");
-    assert!(bundle.contains("Home"), "bundle missing Home function");
+    assert!(bundle.contains("exports.App"), "bundle missing App export");
+    assert!(
+        bundle.contains("exports.default"),
+        "bundle missing default export (Home)"
+    );
 
     // No top-level `import` or `export` (all rewritten to CJS).
     let re_import = regex::Regex::new(r"(?m)^\s*import\s").unwrap();

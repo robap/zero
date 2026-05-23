@@ -41,12 +41,8 @@ pub fn process_css(
             continue;
         }
         match ext {
-            "css" => {
-                let pair = copy_css_with_hash(path, &assets_dir, name, stem)?;
-                pairs.push(pair);
-            }
-            "scss" => {
-                let pair = compile_scss_with_hash(path, &assets_dir, name, stem, emit_sourcemap)?;
+            "css" | "scss" => {
+                let pair = compile_with_hash(path, &assets_dir, name, stem, ext, emit_sourcemap)?;
                 pairs.push(pair);
             }
             _ => continue,
@@ -99,27 +95,16 @@ fn stems_with_ext(all_entries: &[std::path::PathBuf], want_ext: &str) -> HashSet
         .collect()
 }
 
-/// Copy a plain `.css` file into `assets/<stem>.<hash>.css`.
-fn copy_css_with_hash(
+/// Compile a `.css` or `.scss` file through grass (compressed mode), write
+/// the result (and optionally a sourcemap) to `assets/`, and return the
+/// source→output path pair. Plain `.css` is fed to grass as a degenerate
+/// SCSS so output formatting and hashing are uniform across both extensions.
+fn compile_with_hash(
     path: &Path,
     assets_dir: &Path,
     name: &str,
     stem: &str,
-) -> anyhow::Result<(String, String)> {
-    let bytes = std::fs::read(path)?;
-    let hash = &format!("{:x}", Sha256::digest(&bytes))[..8];
-    let out_filename = format!("{stem}.{hash}.css");
-    std::fs::write(assets_dir.join(&out_filename), &bytes)?;
-    Ok((format!("styles/{name}"), format!("assets/{out_filename}")))
-}
-
-/// Compile a `.scss` file to CSS, write it (and optionally a sourcemap) into
-/// `assets/`, and return the source→output path pair.
-fn compile_scss_with_hash(
-    path: &Path,
-    assets_dir: &Path,
-    name: &str,
-    stem: &str,
+    ext: &str,
     emit_sourcemap: bool,
 ) -> anyhow::Result<(String, String)> {
     let source = std::fs::read_to_string(path)?;
@@ -152,7 +137,7 @@ fn compile_scss_with_hash(
 
     std::fs::write(assets_dir.join(&out_filename), &css_body)?;
     Ok((
-        format!("styles/{stem}.scss"),
+        format!("styles/{stem}.{ext}"),
         format!("assets/{out_filename}"),
     ))
 }
@@ -174,6 +159,31 @@ mod tests {
         assert_eq!(src, "styles/app.css");
         assert!(dst.starts_with("assets/app.") && dst.ends_with(".css"));
         assert!(out.path().join(dst).exists());
+        let body = std::fs::read_to_string(out.path().join(dst)).unwrap();
+        assert!(
+            body.contains("body{color:red}"),
+            "plain CSS not compressed: {body}"
+        );
+    }
+
+    #[test]
+    fn process_css_hash_is_stable_across_whitespace_changes() {
+        let root_a = tempdir().unwrap();
+        std::fs::create_dir_all(root_a.path().join("styles")).unwrap();
+        std::fs::write(root_a.path().join("styles/app.css"), "body { color: red; }").unwrap();
+        let out_a = tempdir().unwrap();
+        let pairs_a = process_css(root_a.path(), out_a.path(), false).unwrap();
+
+        let root_b = tempdir().unwrap();
+        std::fs::create_dir_all(root_b.path().join("styles")).unwrap();
+        std::fs::write(root_b.path().join("styles/app.css"), "body{color:red;}").unwrap();
+        let out_b = tempdir().unwrap();
+        let pairs_b = process_css(root_b.path(), out_b.path(), false).unwrap();
+
+        assert_eq!(
+            pairs_a[0].1, pairs_b[0].1,
+            "expected identical output filenames (hashes over compressed bytes)"
+        );
     }
 
     #[test]

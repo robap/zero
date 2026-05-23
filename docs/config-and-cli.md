@@ -141,6 +141,9 @@ output shape.
 | `--sourcemap`         | Emit external `.map` files (overrides config).       |
 | `--target <env>`      | `static` (default), `server`, `worker`.              |
 
+Production output is always minified (both JS and CSS). The dev
+server is unaffected.
+
 Exit code: `0` on success, non-zero on any build failure.
 
 ### `zero test [pattern]`

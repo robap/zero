@@ -47,6 +47,7 @@ swc_core = { version = "65", features = [
     "ecma_transforms_typescript",
     "ecma_visit",
     "ecma_ast",
+    "ecma_minifier",
     "common",
     "common_sourcemap",
 ] }

@@ -26,13 +26,15 @@ dist/
 └── index.html                 # static index with <script>/<link> tags pre-injected
 ```
 
+Both `app.<hash>.js` and `app.<hash>.css` are minified — production builds always minify; there is no flag.
+
 Flags:
 
 | Flag                    | Behaviour                                                                       |
 |-------------------------|---------------------------------------------------------------------------------|
 | `-o, --out <dir>`       | Output directory (default `dist/`, configurable via `[build] out` in `zero.toml`). |
 | `--analyze`             | Print a bundle-size breakdown.                                                  |
-| `--sourcemap`           | Emit external source maps (default off).                                        |
+| `--sourcemap`           | Emit external source maps (default off). When enabled, the JS map composes positions in the minified bundle back to the original source files. |
 | `--target <env>`        | `static` (default), `server`, or `worker`.                                      |
 
 ## `manifest.json`

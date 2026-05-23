@@ -42,18 +42,43 @@ function __zero_require(id) {
 /// # Returns
 /// `BundleOutput { code, source_map }`. `source_map` is `Some` iff `emit_sourcemap`.
 pub fn bundle(config: &Config, emit_sourcemap: bool) -> anyhow::Result<BundleOutput> {
+    let unmin = bundle_unminified_inner(config, emit_sourcemap)?;
+    let crate::minify::MinifyOutput {
+        code,
+        source_map: composed_map,
+    } = crate::minify::minify_js(&unmin.code, unmin.source_map.as_deref(), emit_sourcemap)?;
+    Ok(BundleOutput {
+        code,
+        source_map: composed_map,
+    })
+}
+
+/// Test-only entry point that produces the un-minified intermediate bundle —
+/// used by the showcase size-budget integration test to compare minified vs.
+/// un-minified bytes. Gated so it never appears in release builds of the
+/// `zero` crate's `[dependencies]`.
+#[cfg(any(test, feature = "test-internals"))]
+pub fn bundle_unminified(config: &Config, emit_sourcemap: bool) -> anyhow::Result<BundleOutput> {
+    bundle_unminified_inner(config, emit_sourcemap)
+}
+
+/// Produce the un-minified intermediate bundle that `bundle()` feeds to the
+/// minifier. Returned `source_map` is the bundle→original map (when
+/// `emit_sourcemap`). Used by `bundle()` and the `bundle_unminified`
+/// test-only entry point.
+fn bundle_unminified_inner(config: &Config, emit_sourcemap: bool) -> anyhow::Result<BundleOutput> {
     let (root, entry_path, entry_id) = resolve_entry(config)?;
     let (order, sources) = collect_module_graph(&root, entry_id.clone(), entry_path)?;
     let emit_order = sort_emit_order(order);
     let mut out = String::from(PREAMBLE);
-    emit_factories(&mut out, &emit_order, &sources, &root)?;
+    let factory_spans = emit_factories(&mut out, &emit_order, &sources, &root)?;
     let bootstrap_id = match &entry_id {
         ModuleId::User(rel) => rel.to_string_lossy().into_owned(),
         ModuleId::Runtime | ModuleId::Http => unreachable!(),
     };
     out.push_str(&format!("\n__zero_require('{bootstrap_id}');\n"));
     let source_map = if emit_sourcemap {
-        Some(build_combined_sourcemap(&emit_order)?)
+        Some(build_bundle_source_map(&factory_spans)?)
     } else {
         None
     };
@@ -187,39 +212,54 @@ fn sort_emit_order(order: Vec<ModuleId>) -> Vec<ModuleId> {
 }
 
 /// Append a `__zero_define(...)` block to `out` for each module in
-/// `emit_order`, in order.
+/// `emit_order`, in order. Returns a span per module recording the inclusive-
+/// first and exclusive-last bundle line indices of its factory body.
 fn emit_factories(
     out: &mut String,
     emit_order: &[ModuleId],
     sources: &HashMap<ModuleId, String>,
     root: &Path,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<(ModuleId, usize, usize)>> {
+    let mut spans: Vec<(ModuleId, usize, usize)> = Vec::with_capacity(emit_order.len());
     for id in emit_order {
         let module_id_str = module_id_string(id);
         let raw_src = sources.get(id).map(|s| s.as_str()).unwrap_or("");
         let factory_body = rewrite_module(raw_src, root, id, sources)?;
         out.push_str(&format!(
-            "\n__zero_define({module_id_str}, function(exports, __zero_require) {{\n{factory_body}\n}});\n"
+            "\n__zero_define({module_id_str}, function(exports, __zero_require) {{\n"
         ));
+        let body_first = count_lines(out);
+        out.push_str(&factory_body);
+        out.push('\n');
+        let body_last_exclusive = count_lines(out);
+        out.push_str("});\n");
+        spans.push((id.clone(), body_first, body_last_exclusive));
     }
-    Ok(())
+    Ok(spans)
 }
 
-/// Build a coarse v3 sourcemap that lists each user module in `sources`.
+/// Number of bundle lines emitted so far (0-based line index for the next char).
+fn count_lines(s: &str) -> usize {
+    s.bytes().filter(|b| *b == b'\n').count()
+}
+
+/// Build a v3 sourcemap from bundle line spans to original sources.
 ///
-/// The bundle is concatenated post-transpile, so we register source paths but
-/// emit no row-level mappings — line-accurate stack traces inside the bundle
-/// are not part of v1 scope. The map is well-formed JSON with `"version":3`
-/// and a non-empty `"sources"` array.
-fn build_combined_sourcemap(emit_order: &[ModuleId]) -> anyhow::Result<String> {
+/// For each user module's factory-body line range, emits one mapping per line
+/// pointing at the source file's line 0, column 0. Column is always 0 and
+/// intra-module line offset is collapsed to 0 — enough for stack-trace tooling
+/// to point at the right file, not for column-accurate debugging.
+/// Lines outside any user span (PREAMBLE, wrapper boilerplate, synthetic
+/// runtime/http factories) get no mapping.
+fn build_bundle_source_map(factory_spans: &[(ModuleId, usize, usize)]) -> anyhow::Result<String> {
     let mut builder = sourcemap::SourceMapBuilder::new(None);
-    for id in emit_order {
-        if let ModuleId::User(rel) = id {
-            let s = rel.to_string_lossy();
-            builder.add_source(&s);
+    for (id, first, last_exclusive) in factory_spans {
+        let ModuleId::User(rel) = id else { continue };
+        let src_id = builder.add_source(&rel.to_string_lossy());
+        for dst_line in *first..*last_exclusive {
+            builder.add_raw(dst_line as u32, 0, 0, 0, Some(src_id), None, false);
         }
     }
-    // Runtime and Http synthetic modules are not user files; skip them.
     let sm = builder.into_sourcemap();
     let mut buf: Vec<u8> = Vec::new();
     sm.to_writer(&mut buf)
@@ -250,10 +290,99 @@ fn rewrite_module(
         return rewrite_http_exports(src);
     }
 
-    let out = rewrite_imports(src);
-    let out = rewrite_exports(out, src);
+    let normalized = normalize_for_rewrite(src);
+    let out = rewrite_imports(&normalized);
+    let out = rewrite_reexport_from(out);
+    let out = rewrite_exports(out, &normalized);
     let out = resolve_relative_requires(out, root, id);
     Ok(out)
+}
+
+/// Insert a newline before `import` / `export` keywords that the SWC codegen
+/// has placed on the same line as a preceding `*/` block-comment close. Lets
+/// the line-anchored regex rewrites match in the presence of preserved
+/// leading comments.
+fn normalize_for_rewrite(src: &str) -> String {
+    let re = Regex::new(r#"\*/[ \t]+(import|export)\b"#).unwrap();
+    re.replace_all(src, "*/\n$1").into_owned()
+}
+
+/// Translate `{ a, b as c }` (an ES module named-binding list) into a JS
+/// destructuring pattern: `a, b: c`.
+fn named_to_destructure(inner: &str) -> String {
+    let mut parts = Vec::new();
+    for raw in inner.replace('\n', " ").split(',') {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        let toks: Vec<&str> = raw.split_whitespace().collect();
+        match toks.as_slice() {
+            [orig, "as", alias] => parts.push(format!("{orig}: {alias}")),
+            [name] => parts.push((*name).to_string()),
+            _ => parts.push(raw.to_string()),
+        }
+    }
+    parts.join(", ")
+}
+
+/// Rewrite `export { … } from "<spec>";` (and `export * from`) re-exports
+/// into CJS factory body lines. Runs *before* `rewrite_exports` so the
+/// trailing `from "<spec>"` is consumed alongside its `export { … }` head.
+fn rewrite_reexport_from(src: String) -> String {
+    let re_named =
+        Regex::new(r#"(?ms)^[ \t]*export\s*\{\s*([^}]+?)\s*\}\s*from\s+['"]([^'"]+)['"]\s*;?"#)
+            .unwrap();
+    let mut out = re_named
+        .replace_all(&src, |caps: &regex::Captures<'_>| {
+            rewrite_reexport_named(&caps[1], &caps[2])
+        })
+        .into_owned();
+    let re_all = Regex::new(r#"(?m)^[ \t]*export\s*\*\s*from\s+['"]([^'"]+)['"]\s*;?"#).unwrap();
+    out = re_all
+        .replace_all(&out, |caps: &regex::Captures<'_>| {
+            let spec = &caps[1];
+            let id = next_reexport_id();
+            format!(
+                "const {id} = __zero_require('{spec}'); for (const __k in {id}) {{ exports[__k] = {id}[__k]; }}"
+            )
+        })
+        .into_owned();
+    out
+}
+
+/// Build the body of `export { a, b as c } from '<spec>'`: pull the module
+/// via `__zero_require` and reassign each name onto `exports`.
+fn rewrite_reexport_named(inner: &str, spec: &str) -> String {
+    let id = next_reexport_id();
+    let mut lines = format!("const {id} = __zero_require('{spec}');");
+    for raw in inner.split(',') {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = raw.split_whitespace().collect();
+        match parts.as_slice() {
+            [orig, "as", alias] => {
+                lines.push_str(&format!("\nexports.{alias} = {id}.{orig};"));
+            }
+            [name] => {
+                lines.push_str(&format!("\nexports.{name} = {id}.{name};"));
+            }
+            _ => {}
+        }
+    }
+    lines
+}
+
+/// Generate a unique local-binding name for each rewritten re-export so the
+/// bundler doesn't collide when the same factory body has multiple
+/// `export … from` lines.
+fn next_reexport_id() -> String {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("__zero_reexport_{n}")
 }
 
 /// Convert every ES import form into a `const … = __zero_require(...)`
@@ -261,6 +390,9 @@ fn rewrite_module(
 fn rewrite_imports(src: &str) -> String {
     let single_line_import =
         Regex::new(r#"(?m)^[ \t]*import\s+\{([^}]+)\}\s*from\s+['"]([^'"]+)['"]\s*;?"#).unwrap();
+    let combined_import =
+        Regex::new(r#"(?m)^[ \t]*import\s+(\w+)\s*,\s*\{([^}]+)\}\s*from\s+['"]([^'"]+)['"]\s*;?"#)
+            .unwrap();
     let default_import =
         Regex::new(r#"(?m)^[ \t]*import\s+(\w+)\s+from\s+['"]([^'"]+)['"]\s*;?"#).unwrap();
     let namespace_import =
@@ -294,11 +426,21 @@ fn rewrite_imports(src: &str) -> String {
         offset_diff += replacement.len() as i64 - old_len as i64;
     }
 
+    out = combined_import
+        .replace_all(&out, |caps: &regex::Captures<'_>| {
+            format!(
+                "const {{ default: {}, {} }} = __zero_require('{}');",
+                &caps[1],
+                named_to_destructure(&caps[2]),
+                &caps[3]
+            )
+        })
+        .into_owned();
     out = single_line_import
         .replace_all(&out, |caps: &regex::Captures<'_>| {
             format!(
                 "const {{{}}} = __zero_require('{}');",
-                caps[1].trim(),
+                named_to_destructure(&caps[1]),
                 &caps[2]
             )
         })
@@ -468,16 +610,26 @@ fn rewrite_http_exports(body: &str) -> anyhow::Result<String> {
     Ok(out)
 }
 
-/// Extract import specifiers from an ES module source file.
+/// Extract import (and re-export) specifiers from an ES module source file.
 fn extract_imports(src: &str) -> Vec<String> {
-    let re = Regex::new(
+    let import_re = Regex::new(
         r#"(?ms)import\s+(?:\{[^}]*\}|\*\s+as\s+\w+|\w+|\s*)\s*from\s+['"]([^'"]+)['"]|import\s+['"]([^'"]+)['"]"#,
     )
     .unwrap();
-    re.captures_iter(src)
+    let reexport_re =
+        Regex::new(r#"(?ms)export\s+(?:\{[^}]*\}|\*(?:\s+as\s+\w+)?)\s*from\s+['"]([^'"]+)['"]"#)
+            .unwrap();
+    let mut out: Vec<String> = import_re
+        .captures_iter(src)
         .filter_map(|c| c.get(1).or_else(|| c.get(2)))
         .map(|m| m.as_str().to_string())
-        .collect()
+        .collect();
+    for c in reexport_re.captures_iter(src) {
+        if let Some(m) = c.get(1) {
+            out.push(m.as_str().to_string());
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -551,22 +703,22 @@ const app = new App();
         let result = with_cwd(dir.path(), || bundle(&write_minimal_config(&root), false));
         let bundled = result.unwrap().code;
         assert!(
-            bundled.contains("__zero_require('zero')"),
+            bundled.contains(r#"__zero_require("zero")"#),
             "missing zero require: {bundled}"
         );
         let app_section_start = bundled
-            .find("__zero_define('./src/app.ts'")
+            .find(r#"__zero_define("./src/app.ts""#)
             .expect("expected app.ts module section");
         let app_section = &bundled[app_section_start..];
         let app_section_end = app_section
-            .find("__zero_require('./src/app.ts')")
+            .find(r#"__zero_require("./src/app.ts")"#)
             .unwrap_or(app_section.len());
         let app_module = &app_section[..app_section_end];
         assert!(
             !app_module.contains(": number"),
             "type annotation leaked: {app_module}"
         );
-        assert!(bundled.contains("__zero_require('./src/app.ts')"));
+        assert!(bundled.contains(r#"__zero_require("./src/app.ts")"#));
     }
 
     #[test]
@@ -613,6 +765,159 @@ const app = new App();
             json.contains("./src/app.ts"),
             "sources missing entry: {json}"
         );
+        assert!(
+            !json.contains(r#""mappings":"""#),
+            "expected non-empty mappings; got empty: {json}"
+        );
+    }
+
+    #[test]
+    fn bundle_source_map_resolves_user_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("web");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/app.ts"), "const x: number = 1; x;\n").unwrap();
+        let out =
+            with_cwd(dir.path(), || bundle(&write_minimal_config(&root), true)).expect("bundle ok");
+        let json = out.source_map.expect("source_map should be Some");
+        let sm = sourcemap::SourceMap::from_reader(json.as_bytes()).expect("valid map");
+        let mut saw_app_ts = false;
+        for token in sm.tokens() {
+            if let Some(src) = token.get_source()
+                && src.ends_with("./src/app.ts")
+            {
+                saw_app_ts = true;
+                break;
+            }
+        }
+        assert!(
+            saw_app_ts,
+            "no token resolves to ./src/app.ts in map: {json}"
+        );
+    }
+
+    #[test]
+    fn bundle_evaluates_under_boa() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("web");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("src/app.ts"),
+            "let result = 0;\nfunction add(a: number, b: number) { return a + b; }\nresult = add(2, 3);\n(globalThis as any).result = result;\n",
+        )
+        .unwrap();
+        let out = with_cwd(dir.path(), || bundle(&write_minimal_config(&root), false))
+            .expect("bundle ok");
+        let mut context = boa_engine::Context::default();
+        context
+            .eval(boa_engine::Source::from_bytes(out.code.as_bytes()))
+            .expect("bundle evaluates without error");
+        let v = context
+            .global_object()
+            .get(boa_engine::js_string!("result"), &mut context)
+            .expect("global `result` defined");
+        let n = v.to_i32(&mut context).expect("result is a number");
+        assert_eq!(n, 5, "expected result == 5");
+    }
+
+    #[test]
+    fn bundle_preserves_legal_comments() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("web");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        // The legal comment is attached to a statement that survives DCE
+        // (`console.log` has side effects), so it should appear in the output.
+        std::fs::write(
+            root.join("src/app.ts"),
+            "/*! KEEP-ME license banner */\nconsole.log(\"hello\");\n/* drop-me */\nconsole.log(\"world\");\n",
+        )
+        .unwrap();
+        let out = with_cwd(dir.path(), || bundle(&write_minimal_config(&root), false))
+            .expect("bundle ok");
+        assert!(
+            out.code.contains("KEEP-ME"),
+            "legal comment missing from bundle: {}",
+            out.code
+        );
+        assert!(
+            !out.code.contains("drop-me"),
+            "regular comment retained in bundle: {}",
+            out.code
+        );
+    }
+
+    #[test]
+    fn bundle_preserves_reserved_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("web");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("src/app.ts"),
+            "import { signal } from \"zero\";\nsignal(1);\n",
+        )
+        .unwrap();
+        let out = with_cwd(dir.path(), || bundle(&write_minimal_config(&root), false))
+            .expect("bundle ok");
+        for name in [
+            "__zero_define",
+            "__zero_require",
+            "__zero_modules",
+            "__zero_cache",
+        ] {
+            assert!(
+                out.code.contains(name),
+                "reserved name {name} missing from minified bundle: {}",
+                out.code
+            );
+        }
+        assert!(
+            out.code.contains("./src/app.ts"),
+            "module id literal missing: {}",
+            out.code
+        );
+    }
+
+    #[test]
+    fn bundle_unminified_is_larger_than_bundle() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("web");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("src/app.ts"),
+            "const verbose: number = 1;\nfunction longerName(x: number) {\n    return x + verbose;\n}\nconsole.log(longerName(2));\n",
+        )
+        .unwrap();
+        let (mini, unmini) = with_cwd(dir.path(), || {
+            let mini = bundle(&write_minimal_config(&root), false).unwrap();
+            let unmini = bundle_unminified(&write_minimal_config(&root), false).unwrap();
+            (mini, unmini)
+        });
+        assert!(
+            unmini.code.len() > mini.code.len(),
+            "un-minified ({}) should be strictly longer than minified ({})",
+            unmini.code.len(),
+            mini.code.len()
+        );
+    }
+
+    #[test]
+    fn bundle_is_minified() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("web");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("src/app.ts"),
+            "const verbose: number = 1;\nfunction longerName(x: number) {\n    return x + verbose;\n}\nconsole.log(longerName(2));\n",
+        )
+        .unwrap();
+        let out = with_cwd(dir.path(), || bundle(&write_minimal_config(&root), false))
+            .expect("bundle ok");
+        assert!(
+            out.code.lines().count() <= 10,
+            "expected <= 10 lines after minification, got {}: {}",
+            out.code.lines().count(),
+            out.code
+        );
     }
 
     #[test]
@@ -628,15 +933,19 @@ const app = new App();
         let result = with_cwd(dir.path(), || bundle(&write_minimal_config(&root), false));
         let bundled = result.unwrap().code;
         assert!(
-            bundled.contains("__zero_define('zero/http'"),
+            bundled.contains(r#"__zero_define("zero/http""#),
             "missing zero/http module definition: {bundled}"
         );
         assert!(
-            bundled.contains("function createHttp("),
-            "createHttp factory not inlined: {bundled}"
+            bundled.contains("createHttp"),
+            "createHttp identifier not in bundle: {bundled}"
         );
         assert!(
-            bundled.contains("__zero_require('zero/http')"),
+            bundled.contains("exports.createHttp"),
+            "createHttp not exported: {bundled}"
+        );
+        assert!(
+            bundled.contains(r#"__zero_require("zero/http")"#),
             "user module did not require zero/http: {bundled}"
         );
     }
@@ -659,9 +968,9 @@ const app = new App();
         std::fs::write(root.join("src/inner.ts"), "export const y: number = 1;\n").unwrap();
         let result = with_cwd(dir.path(), || bundle(&write_minimal_config(&root), false));
         let bundled = result.unwrap().code;
-        assert!(bundled.contains("__zero_define('./src/app.ts'"));
-        assert!(bundled.contains("__zero_define('./src/util.js'"));
-        assert!(bundled.contains("__zero_define('./src/inner.ts'"));
+        assert!(bundled.contains(r#"__zero_define("./src/app.ts""#));
+        assert!(bundled.contains(r#"__zero_define("./src/util.js""#));
+        assert!(bundled.contains(r#"__zero_define("./src/inner.ts""#));
         assert!(!bundled.contains(": number"), "type leaked: {bundled}");
     }
 

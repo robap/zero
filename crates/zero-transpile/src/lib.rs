@@ -3,6 +3,7 @@
 //! Wraps `swc_core` with a narrow function-call API. Type-strip only; decorators
 //! and JSX are intentionally disabled.
 
+use swc_core::common::comments::SingleThreadedComments;
 pub use swc_core::common::{BytePos, SourceMap, Span, sync::Lrc};
 pub use swc_core::ecma::ast;
 
@@ -89,12 +90,11 @@ pub fn transpile_typescript(
     source: &str,
     opts: &TranspileOptions<'_>,
 ) -> Result<TranspileOutput, TranspileError> {
-    let ParsedModule {
-        module,
-        source_map: cm,
-    } = parse_module(source, opts.filename)?;
+    let cm: Lrc<SourceMap> = Default::default();
+    let comments = SingleThreadedComments::default();
+    let module = parse_ts_source_with_comments(&cm, source, opts.filename, &comments)?;
     let module = strip_types(module);
-    let (mut code, srcmap_buf) = emit_js(&cm, &module, opts.filename)?;
+    let (mut code, srcmap_buf) = emit_js_with_comments(&cm, &module, opts.filename, &comments)?;
     let source_map_json = if opts.inline_source_map || opts.emit_source_map {
         Some(serialize_source_map(&cm, &srcmap_buf, opts.filename)?)
     } else {
@@ -119,6 +119,25 @@ fn parse_ts_source(
     cm: &swc_core::common::sync::Lrc<swc_core::common::SourceMap>,
     source: &str,
     filename: &str,
+) -> Result<swc_core::ecma::ast::Module, TranspileError> {
+    parse_ts_inner(cm, source, filename, None)
+}
+
+/// Parse and capture leading/trailing comments into `comments`.
+fn parse_ts_source_with_comments(
+    cm: &swc_core::common::sync::Lrc<swc_core::common::SourceMap>,
+    source: &str,
+    filename: &str,
+    comments: &SingleThreadedComments,
+) -> Result<swc_core::ecma::ast::Module, TranspileError> {
+    parse_ts_inner(cm, source, filename, Some(comments))
+}
+
+fn parse_ts_inner(
+    cm: &swc_core::common::sync::Lrc<swc_core::common::SourceMap>,
+    source: &str,
+    filename: &str,
+    comments: Option<&SingleThreadedComments>,
 ) -> Result<swc_core::ecma::ast::Module, TranspileError> {
     use std::sync::Arc;
 
@@ -152,7 +171,7 @@ fn parse_ts_source(
         }),
         EsVersion::EsNext,
         StringInput::from(&*fm),
-        None,
+        comments.map(|c| c as &dyn swc_core::common::comments::Comments),
     );
     let mut parser = Parser::new_from(lexer);
     let module_result = parser.parse_module();
@@ -198,10 +217,20 @@ fn strip_types(module: swc_core::ecma::ast::Module) -> swc_core::ecma::ast::Modu
 /// position buffer.
 type SrcmapBuf = Vec<(swc_core::common::BytePos, swc_core::common::LineCol)>;
 
-fn emit_js(
+fn emit_js_with_comments(
     cm: &swc_core::common::sync::Lrc<swc_core::common::SourceMap>,
     module: &swc_core::ecma::ast::Module,
     filename: &str,
+    comments: &SingleThreadedComments,
+) -> Result<(String, SrcmapBuf), TranspileError> {
+    emit_js_inner(cm, module, filename, Some(comments))
+}
+
+fn emit_js_inner(
+    cm: &swc_core::common::sync::Lrc<swc_core::common::SourceMap>,
+    module: &swc_core::ecma::ast::Module,
+    filename: &str,
+    comments: Option<&SingleThreadedComments>,
 ) -> Result<(String, SrcmapBuf), TranspileError> {
     use swc_core::ecma::codegen::Emitter;
     use swc_core::ecma::codegen::text_writer::JsWriter;
@@ -213,7 +242,7 @@ fn emit_js(
         let mut emitter = Emitter {
             cfg: swc_core::ecma::codegen::Config::default(),
             cm: cm.clone(),
-            comments: None,
+            comments: comments.map(|c| c as &dyn swc_core::common::comments::Comments),
             wr: writer,
         };
         emitter.emit_module(module).map_err(|e| TranspileError {
@@ -384,6 +413,25 @@ mod tests {
             inline_source_map: false,
             emit_source_map: false,
         }
+    }
+
+    #[test]
+    fn preserves_leading_legal_comment() {
+        let out = transpile_typescript(
+            "/*! KEEP-ME */\nconst x: number = 1; console.log(x);\n",
+            &opts("a.ts"),
+        )
+        .expect("ok");
+        assert!(
+            out.code.contains("KEEP-ME"),
+            "legal comment missing from transpile output: {}",
+            out.code
+        );
+        assert!(
+            out.code.contains("const x"),
+            "const decl missing: {}",
+            out.code
+        );
     }
 
     #[test]

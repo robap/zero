@@ -23,6 +23,8 @@ anyhow = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
+zero-bundler = { path = "../zero-bundler", features = ["test-internals"] }
+zero-config = { path = "../zero-config" }
 tempfile = { workspace = true }
 assert_cmd = { workspace = true }
 predicates = { workspace = true }

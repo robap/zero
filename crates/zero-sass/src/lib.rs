@@ -1,7 +1,7 @@
 //! SCSS → CSS compiler used by the dev server and the build pipeline.
 //!
-//! Wraps `grass` with a narrow function-call API. Expanded output style
-//! only; no minification.
+//! Wraps `grass` with a narrow function-call API. Compressed output style;
+//! output is minified.
 
 /// Options controlling a single `compile_scss` invocation.
 pub struct SassOptions<'a> {
@@ -20,7 +20,7 @@ pub struct SassOptions<'a> {
 /// Result of a successful compile.
 #[derive(Debug)]
 pub struct SassOutput {
-    /// The emitted CSS source (always expanded).
+    /// The emitted CSS source (always compressed).
     pub code: String,
     /// Present only when `opts.emit_source_map == true`. JSON text.
     pub source_map: Option<String>,
@@ -71,7 +71,7 @@ pub fn compile_scss(
 ) -> Result<SassOutput, SassError> {
     let parent = abs_path.parent().unwrap_or(abs_path);
     let mut options = grass::Options::default()
-        .style(grass::OutputStyle::Expanded)
+        .style(grass::OutputStyle::Compressed)
         .quiet(true)
         .load_path(parent);
     for p in opts.load_paths {
@@ -199,12 +199,12 @@ mod tests {
         let src = "$c: red; body { color: $c; }";
         let out = compile_scss(src, &abs_path(), &opts("test.scss")).expect("compile ok");
         assert!(
-            out.code.contains("body {"),
+            out.code.contains("body{"),
             "missing body block: {}",
             out.code
         );
         assert!(
-            out.code.contains("color: red"),
+            out.code.contains("color:red"),
             "variable not resolved: {}",
             out.code
         );
@@ -236,7 +236,7 @@ mod tests {
         };
         let out = compile_scss(src, &main_path, &opts).expect("compile ok");
         assert!(
-            out.code.contains("padding: 8px"),
+            out.code.contains("padding:8px"),
             "partial not resolved: {}",
             out.code
         );
@@ -305,13 +305,17 @@ mod tests {
     }
 
     #[test]
-    fn expanded_output_style_is_default() {
-        let src = "a{color:red}";
+    fn compressed_output_drops_whitespace() {
+        let src = "body { color: red;\n  padding: 8px; }";
         let out = compile_scss(src, &abs_path(), &opts("test.scss")).expect("ok");
-        let lines: Vec<&str> = out.code.lines().collect();
         assert!(
-            lines.len() >= 2,
-            "expected multiple lines (expanded), got: {}",
+            !out.code.contains("\n  "),
+            "expected no indented newlines in compressed output: {}",
+            out.code
+        );
+        assert!(
+            !out.code.contains("  "),
+            "expected no double-space runs in compressed output: {}",
             out.code
         );
     }
