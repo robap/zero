@@ -51,6 +51,28 @@ Generated project layout:
 `.js` works everywhere — the scaffold ships `.ts` only because the examples
 are in TypeScript. The JSDoc conventions below apply to `.js` files.
 
+### Type-checking
+
+The CLI does not bundle a type-checker. For TypeScript projects, install
+TypeScript **5.0 or later** and run it against the scaffold's
+`tsconfig.json`. Two options:
+
+```bash
+# Per-project (recommended — version pinned alongside the app)
+npm i -D typescript
+npx tsc --noEmit
+
+# Global (one install, used across every project on the machine)
+npm i -g typescript
+tsc --noEmit
+```
+
+The shipped `tsconfig.json` relies on `allowImportingTsExtensions` and
+`moduleResolution: bundler`, both of which require TS 5.0+. A `tsc`
+older than 5.0 will fail with errors about `.ts` extensions in imports
+— upgrade rather than edit `tsconfig.json`, which is correct as-shipped.
+Verify with `tsc --version`.
+
 ---
 
 ## Imports

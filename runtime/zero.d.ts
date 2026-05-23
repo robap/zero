@@ -57,9 +57,9 @@ declare module "zero" {
 
   export interface RouteChildEntry {
     path: string;
-    load: (...args: unknown[]) => unknown;
+    load: (...args: never[]) => unknown;
     children?: RouteChildEntry[];
-    guard?: (...args: unknown[]) => unknown;
+    guard?: (...args: never[]) => unknown;
     meta?: Record<string, unknown>;
     loading?: () => TemplateResult;
     error?: (props: { error: unknown; retry: () => void }) => TemplateResult;
@@ -67,8 +67,8 @@ declare module "zero" {
 
   export interface RouteOptions {
     children?: RouteChildEntry[];
-    guard?: (...args: unknown[]) => unknown;
-    load?: (...args: unknown[]) => unknown;
+    guard?: (...args: never[]) => unknown;
+    load?: (...args: never[]) => unknown;
     meta?: Record<string, unknown>;
     loading?: () => TemplateResult;
     error?: (props: { error: unknown; retry: () => void }) => TemplateResult;
@@ -86,7 +86,7 @@ declare module "zero" {
     use(mw: (ctx: MiddlewareContext) => void | Promise<void>): this;
     route(
       pattern: string,
-      loaderOrComponent: (...args: unknown[]) => unknown,
+      loaderOrComponent: (...args: never[]) => unknown,
       opts?: RouteOptions,
     ): this;
     layout(component: (props: { outlet: unknown }) => TemplateResult): this;

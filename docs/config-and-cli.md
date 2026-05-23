@@ -75,7 +75,6 @@ Commands:
   zero build                  Production build
   zero test [pattern]         Run tests
   zero mutate [pattern]       Run mutation testing
-  zero check                  Type-check the project
   zero fmt                    Format all source files
   zero lint                   Lint all source files
   zero gen component <name>   Generate a component
@@ -173,11 +172,15 @@ with each mutation applied.
 Writes `mutation/mutation.json` with structured results. Exit
 code is non-zero if any mutant survived or errored.
 
-### `zero check`
+### Type-checking
 
-Full TypeScript type-checking, strict mode, no separate
-`tsconfig` needed — zero knows its own type surface. Exits
-non-zero on any error.
+The CLI does not ship a type-checker. The scaffold's `tsconfig.json`
+drives editor type-checking; for an editor-independent CLI gate,
+install TypeScript ≥ 5.0 either per-project
+(`npm i -D typescript` → `npx tsc --noEmit`) or globally
+(`npm i -g typescript` → `tsc --noEmit`). TypeScript < 5.0 will fail
+against the shipped tsconfig because of `allowImportingTsExtensions` —
+`tsc --version` confirms the installed release.
 
 ### `zero fmt`
 
