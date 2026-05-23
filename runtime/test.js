@@ -1,5 +1,5 @@
 import { commit } from "./template.js";
-import { _createScope } from "./reactivity.js";
+import { _createScope, _disposeUnownedEffects } from "./reactivity.js";
 import { _getCurrentApp, _setCurrentApp } from "./app.js";
 import { Event, KeyboardEvent, MouseEvent } from "./dom-shim.js";
 
@@ -216,6 +216,7 @@ export function fire(el, type, data = {}) {
  * @returns {void}
  */
 export function cleanup() {
+  _disposeUnownedEffects();
   for (const { scope } of _renderTracker) scope.dispose();
   _renderTracker.length = 0;
   const runningApp = _getCurrentApp();
@@ -346,14 +347,18 @@ function _captureUserFrame() {
 
 /**
  * Throw a fresh `Error` decorated with `_userFrame` (the call-site frame
- * outside `runtime/*.js`). Used by every matcher in `expect()`.
+ * outside `runtime/*.js`). Used by every matcher in `expect()`. If `userFrame`
+ * is supplied (e.g. a `.not.X` matcher captured it eagerly before descending
+ * into `_negate`), it is used verbatim; otherwise the frame is walked from
+ * a fresh stack.
  * @internal
  * @param {string} msg
+ * @param {string} [userFrame]
  * @returns {never}
  */
-function _fail(msg) {
+function _fail(msg, userFrame) {
   const err = new Error(msg);
-  err._userFrame = _captureUserFrame();
+  err._userFrame = userFrame ?? _captureUserFrame();
   throw err;
 }
 
@@ -416,110 +421,99 @@ function _deepEqual(a, b) {
 }
 
 /**
- * Create a matcher object for `actual`.
- * @param {unknown} actual
- * @returns {{ toBe(expected: unknown): void, toEqual(expected: unknown): void, toBeTruthy(): void, toBeFalsy(): void, toBeNull(): void, toContain(item: unknown): void, toThrow(message?: string): void, toBeTemplateResult(): void, toMatchSnapshot(): void, toHaveBeenCalled(): void, toHaveBeenCalledTimes(n: number): void, toHaveBeenCalledWith(...args: unknown[]): void, toHaveBeenLastCalledWith(...args: unknown[]): void }}
+ * Run a positive matcher check and invert its pass/fail interpretation.
+ * If the check passes (does not throw), the negation fails with `negatedMsg`,
+ * tagged with `userFrame` so the reporter points at the caller. If the
+ * check throws (matcher failure), the negation passes silently.
+ * @internal
+ * @param {() => void} check
+ * @param {string} negatedMsg
+ * @param {string|null} userFrame
+ * @returns {void}
  */
-export function expect(actual) {
-  const _isSpy = v => v != null && typeof v === "function" && Array.isArray(v.calls);
+function _negate(check, negatedMsg, userFrame) {
+  let threw = false;
+  try { check(); } catch (_) { threw = true; }
+  if (!threw) _fail(negatedMsg, userFrame);
+}
+
+/**
+ * Type guard for spy objects.
+ * @internal
+ * @param {unknown} v
+ * @returns {boolean}
+ */
+function _isSpy(v) {
+  return v != null && typeof v === "function" && Array.isArray(v.calls);
+}
+
+/**
+ * Build the positive-matcher table for `expect(actual)`.
+ * @internal
+ * @param {unknown} actual
+ * @returns {object}
+ */
+function _buildPositive(actual) {
   return {
     toBe(expected) {
       if (actual !== expected) {
-        _fail(
-          `expect(${_pretty(actual)}).toBe(${_pretty(expected)}): values are not strictly equal`,
-        );
+        _fail(`expect(${_pretty(actual)}).toBe(${_pretty(expected)}): values are not strictly equal`);
       }
     },
     toEqual(expected) {
       if (!_deepEqual(actual, expected)) {
-        _fail(
-          `expect(${_pretty(actual)}).toEqual(${_pretty(expected)}): values are not deeply equal`,
-        );
+        _fail(`expect(${_pretty(actual)}).toEqual(${_pretty(expected)}): values are not deeply equal`);
       }
     },
     toBeTruthy() {
-      if (!Boolean(actual)) {
-        _fail(`expect(${_pretty(actual)}).toBeTruthy(): value is falsy`);
-      }
+      if (!Boolean(actual)) _fail(`expect(${_pretty(actual)}).toBeTruthy(): value is falsy`);
     },
     toBeFalsy() {
-      if (Boolean(actual)) {
-        _fail(`expect(${_pretty(actual)}).toBeFalsy(): value is truthy`);
-      }
+      if (Boolean(actual)) _fail(`expect(${_pretty(actual)}).toBeFalsy(): value is truthy`);
     },
     toBeNull() {
-      if (actual !== null) {
-        _fail(`expect(${_pretty(actual)}).toBeNull(): value is not null`);
-      }
+      if (actual !== null) _fail(`expect(${_pretty(actual)}).toBeNull(): value is not null`);
     },
     toContain(item) {
       if (typeof actual === "string") {
         if (!actual.includes(item)) {
-          _fail(
-            `expect(${_pretty(actual)}).toContain(${_pretty(item)}): string does not include substring`,
-          );
+          _fail(`expect(${_pretty(actual)}).toContain(${_pretty(item)}): string does not include substring`);
         }
       } else if (Array.isArray(actual)) {
         if (actual.indexOf(item) < 0) {
-          _fail(
-            `expect(${_pretty(actual)}).toContain(${_pretty(item)}): array does not contain item`,
-          );
+          _fail(`expect(${_pretty(actual)}).toContain(${_pretty(item)}): array does not contain item`);
         }
       } else {
         _fail(`expect(...).toContain: value is not a string or array`);
       }
     },
     toThrow(message) {
-      if (typeof actual !== "function") {
-        _fail(`expect(...).toThrow: value must be a function`);
-      }
+      if (typeof actual !== "function") _fail(`expect(...).toThrow: value must be a function`);
       let threw = false;
       let thrownError;
-      try {
-        actual();
-      } catch (e) {
-        threw = true;
-        thrownError = e;
-      }
-      if (!threw) {
-        _fail(`expect(...).toThrow: function did not throw`);
-      }
+      try { actual(); } catch (e) { threw = true; thrownError = e; }
+      if (!threw) _fail(`expect(...).toThrow: function did not throw`);
       if (typeof message === "string") {
         const errMsg = thrownError instanceof Error ? thrownError.message : String(thrownError);
         if (!errMsg.includes(message)) {
-          _fail(
-            `expect(...).toThrow(${_pretty(message)}): threw "${errMsg}" which does not contain "${message}"`,
-          );
+          _fail(`expect(...).toThrow(${_pretty(message)}): threw "${errMsg}" which does not contain "${message}"`);
         }
       }
     },
     toBeTemplateResult() {
-      if (
-        actual == null ||
-        typeof actual !== "object" ||
-        actual._template == null ||
-        !Array.isArray(actual._values)
-      ) {
-        _fail(
-          `expect(${_pretty(actual)}).toBeTemplateResult(): value is not a TemplateResult`,
-        );
+      if (actual == null || typeof actual !== "object" || actual._template == null || !Array.isArray(actual._values)) {
+        _fail(`expect(${_pretty(actual)}).toBeTemplateResult(): value is not a TemplateResult`);
       }
     },
     toMatchSnapshot() {
       _fail("toMatchSnapshot: snapshot testing is not in this slice yet");
     },
     toHaveBeenCalled() {
-      if (!_isSpy(actual)) {
-        _fail(`expect(...).toHaveBeenCalled: value is not a spy`);
-      }
-      if (actual.callCount === 0) {
-        _fail(`expect(spy).toHaveBeenCalled(): spy was not called`);
-      }
+      if (!_isSpy(actual)) _fail(`expect(...).toHaveBeenCalled: value is not a spy`);
+      if (actual.callCount === 0) _fail(`expect(spy).toHaveBeenCalled(): spy was not called`);
     },
     toHaveBeenCalledTimes(n) {
-      if (!_isSpy(actual)) {
-        _fail(`expect(...).toHaveBeenCalledTimes: value is not a spy`);
-      }
+      if (!_isSpy(actual)) _fail(`expect(...).toHaveBeenCalledTimes: value is not a spy`);
       if (actual.callCount !== n) {
         _fail(
           `expect(spy).toHaveBeenCalledTimes(${n}): spy was called ${actual.callCount} time(s)\n` +
@@ -528,9 +522,7 @@ export function expect(actual) {
       }
     },
     toHaveBeenCalledWith(...expectedArgs) {
-      if (!_isSpy(actual)) {
-        _fail(`expect(...).toHaveBeenCalledWith: value is not a spy`);
-      }
+      if (!_isSpy(actual)) _fail(`expect(...).toHaveBeenCalledWith: value is not a spy`);
       const hit = actual.calls.some(args => _deepEqual(args, expectedArgs));
       if (!hit) {
         _fail(
@@ -540,12 +532,8 @@ export function expect(actual) {
       }
     },
     toHaveBeenLastCalledWith(...expectedArgs) {
-      if (!_isSpy(actual)) {
-        _fail(`expect(...).toHaveBeenLastCalledWith: value is not a spy`);
-      }
-      if (actual.callCount === 0) {
-        _fail(`expect(spy).toHaveBeenLastCalledWith(...): spy was never called`);
-      }
+      if (!_isSpy(actual)) _fail(`expect(...).toHaveBeenLastCalledWith: value is not a spy`);
+      if (actual.callCount === 0) _fail(`expect(spy).toHaveBeenLastCalledWith(...): spy was never called`);
       const lastArgs = actual.calls[actual.callCount - 1];
       if (!_deepEqual(lastArgs, expectedArgs)) {
         _fail(
@@ -554,5 +542,182 @@ export function expect(actual) {
         );
       }
     },
+    toBeGreaterThan(n) {
+      if (typeof actual !== "number" || typeof n !== "number") {
+        _fail(`expect(...).toBeGreaterThan: value is not a number`);
+      }
+      if (!(actual > n)) {
+        _fail(`expect(${_pretty(actual)}).toBeGreaterThan(${n}): ${actual} is not greater than ${n}`);
+      }
+    },
+    toBeGreaterThanOrEqual(n) {
+      if (typeof actual !== "number" || typeof n !== "number") {
+        _fail(`expect(...).toBeGreaterThanOrEqual: value is not a number`);
+      }
+      if (!(actual >= n)) {
+        _fail(`expect(${_pretty(actual)}).toBeGreaterThanOrEqual(${n}): ${actual} is not greater than or equal to ${n}`);
+      }
+    },
+    toBeLessThan(n) {
+      if (typeof actual !== "number" || typeof n !== "number") {
+        _fail(`expect(...).toBeLessThan: value is not a number`);
+      }
+      if (!(actual < n)) {
+        _fail(`expect(${_pretty(actual)}).toBeLessThan(${n}): ${actual} is not less than ${n}`);
+      }
+    },
+    toBeLessThanOrEqual(n) {
+      if (typeof actual !== "number" || typeof n !== "number") {
+        _fail(`expect(...).toBeLessThanOrEqual: value is not a number`);
+      }
+      if (!(actual <= n)) {
+        _fail(`expect(${_pretty(actual)}).toBeLessThanOrEqual(${n}): ${actual} is not less than or equal to ${n}`);
+      }
+    },
   };
+}
+
+/**
+ * Build the negation matcher table. Each matcher runs the corresponding
+ * positive check and inverts the throw/no-throw signal via `_negate`.
+ * `toMatchSnapshot` keeps the "not implemented" body — it throws either way.
+ * @internal
+ * @param {unknown} actual
+ * @param {object} positive
+ * @returns {object}
+ */
+function _buildNegative(actual, positive) {
+  return {
+    toBe(expected) {
+      const f = _captureUserFrame();
+      _negate(() => positive.toBe(expected),
+        `expect(${_pretty(actual)}).not.toBe(${_pretty(expected)}): values are strictly equal`, f);
+    },
+    toEqual(expected) {
+      const f = _captureUserFrame();
+      _negate(() => positive.toEqual(expected),
+        `expect(${_pretty(actual)}).not.toEqual(${_pretty(expected)}): values are deeply equal`, f);
+    },
+    toBeTruthy() {
+      const f = _captureUserFrame();
+      _negate(() => positive.toBeTruthy(),
+        `expect(${_pretty(actual)}).not.toBeTruthy(): value is truthy`, f);
+    },
+    toBeFalsy() {
+      const f = _captureUserFrame();
+      _negate(() => positive.toBeFalsy(),
+        `expect(${_pretty(actual)}).not.toBeFalsy(): value is falsy`, f);
+    },
+    toBeNull() {
+      const f = _captureUserFrame();
+      _negate(() => positive.toBeNull(),
+        `expect(${_pretty(actual)}).not.toBeNull(): value is null`, f);
+    },
+    toContain(item) {
+      const f = _captureUserFrame();
+      _negate(() => positive.toContain(item),
+        `expect(${_pretty(actual)}).not.toContain(${_pretty(item)}): value contains item`, f);
+    },
+    toThrow(message) {
+      const f = _captureUserFrame();
+      if (typeof actual !== "function") _fail(`expect(...).not.toThrow: value must be a function`, f);
+      let threw = false;
+      let thrownError;
+      try { actual(); } catch (e) { threw = true; thrownError = e; }
+      if (typeof message === "string") {
+        if (threw) {
+          const errMsg = thrownError instanceof Error ? thrownError.message : String(thrownError);
+          if (errMsg.includes(message)) {
+            _fail(`expect(...).not.toThrow(${_pretty(message)}): threw "${errMsg}" which contains "${message}"`, f);
+          }
+        }
+      } else if (threw) {
+        const errMsg = thrownError instanceof Error ? thrownError.message : String(thrownError);
+        _fail(`expect(...).not.toThrow(): function threw "${errMsg}"`, f);
+      }
+    },
+    toBeTemplateResult() {
+      const f = _captureUserFrame();
+      _negate(() => positive.toBeTemplateResult(),
+        `expect(${_pretty(actual)}).not.toBeTemplateResult(): value is a TemplateResult`, f);
+    },
+    toMatchSnapshot() {
+      _fail("toMatchSnapshot: snapshot testing is not in this slice yet");
+    },
+    toHaveBeenCalled() {
+      const f = _captureUserFrame();
+      if (!_isSpy(actual)) _fail(`expect(...).not.toHaveBeenCalled: value is not a spy`, f);
+      if (actual.callCount > 0) {
+        _fail(`expect(spy).not.toHaveBeenCalled(): spy was called ${actual.callCount} time(s)`, f);
+      }
+    },
+    toHaveBeenCalledTimes(n) {
+      const f = _captureUserFrame();
+      if (!_isSpy(actual)) _fail(`expect(...).not.toHaveBeenCalledTimes: value is not a spy`, f);
+      if (actual.callCount === n) {
+        _fail(`expect(spy).not.toHaveBeenCalledTimes(${n}): spy was called exactly ${n} time(s)`, f);
+      }
+    },
+    toHaveBeenCalledWith(...expectedArgs) {
+      const f = _captureUserFrame();
+      if (!_isSpy(actual)) _fail(`expect(...).not.toHaveBeenCalledWith: value is not a spy`, f);
+      const matches = actual.calls.filter(args => _deepEqual(args, expectedArgs));
+      if (matches.length > 0) {
+        _fail(
+          `expect(spy).not.toHaveBeenCalledWith(${expectedArgs.map(a => _pretty(a)).join(", ")}): ${matches.length} of ${actual.callCount} recorded call(s) matched\n` +
+          `  matching calls: ${_pretty(matches)}`,
+          f,
+        );
+      }
+    },
+    toHaveBeenLastCalledWith(...expectedArgs) {
+      const f = _captureUserFrame();
+      if (!_isSpy(actual)) _fail(`expect(...).not.toHaveBeenLastCalledWith: value is not a spy`, f);
+      if (actual.callCount > 0) {
+        const lastArgs = actual.calls[actual.callCount - 1];
+        if (_deepEqual(lastArgs, expectedArgs)) {
+          _fail(
+            `expect(spy).not.toHaveBeenLastCalledWith(${expectedArgs.map(a => _pretty(a)).join(", ")}): last call matched\n` +
+            `  last call args: ${_pretty(lastArgs)}`,
+            f,
+          );
+        }
+      }
+    },
+    toBeGreaterThan(n) {
+      const f = _captureUserFrame();
+      _negate(() => positive.toBeGreaterThan(n),
+        `expect(${_pretty(actual)}).not.toBeGreaterThan(${n}): ${actual} is greater than ${n}`, f);
+    },
+    toBeGreaterThanOrEqual(n) {
+      const f = _captureUserFrame();
+      _negate(() => positive.toBeGreaterThanOrEqual(n),
+        `expect(${_pretty(actual)}).not.toBeGreaterThanOrEqual(${n}): ${actual} is greater than or equal to ${n}`, f);
+    },
+    toBeLessThan(n) {
+      const f = _captureUserFrame();
+      _negate(() => positive.toBeLessThan(n),
+        `expect(${_pretty(actual)}).not.toBeLessThan(${n}): ${actual} is less than ${n}`, f);
+    },
+    toBeLessThanOrEqual(n) {
+      const f = _captureUserFrame();
+      _negate(() => positive.toBeLessThanOrEqual(n),
+        `expect(${_pretty(actual)}).not.toBeLessThanOrEqual(${n}): ${actual} is less than or equal to ${n}`, f);
+    },
+  };
+}
+
+/**
+ * Create a matcher object for `actual`. The returned object exposes positive
+ * matchers (`toBe`, etc.), the numeric comparators
+ * (`toBeGreaterThan`/`OrEqual`, `toBeLessThan`/`OrEqual`), and a `.not`
+ * property carrying the same matchers with inverted pass/fail interpretation.
+ * `.not.not` is intentionally unavailable.
+ * @param {unknown} actual
+ * @returns {object}
+ */
+export function expect(actual) {
+  const positive = _buildPositive(actual);
+  positive.not = _buildNegative(actual, positive);
+  return positive;
 }

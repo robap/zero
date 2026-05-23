@@ -38,6 +38,22 @@ const FRAMEWORK_INTERNAL_BASENAMES: &[&str] = &[
     "http.js",
 ];
 
+/// Function names that identify test-framework registration call sites.
+/// A frame whose function name is one of these is never the actual throw
+/// site — it's the call that *contains* the throw. The stack walker skips
+/// these when picking the topmost user frame, so a raw `TypeError` (or any
+/// non-matcher throw) doesn't get pinned to the `it(...)` registration line.
+const FRAMEWORK_REGISTRATION_NAMES: &[&str] = &[
+    "it",
+    "describe",
+    "beforeEach",
+    "afterEach",
+    "beforeAll",
+    "afterAll",
+    "cleanup",
+    "render",
+];
+
 /// A thrown JS error captured from Boa, with stack and user-frame metadata.
 struct CapturedError {
     message: String,
@@ -125,6 +141,40 @@ fn run_with_loader(
         .strip_prefix(project_root)
         .unwrap_or(file_abs)
         .to_path_buf();
+    let rel_for_panic = rel_path.clone();
+    let project_root_owned = project_root.to_path_buf();
+    let file_abs_owned = file_abs.to_path_buf();
+
+    // Swap in a silent panic hook for the duration of catch_unwind so a
+    // teardown panic doesn't dump a stderr trace before the synthetic failure
+    // is reported. The guard restores the original hook on drop, even if the
+    // closure itself panics.
+    let _hook_guard = SilentPanicHookGuard::install();
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run_with_loader_inner(
+            &project_root_owned,
+            &file_abs_owned,
+            loader,
+            want_coverage,
+            rel_path,
+        )
+    }));
+    drop(_hook_guard);
+
+    match result {
+        Ok(outcome) => outcome,
+        Err(payload) => synthesize_panic_outcome(rel_for_panic, payload),
+    }
+}
+
+fn run_with_loader_inner(
+    project_root: &Path,
+    file_abs: &Path,
+    loader: Rc<ZeroModuleLoader>,
+    want_coverage: bool,
+    rel_path: PathBuf,
+) -> RunOutcome {
     let mut context = match build_js_context(loader.clone()) {
         Ok(c) => c,
         Err(f) => return load_error_outcome(rel_path, f),
@@ -164,6 +214,16 @@ fn run_with_loader(
         ts_source_map.as_ref(),
         &mut context,
     );
+
+    // Test-only injection point for the catch_unwind safety net: force a
+    // panic *after* tests have run and outcomes are collected but before
+    // teardown. Mirrors the Boa MapLock-finalizer panic that the safety
+    // net is designed to convert into a structured failure.
+    #[cfg(test)]
+    if tests::should_force_teardown_panic() {
+        panic!("forced teardown panic for test");
+    }
+
     let coverage_value = if want_coverage {
         serialize_coverage(&mut context)
     } else {
@@ -181,6 +241,95 @@ fn run_with_loader(
         coverage: coverage_value,
         loaded,
     }
+}
+
+type SilentHookState = std::sync::Mutex<(
+    usize,
+    Option<Box<dyn Fn(&std::panic::PanicHookInfo) + Sync + Send>>,
+)>;
+
+fn silent_hook_state() -> &'static SilentHookState {
+    static STATE: std::sync::OnceLock<SilentHookState> = std::sync::OnceLock::new();
+    STATE.get_or_init(|| std::sync::Mutex::new((0, None)))
+}
+
+/// RAII guard: replaces the panic hook with a no-op for the duration of
+/// `catch_unwind` so the default stderr backtrace doesn't fire before the
+/// synthetic failure is reported. Reference-counted via a process-global
+/// mutex so concurrent guards (e.g. parallel `cargo test`) do not stomp on
+/// each other's saved hook.
+struct SilentPanicHookGuard;
+
+impl SilentPanicHookGuard {
+    fn install() -> Self {
+        let mut guard = silent_hook_state()
+            .lock()
+            .expect("panic hook mutex poisoned");
+        if guard.0 == 0 {
+            let prev = std::panic::take_hook();
+            std::panic::set_hook(Box::new(|_| {}));
+            guard.1 = Some(prev);
+        }
+        guard.0 += 1;
+        Self
+    }
+}
+
+impl Drop for SilentPanicHookGuard {
+    fn drop(&mut self) {
+        let mut guard = silent_hook_state()
+            .lock()
+            .expect("panic hook mutex poisoned");
+        if guard.0 == 0 {
+            return;
+        }
+        guard.0 -= 1;
+        if guard.0 == 0
+            && let Some(prev) = guard.1.take()
+        {
+            std::panic::set_hook(prev);
+        }
+    }
+}
+
+/// Synthesize a structured `RunOutcome` for a panic caught from
+/// [`run_with_loader_inner`]. Outcomes collected before the panic are lost
+/// because the inner stack unwound — this is the accepted trade-off; a GC /
+/// teardown panic is rare, and the synthetic failure makes the run loud
+/// instead of crashing the process.
+fn synthesize_panic_outcome(
+    rel_path: PathBuf,
+    payload: Box<dyn std::any::Any + Send>,
+) -> RunOutcome {
+    let msg = panic_payload_to_string(payload.as_ref());
+    RunOutcome {
+        result: FileResult {
+            path: rel_path,
+            outcomes: vec![TestOutcome {
+                name_chain: vec!["<Boa GC panic during teardown>".to_string()],
+                status: Status::Failed,
+                duration_ms: 0,
+                failure: Some(Failure {
+                    message: format!("Boa GC panic: {msg}"),
+                    stack: None,
+                    location: None,
+                }),
+            }],
+            load_error: None,
+        },
+        coverage: None,
+        loaded: vec![],
+    }
+}
+
+fn panic_payload_to_string(p: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = p.downcast_ref::<&'static str>() {
+        return (*s).to_string();
+    }
+    if let Some(s) = p.downcast_ref::<String>() {
+        return s.clone();
+    }
+    "<non-string panic payload>".to_string()
 }
 
 /// Wrap a load-time `Failure` into an empty `RunOutcome` keyed by `rel_path`.
@@ -543,6 +692,13 @@ fn build_failure(captured: CapturedError, sm: Option<&sourcemap::SourceMap>) -> 
 
 /// Choose a source location: prefer remapped `user_frame`, otherwise walk the
 /// already-remapped stack for the first user-code frame.
+///
+/// The walk passes over framework-internal paths via [`is_user_path`], then
+/// also skips frames whose function name appears in
+/// [`FRAMEWORK_REGISTRATION_NAMES`] — those are calls that *contain* the
+/// throw (e.g. `it(...)`), not the throw site itself. If no frame survives
+/// both filters, the walker falls back to the first non-internal frame so
+/// callers never lose a location they would have had under the old logic.
 fn compute_location(
     user_frame: Option<&str>,
     remapped_stack: Option<&str>,
@@ -555,18 +711,31 @@ fn compute_location(
         }
     }
     let stack_text = remapped_stack?;
+    let mut fallback: Option<SourceLoc> = None;
     for line in stack_text.lines() {
-        if let Some((path, l, c)) = parse_stack_frame(line)
-            && is_user_path(&path)
-        {
-            return Some(SourceLoc {
-                file: PathBuf::from(path),
-                line: l,
-                column: c,
-            });
+        let Some((fn_name, path, l, c)) = parse_stack_frame(line) else {
+            continue;
+        };
+        if !is_user_path(&path) {
+            continue;
+        }
+        let loc = SourceLoc {
+            file: PathBuf::from(&path),
+            line: l,
+            column: c,
+        };
+        let is_registration = fn_name
+            .as_deref()
+            .map(|n| FRAMEWORK_REGISTRATION_NAMES.contains(&n))
+            .unwrap_or(false);
+        if !is_registration {
+            return Some(loc);
+        }
+        if fallback.is_none() {
+            fallback = Some(loc);
         }
     }
-    None
+    fallback
 }
 
 /// Parse a `"path:line:col"` string into a [`SourceLoc`].
@@ -580,16 +749,34 @@ fn parse_simple_frame(s: &str) -> Option<SourceLoc> {
     })
 }
 
-/// Parse a single stack-trace line into `(path, line, column)`. Accepts V8
-/// `"... (path:L:C)"`, SpiderMonkey `"fn@path:L:C"`, and plain `"path:L:C"`.
-fn parse_stack_frame(line: &str) -> Option<(String, u32, u32)> {
+/// Parse a single stack-trace line into `(fn_name, path, line, column)`.
+/// Accepts V8 `"    at fn (path:L:C)"`, SpiderMonkey `"fn@path:L:C"`, and
+/// plain `"path:L:C"`. `fn_name` is `None` for plain frames or when the
+/// format provides no function name.
+fn parse_stack_frame(line: &str) -> Option<(Option<String>, String, u32, u32)> {
     let re = regex::Regex::new(r"(?:\(|@|\s)([^\s()@]+):(\d+):(\d+)\)?\s*$").ok()?;
     let caps = re.captures(line)?;
-    Some((
-        caps[1].to_string(),
-        caps[2].parse().ok()?,
-        caps[3].parse().ok()?,
-    ))
+    let path = caps[1].to_string();
+    let l: u32 = caps[2].parse().ok()?;
+    let c: u32 = caps[3].parse().ok()?;
+    let fn_name = extract_fn_name(line);
+    Some((fn_name, path, l, c))
+}
+
+/// Pull the function name from a stack frame line.
+/// V8 `"    at NAME (path:...)"` → `Some(NAME)`.
+/// SpiderMonkey `"NAME@path:..."` → `Some(NAME)`.
+/// `"    at path:..."` (no function name) or plain `"path:..."` → `None`.
+fn extract_fn_name(line: &str) -> Option<String> {
+    let v8 = regex::Regex::new(r"^\s*at\s+([^\s(]+)\s+\(").ok()?;
+    if let Some(caps) = v8.captures(line) {
+        return Some(caps[1].to_string());
+    }
+    let sm = regex::Regex::new(r"^([^@\s][^@]*?)@").ok()?;
+    if let Some(caps) = sm.captures(line) {
+        return Some(caps[1].to_string());
+    }
+    None
 }
 
 /// Returns true if `path` points at user code (not a framework-internal module
@@ -692,6 +879,31 @@ mod tests {
     use super::*;
     use std::io::Write as _;
     use tempfile::NamedTempFile;
+
+    thread_local! {
+        static FORCE_TEARDOWN_PANIC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
+    /// Read the thread-local teardown-panic flag from inside the harness.
+    /// Always `false` in production builds (the module isn't compiled).
+    pub(super) fn should_force_teardown_panic() -> bool {
+        FORCE_TEARDOWN_PANIC.with(|cell| cell.get())
+    }
+
+    struct ForceTeardownPanicGuard;
+
+    impl ForceTeardownPanicGuard {
+        fn install() -> Self {
+            FORCE_TEARDOWN_PANIC.with(|cell| cell.set(true));
+            Self
+        }
+    }
+
+    impl Drop for ForceTeardownPanicGuard {
+        fn drop(&mut self) {
+            FORCE_TEARDOWN_PANIC.with(|cell| cell.set(false));
+        }
+    }
 
     fn write_temp_js(content: &str) -> NamedTempFile {
         let mut f = NamedTempFile::with_suffix(".js").unwrap();
@@ -941,18 +1153,34 @@ describe("g", () => {
     #[test]
     fn parse_stack_frame_accepts_v8_format() {
         let got = super::parse_stack_frame("    at fn (/x/a.js:1:2)").unwrap();
-        assert_eq!(got, ("/x/a.js".to_string(), 1, 2));
+        assert_eq!(got, (Some("fn".to_string()), "/x/a.js".to_string(), 1, 2));
     }
 
     #[test]
     fn parse_stack_frame_accepts_spidermonkey_format() {
         let got = super::parse_stack_frame("fn@/x/a.js:3:4").unwrap();
-        assert_eq!(got, ("/x/a.js".to_string(), 3, 4));
+        assert_eq!(got, (Some("fn".to_string()), "/x/a.js".to_string(), 3, 4));
     }
 
     #[test]
     fn parse_stack_frame_returns_none_on_garbage() {
         assert!(super::parse_stack_frame("definitely not a frame").is_none());
+    }
+
+    #[test]
+    fn parse_stack_frame_v8_no_function_name() {
+        // V8 "    at path:L:C" frames have no function name.
+        let got = super::parse_stack_frame("    at /x/a.js:5:6").unwrap();
+        assert_eq!(got, (None, "/x/a.js".to_string(), 5, 6));
+    }
+
+    #[test]
+    fn parse_stack_frame_extracts_registration_name() {
+        let got = super::parse_stack_frame("    at it (/x/test.js:42:7)").unwrap();
+        assert_eq!(
+            got,
+            (Some("it".to_string()), "/x/test.js".to_string(), 42, 7)
+        );
     }
 
     #[test]
@@ -1006,6 +1234,41 @@ describe("g", () => {
     #[test]
     fn compute_location_returns_none_when_no_input() {
         assert!(super::compute_location(None, None, None).is_none());
+    }
+
+    #[test]
+    fn compute_location_skips_user_it_registration_frame() {
+        // The `it()` registration frame is in user code (test.test.js) but
+        // it's not the throw site — the throw happens inside the body that
+        // `it` wraps. Walker should skip past `it` and pick the next frame.
+        let stack = Some(
+            "at it (/x/src/a.test.ts:10:5)\n\
+             at body (/x/src/a.test.ts:3:11)",
+        );
+        let loc = super::compute_location(None, stack, None).unwrap();
+        assert_eq!(loc.line, 3);
+        assert_eq!(loc.column, 11);
+    }
+
+    #[test]
+    fn compute_location_falls_back_to_registration_when_no_other_frame() {
+        // No other user frames; the registration frame is all we have.
+        // Don't return None — better wrong than empty.
+        let stack = Some("at it (/x/src/a.test.ts:10:5)");
+        let loc = super::compute_location(None, stack, None).unwrap();
+        assert_eq!(loc.line, 10);
+    }
+
+    #[test]
+    fn compute_location_skips_describe_render_cleanup_frames() {
+        for fn_name in ["describe", "render", "cleanup", "beforeEach"] {
+            let stack_str = format!(
+                "at {fn_name} (/x/src/a.test.ts:10:5)\n\
+                 at body (/x/src/a.test.ts:7:9)",
+            );
+            let loc = super::compute_location(None, Some(&stack_str), None).unwrap();
+            assert_eq!(loc.line, 7, "{fn_name} should be skipped");
+        }
     }
 
     #[test]
@@ -1213,6 +1476,123 @@ it("beta", () => expect(2).toBe(2));
         assert_eq!(r1.outcomes[0].name_chain, vec!["alpha".to_string()]);
         assert_eq!(r2.outcomes.len(), 1);
         assert_eq!(r2.outcomes[0].name_chain, vec!["beta".to_string()]);
+    }
+
+    #[test]
+    fn raw_typeerror_reports_throw_line_not_it_line() {
+        // A test body that throws a raw TypeError (no matcher _userFrame
+        // decoration). The harness should attribute the failure to the
+        // throw site, not to the `it(...)` registration line.
+        let f = write_temp_js(
+            r#"import { it } from "zero/test";
+it("raw throw", () => {
+  const obj = null;
+  obj.foo;
+});
+"#,
+        );
+        let root = f.path().parent().unwrap();
+        let result = run_file(root, f.path());
+        assert!(result.load_error.is_none());
+        assert_eq!(result.outcomes.len(), 1);
+        let failure = result.outcomes[0]
+            .failure
+            .as_ref()
+            .expect("expected failure");
+        if let Some(loc) = failure.location.as_ref() {
+            // `it(...)` is on line 2; the throw site is on line 4.
+            // The registration filter should keep us off line 2.
+            assert_ne!(
+                loc.line, 2,
+                "location should not point at the it() registration line; stack: {:?}",
+                failure.stack
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_throw_in_test_body_reports_throw_line() {
+        let f = write_temp_js(
+            r#"import { it } from "zero/test";
+it("explicit throw", () => {
+  throw new Error("boom");
+});
+"#,
+        );
+        let root = f.path().parent().unwrap();
+        let result = run_file(root, f.path());
+        assert!(result.load_error.is_none());
+        assert_eq!(result.outcomes.len(), 1);
+        let failure = result.outcomes[0]
+            .failure
+            .as_ref()
+            .expect("expected failure");
+        assert!(failure.message.contains("boom"));
+        if let Some(loc) = failure.location.as_ref() {
+            assert_ne!(
+                loc.line, 2,
+                "location should not point at the it() registration line; stack: {:?}",
+                failure.stack
+            );
+        }
+    }
+
+    #[test]
+    fn matcher_failure_still_points_at_matcher_call() {
+        // Regression: matcher failures already had a useful location.
+        // The new registration filter must not regress this path.
+        let f = write_temp_js(
+            r#"import { it, expect } from "zero/test";
+it("matcher fail", () => {
+  expect(1).toBe(2);
+});
+"#,
+        );
+        let root = f.path().parent().unwrap();
+        let result = run_file(root, f.path());
+        let failure = result.outcomes[0].failure.as_ref().expect("failure");
+        let loc = failure.location.as_ref().expect("location");
+        // The matcher call is on line 3.
+        assert_eq!(
+            loc.line, 3,
+            "matcher location should point at the expect() call; stack: {:?}",
+            failure.stack
+        );
+    }
+
+    #[test]
+    fn forced_teardown_panic_becomes_structured_failure() {
+        // Drive the test-only thread-local trigger to exercise the
+        // catch_unwind path: the harness must convert the panic into a
+        // synthetic Failed outcome rather than crashing the test process.
+        let f = write_temp_js(
+            r#"import { it, expect } from "zero/test";
+it("ok", () => expect(1).toBe(1));
+"#,
+        );
+        let root = f.path().parent().unwrap();
+        let _guard = ForceTeardownPanicGuard::install();
+        let result = run_file(root, f.path());
+        drop(_guard);
+        assert!(
+            result.load_error.is_none(),
+            "load_error: {:?}",
+            result.load_error
+        );
+        assert_eq!(result.outcomes.len(), 1, "expected one synthetic outcome");
+        let outcome = &result.outcomes[0];
+        assert!(matches!(outcome.status, Status::Failed));
+        let failure = outcome.failure.as_ref().expect("expected failure");
+        assert!(
+            failure.message.contains("Boa GC panic"),
+            "message should mention Boa GC panic, got: {}",
+            failure.message
+        );
+        assert!(
+            outcome.name_chain.iter().any(|n| n.contains("teardown")),
+            "name should mention teardown: {:?}",
+            outcome.name_chain
+        );
     }
 
     #[test]

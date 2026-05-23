@@ -48,6 +48,7 @@ pub const ZERO_RUNTIME_EXPORTS: &[&str] = &[
     "_setCurrentApp",
     "_createScope",
     "_getCurrentApp",
+    "_disposeUnownedEffects",
 ];
 
 /// Names exported by the `zero/http` module.
@@ -117,7 +118,7 @@ pub fn http_module() -> String {
 /// A complete ES module string ready to register under `"zero/test"`.
 pub fn test_module() -> String {
     let mut s = String::from(
-        "import { _setCurrentApp, _getCurrentApp, _createScope, commit } from \"zero\";\n",
+        "import { _setCurrentApp, _getCurrentApp, _createScope, _disposeUnownedEffects, commit } from \"zero\";\n",
     );
     s.push_str(ZERO_TEST_BODY);
     if !s.ends_with('\n') {

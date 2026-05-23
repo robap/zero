@@ -58,17 +58,30 @@ describe("Counter", () => {
 | `.toBeDefined()`                    | Not `undefined`                                         |
 | `.toContain(expected)`              | Array `.includes` or string `.includes`                 |
 | `.toThrow(expected?)`               | Function throws; optional message/class match           |
+| `.toBeGreaterThan(n)`               | `actual > n` (numeric)                                  |
+| `.toBeGreaterThanOrEqual(n)`        | `actual >= n` (numeric)                                 |
+| `.toBeLessThan(n)`                  | `actual < n` (numeric)                                  |
+| `.toBeLessThanOrEqual(n)`           | `actual <= n` (numeric)                                 |
 | `.toHaveBeenCalled()`               | Spy has been called at least once                       |
 | `.toHaveBeenCalledTimes(n)`         | Spy has been called exactly `n` times                   |
 | `.toHaveBeenCalledWith(...args)`    | Spy was called with these args at some point            |
 | `.toHaveBeenLastCalledWith(...args)`| Spy's most recent call matched these args               |
+| `.not.<matcher>(...)`               | The matcher would fail — inverts every check above      |
 
 ```ts
 expect(2 + 2).toBe(4);
 expect({ a: 1 }).toEqual({ a: 1 });
 expect(() => parseInt("nope") || throwIt()).toThrow();
 expect(onClick).toHaveBeenCalledTimes(1);
+expect(score).toBeGreaterThan(0);
+expect(badge).not.toContain("error");
 ```
+
+`.not` is a single chain prefix — `.not.not` is not supported, and
+`.not.toMatchSnapshot()` keeps the same "not implemented" error as
+`.toMatchSnapshot()`. `.not.toThrow(msg)` mirrors Jest: passes if the
+function either does not throw, or throws an error whose message does
+**not** contain `msg`.
 
 ## DOM helpers
 
@@ -124,6 +137,30 @@ it("increments on click", () => {
   fire(find(el, "button")!, "click");
   expect(text(el, "p")).toBe("Count: 1");
 });
+```
+
+### Effects in route and component bodies
+
+A top-level `effect()` in a route or component module body has no
+enclosing scope, so `cleanup()` disposes it between tests to prevent
+stale subscriptions from re-firing once the test app is torn down.
+
+The trade-off: a route relying on a top-level `effect()` for runtime
+behavior will lose that effect after the first `cleanup()` call within
+the same test file. Put effects inside the function called by
+`render()` (the component's exported factory) so they live in the
+render scope and re-fire each test:
+
+```ts
+// Bad — runs once at module load, disposed by cleanup() between tests:
+effect(() => syncWithServer(stateSignal.val));
+export default function Home() { return html`…`; }
+
+// Good — runs inside each render's scope, refires every test:
+export default function Home() {
+  effect(() => syncWithServer(stateSignal.val));
+  return html`…`;
+}
 ```
 
 ## Testing routes

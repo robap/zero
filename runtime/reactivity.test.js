@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'zero/test';
-import { signal, computed, effect } from 'zero';
+import { signal, computed, effect, _createScope, _disposeUnownedEffects } from 'zero';
 
 describe('signal', () => {
   it('returns initial value', () => {
@@ -160,5 +160,51 @@ describe('effect', () => {
     expect(last).toBe(10);
     s.set(3);
     expect(last).toBe(30);
+  });
+});
+
+describe('_disposeUnownedEffects', () => {
+  it('disposes an effect created with no active scope', () => {
+    let cleaned = false;
+    effect(() => () => { cleaned = true; });
+    _disposeUnownedEffects();
+    expect(cleaned).toBeTruthy();
+  });
+
+  it('does not dispose effects created inside scope.run()', () => {
+    const scope = _createScope();
+    let cleaned = false;
+    scope.run(() => {
+      effect(() => () => { cleaned = true; });
+    });
+    _disposeUnownedEffects();
+    expect(cleaned).toBeFalsy();
+    scope.dispose();
+    expect(cleaned).toBeTruthy();
+  });
+
+  it('does not double-stop a manually-stopped unowned effect', () => {
+    let cleanups = 0;
+    const stop = effect(() => () => { cleanups++; });
+    stop();
+    _disposeUnownedEffects();
+    expect(cleanups).toBe(1);
+  });
+
+  it('runs each unowned effect cleanup callback exactly once', () => {
+    let cleanups = 0;
+    effect(() => () => { cleanups++; });
+    _disposeUnownedEffects();
+    expect(cleanups).toBe(1);
+  });
+
+  it('after disposal, signal mutations do not re-fire the effect', () => {
+    const s = signal(0);
+    let runs = 0;
+    effect(() => { s.val; runs++; });
+    expect(runs).toBe(1);
+    _disposeUnownedEffects();
+    s.set(1);
+    expect(runs).toBe(1);
   });
 });

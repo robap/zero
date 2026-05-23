@@ -5,6 +5,11 @@ let _observerStack = [];
 // Currently active ownership scope (set by createScope, used by effect).
 let _activeScope = null;
 
+// Tracks effects created without an active ownership scope, so the test
+// API's `cleanup()` can dispose them between tests within one Boa context.
+/** @type {Set<() => void>} */
+let _unownedEffects = new Set();
+
 /**
  * Register the current observer as a subscriber of the given set.
  * Also records the set in the observer's _sources for later cleanup.
@@ -135,9 +140,14 @@ export function effect(fn) {
       _cleanup = undefined;
     }
     if (_registeredScope) _registeredScope._effects.delete(stop);
+    _unownedEffects.delete(stop);
   }
 
-  if (_activeScope) _activeScope._effects.add(stop);
+  if (_activeScope) {
+    _activeScope._effects.add(stop);
+  } else {
+    _unownedEffects.add(stop);
+  }
 
   _run();
 
@@ -190,6 +200,18 @@ function createScope() {
   };
 
   return scope;
+}
+
+/**
+ * Dispose every effect created without an active scope. Used by
+ * `zero/test`'s `cleanup()` to prevent leaked top-level effects from firing
+ * across tests within a single Boa context.
+ * @internal
+ * @returns {void}
+ */
+export function _disposeUnownedEffects() {
+  for (const stop of [..._unownedEffects]) stop();
+  _unownedEffects.clear();
 }
 
 // Exported for testing only — not part of the public API.

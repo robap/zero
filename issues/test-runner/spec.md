@@ -465,6 +465,15 @@ working in the runner today:
   `zero test` flag). Eight operator families, subprocess isolation per
   mutant, coverage-guided + test-impact-guided skipping, optional
   `--threads N` parallelism, programmatic `mutation/mutation.json`.
+- **Test correctness fixes** (delivered by
+  `issues/test-correctness/`): unowned-effect disposal in `cleanup()`
+  so a top-level `effect()` in a route body does not leak across tests;
+  `.not` chain and numeric matchers (`toBeGreaterThan` etc.) on
+  `expect`; throw-location parser improvement so a non-matcher throw
+  (e.g. raw `TypeError`) points at the throw site instead of the
+  `it(...)` registration line; `catch_unwind` safety net that converts
+  a Boa-internal teardown panic into a structured failure outcome
+  instead of crashing the runner.
 
 ## Open Questions
 

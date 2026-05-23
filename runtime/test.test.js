@@ -11,7 +11,7 @@ import {
   cleanup,
   spy,
 } from "zero/test";
-import { signal, html, inject } from "zero";
+import { signal, html, inject, effect } from "zero";
 
 describe("expect matchers", () => {
   it("toBe passes on strict equality", () => {
@@ -84,6 +84,217 @@ describe("expect matchers", () => {
   });
 });
 
+describe(".not chain", () => {
+  it(".not.toBe passes when values differ", () => {
+    expect(1).not.toBe(2);
+  });
+
+  it(".not.toBe throws when values are strictly equal", () => {
+    let caught;
+    try { expect(1).not.toBe(1); } catch (e) { caught = e; }
+    expect(caught).toBeTruthy();
+    expect(caught.message).toContain("strictly equal");
+  });
+
+  it(".not.toEqual passes when values are not deeply equal", () => {
+    expect({ a: 1 }).not.toEqual({ a: 2 });
+  });
+
+  it(".not.toEqual throws when values are deeply equal", () => {
+    let caught;
+    try { expect({ a: 1 }).not.toEqual({ a: 1 }); } catch (e) { caught = e; }
+    expect(caught).toBeTruthy();
+    expect(caught.message).toContain("deeply equal");
+  });
+
+  it(".not.toBeNull passes for a non-null value", () => {
+    expect(0).not.toBeNull();
+  });
+
+  it(".not.toBeNull throws when value is null", () => {
+    let caught;
+    try { expect(null).not.toBeNull(); } catch (e) { caught = e; }
+    expect(caught).toBeTruthy();
+    expect(caught.message).toContain("null");
+  });
+
+  it(".not.toBeTruthy passes for a falsy value", () => {
+    expect(0).not.toBeTruthy();
+  });
+
+  it(".not.toBeFalsy passes for a truthy value", () => {
+    expect(1).not.toBeFalsy();
+  });
+
+  it(".not.toContain passes when string lacks substring", () => {
+    expect("hello").not.toContain("xyz");
+  });
+
+  it(".not.toContain throws when array contains item", () => {
+    let caught;
+    try { expect([1, 2, 3]).not.toContain(2); } catch (e) { caught = e; }
+    expect(caught).toBeTruthy();
+    expect(caught.message).toContain("contains");
+  });
+
+  it(".not.toThrow passes when fn does not throw", () => {
+    expect(() => {}).not.toThrow();
+  });
+
+  it(".not.toThrow throws when fn throws", () => {
+    let caught;
+    try { expect(() => { throw new Error("boom"); }).not.toThrow(); } catch (e) { caught = e; }
+    expect(caught).toBeTruthy();
+    expect(caught.message).toContain("threw");
+  });
+
+  it(".not.toThrow(msg) passes when message does not match", () => {
+    expect(() => { throw new Error("boom"); }).not.toThrow("nope");
+  });
+
+  it(".not.toThrow(msg) throws when message matches", () => {
+    let caught;
+    try { expect(() => { throw new Error("boom"); }).not.toThrow("boom"); } catch (e) { caught = e; }
+    expect(caught).toBeTruthy();
+  });
+
+  it(".not.toBeTemplateResult passes for plain object", () => {
+    expect({}).not.toBeTemplateResult();
+  });
+
+  it(".not.toBeTemplateResult throws for html`` result", () => {
+    let caught;
+    try { expect(html`<p>x</p>`).not.toBeTemplateResult(); } catch (e) { caught = e; }
+    expect(caught).toBeTruthy();
+  });
+
+  it(".not.toHaveBeenCalled passes for fresh spy", () => {
+    const s = spy();
+    expect(s).not.toHaveBeenCalled();
+  });
+
+  it(".not.toHaveBeenCalled throws when spy was called", () => {
+    const s = spy();
+    s();
+    let caught;
+    try { expect(s).not.toHaveBeenCalled(); } catch (e) { caught = e; }
+    expect(caught).toBeTruthy();
+    expect(caught.message).toContain("was called");
+  });
+
+  it(".not.toHaveBeenCalledTimes passes when count differs", () => {
+    const s = spy();
+    s();
+    expect(s).not.toHaveBeenCalledTimes(2);
+  });
+
+  it(".not.toHaveBeenCalledWith passes when no recorded call matches", () => {
+    const s = spy();
+    s(1, 2);
+    expect(s).not.toHaveBeenCalledWith(9, 9);
+  });
+
+  it(".not.toHaveBeenCalledWith throws when a recorded call matches", () => {
+    const s = spy();
+    s(1, 2);
+    let caught;
+    try { expect(s).not.toHaveBeenCalledWith(1, 2); } catch (e) { caught = e; }
+    expect(caught).toBeTruthy();
+  });
+
+  it(".not.toHaveBeenLastCalledWith passes when last call differs", () => {
+    const s = spy();
+    s(1);
+    s(2);
+    expect(s).not.toHaveBeenLastCalledWith(1);
+  });
+
+  it("negation failure error has the same _userFrame shape as positive matchers", () => {
+    // The harness derives location from Boa's shadow stack, not `_userFrame`
+    // (Boa doesn't populate `Error.stack`). The decoration is still applied
+    // so the property exists on negation errors with the same shape as
+    // positive-matcher errors — same path through `_fail`.
+    let pos;
+    try { expect(1).toBe(2); } catch (e) { pos = e; }
+    let neg;
+    try { expect(1).not.toBe(1); } catch (e) { neg = e; }
+    expect("_userFrame" in pos).toBe(true);
+    expect("_userFrame" in neg).toBe(true);
+    expect(typeof neg._userFrame).toBe(typeof pos._userFrame);
+  });
+});
+
+describe("numeric matchers", () => {
+  it("toBeGreaterThan passes when actual > n", () => {
+    expect(5).toBeGreaterThan(3);
+  });
+
+  it("toBeGreaterThan throws when actual === n", () => {
+    let caught;
+    try { expect(3).toBeGreaterThan(3); } catch (e) { caught = e; }
+    expect(caught).toBeTruthy();
+    expect(caught.message).toContain("not greater than");
+  });
+
+  it("toBeGreaterThan throws when actual < n", () => {
+    let caught;
+    try { expect(1).toBeGreaterThan(3); } catch (e) { caught = e; }
+    expect(caught).toBeTruthy();
+  });
+
+  it("toBeGreaterThanOrEqual passes at the boundary", () => {
+    expect(3).toBeGreaterThanOrEqual(3);
+  });
+
+  it("toBeGreaterThanOrEqual throws when actual < n", () => {
+    let caught;
+    try { expect(2).toBeGreaterThanOrEqual(3); } catch (e) { caught = e; }
+    expect(caught).toBeTruthy();
+  });
+
+  it("toBeLessThan passes when actual < n", () => {
+    expect(1).toBeLessThan(3);
+  });
+
+  it("toBeLessThan throws at the boundary", () => {
+    let caught;
+    try { expect(3).toBeLessThan(3); } catch (e) { caught = e; }
+    expect(caught).toBeTruthy();
+  });
+
+  it("toBeLessThanOrEqual passes at the boundary", () => {
+    expect(3).toBeLessThanOrEqual(3);
+  });
+
+  it("toBeLessThanOrEqual throws when actual > n", () => {
+    let caught;
+    try { expect(4).toBeLessThanOrEqual(3); } catch (e) { caught = e; }
+    expect(caught).toBeTruthy();
+  });
+
+  it("toBeGreaterThan throws when actual is not a number", () => {
+    let caught;
+    try { expect("hi").toBeGreaterThan(0); } catch (e) { caught = e; }
+    expect(caught).toBeTruthy();
+    expect(caught.message).toContain("not a number");
+  });
+
+  it("toBeGreaterThan throws when argument is not a number", () => {
+    let caught;
+    try { expect(5).toBeGreaterThan("0"); } catch (e) { caught = e; }
+    expect(caught).toBeTruthy();
+    expect(caught.message).toContain("not a number");
+  });
+
+  it(".not.toBeGreaterThan passes when actual <= n", () => {
+    expect(3).not.toBeGreaterThan(3);
+  });
+
+  it(".not.toBeLessThan passes at the boundary", () => {
+    expect(3).not.toBeLessThan(3);
+  });
+});
+
 describe("DOM helpers", () => {
   afterEach(cleanup);
 
@@ -118,6 +329,44 @@ describe("DOM helpers", () => {
     const el = render(html`<button @click=${handler}>click</button>`);
     fire(find(el, "button"), "click");
     expect(handler).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("cleanup() disposes unowned effects", () => {
+  it("top-level effect does not re-fire after cleanup()", () => {
+    const s = signal(0);
+    let runs = 0;
+    effect(() => { s.val; runs++; });
+    expect(runs).toBe(1);
+    cleanup();
+    s.set(1);
+    expect(runs).toBe(1);
+  });
+
+  it("render-scope effects are still disposed (regression)", () => {
+    const counter = signal(0);
+    let renderRuns = 0;
+    render(html`<span>${() => { renderRuns++; return counter.val; }}</span>`);
+    const baseline = renderRuns;
+    cleanup();
+    counter.set(99);
+    expect(renderRuns).toBe(baseline);
+  });
+
+  it("calling cleanup() twice is safe (no double-stop error)", () => {
+    let runs = 0;
+    effect(() => { runs++; });
+    expect(runs).toBe(1);
+    cleanup();
+    cleanup();
+    expect(runs).toBe(1);
+  });
+
+  it("unowned effect's cleanup callback runs on cleanup()", () => {
+    let cleaned = false;
+    effect(() => () => { cleaned = true; });
+    cleanup();
+    expect(cleaned).toBeTruthy();
   });
 });
 

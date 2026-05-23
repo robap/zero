@@ -27,6 +27,28 @@ declare module "zero/test" {
   export function beforeAll(fn: HookFn): void;
   export function afterAll(fn: HookFn): void;
 
+  export interface NegatedMatcher {
+    toBe(expected: unknown): void;
+    toEqual(expected: unknown): void;
+    toBeTruthy(): void;
+    toBeFalsy(): void;
+    toBeNull(): void;
+    toBeUndefined(): void;
+    toBeDefined(): void;
+    toContain(expected: unknown): void;
+    toThrow(message?: string): void;
+    toBeTemplateResult(): void;
+    toMatchSnapshot(): void;
+    toHaveBeenCalled(): void;
+    toHaveBeenCalledTimes(n: number): void;
+    toHaveBeenCalledWith(...args: unknown[]): void;
+    toHaveBeenLastCalledWith(...args: unknown[]): void;
+    toBeGreaterThan(n: number): void;
+    toBeGreaterThanOrEqual(n: number): void;
+    toBeLessThan(n: number): void;
+    toBeLessThanOrEqual(n: number): void;
+  }
+
   export interface Matcher {
     toBe(expected: unknown): void;
     toEqual(expected: unknown): void;
@@ -37,10 +59,17 @@ declare module "zero/test" {
     toBeDefined(): void;
     toContain(expected: unknown): void;
     toThrow(expected?: unknown): void;
+    toBeTemplateResult(): void;
+    toMatchSnapshot(): void;
     toHaveBeenCalled(): void;
     toHaveBeenCalledTimes(n: number): void;
     toHaveBeenCalledWith(...args: unknown[]): void;
     toHaveBeenLastCalledWith(...args: unknown[]): void;
+    toBeGreaterThan(n: number): void;
+    toBeGreaterThanOrEqual(n: number): void;
+    toBeLessThan(n: number): void;
+    toBeLessThanOrEqual(n: number): void;
+    not: NegatedMatcher;
   }
 
   export function expect(actual: unknown): Matcher;
