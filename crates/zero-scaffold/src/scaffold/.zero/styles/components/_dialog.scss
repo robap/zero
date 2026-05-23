@@ -1,7 +1,8 @@
-// Dialog — modal. Polished from v0.4:
-//   - backdrop gets backdrop-filter: blur(4px) for depth
-//   - dialog body has a rise-in animation (opacity + slight translate)
-//   - + visible border so the dialog reads against the blurred backdrop
+// Dialog — modal. Layout (flex column + padding + child gap) comes from the
+// `stack pad-lg` utilities applied to `.dialog` in the template; typography
+// for the title comes from the `.text-h2` utility. This file only carries
+// the dialog's surface treatment, viewport cap, size variants, animations,
+// and the scrollable-body unlock.
 @layer components {
   @keyframes dialog-fade { from { opacity: 0; } to { opacity: 1; } }
   @keyframes dialog-rise {
@@ -27,8 +28,8 @@
     border: var(--border-thin) solid var(--color-border);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-lg);
-    padding: var(--space-lg);
     max-inline-size: 90vw;
+    max-block-size: 90vh;
     animation: dialog-rise var(--duration-normal) var(--ease-out);
   }
 
@@ -36,12 +37,8 @@
   .dialog-md { inline-size: 32rem; }
   .dialog-lg { inline-size: 48rem; }
 
-  .dialog-title {
-    margin: 0 0 var(--space-md);
-    font-size: var(--font-size-xl);
-    font-weight: var(--weight-semi);
-    line-height: var(--leading-tight);
-    letter-spacing: var(--tracking-snug);
-  }
-  .dialog-body { color: inherit; }
+  // `min-block-size: 0` lets this flex child shrink below its content height
+  // so `overflow-y: auto` actually engages instead of the dialog growing past
+  // the viewport.
+  .dialog-body { overflow-y: auto; min-block-size: 0; }
 }

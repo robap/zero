@@ -20,7 +20,7 @@ export type DialogProps = {
  */
 export default function Dialog(props: DialogProps): TemplateResult {
   const size: DialogSize = props.size ?? "md";
-  const dialogCls = `dialog dialog-${size}`;
+  const dialogCls = `dialog dialog-${size} stack pad-lg`;
   const close = () => {
     props.open.set(false);
     props.onClose?.();
@@ -36,7 +36,7 @@ export default function Dialog(props: DialogProps): TemplateResult {
   });
 
   const header: TemplateResult | null = props.title
-    ? html`<h2 class="dialog-title">${props.title}</h2>`
+    ? html`<h2 class="text-h2">${props.title}</h2>`
     : null;
 
   const body = (): TemplateResult | null => {
