@@ -55,6 +55,9 @@ const TPL_DIALOG_SCSS: &str = include_str!("scaffold/.zero/styles/components/_di
 const TPL_INPUT_TS: &str = include_str!("scaffold/.zero/components/Input.ts");
 const TPL_INPUT_TEST_TS: &str = include_str!("scaffold/.zero/components/Input.test.ts");
 const TPL_INPUT_SCSS: &str = include_str!("scaffold/.zero/styles/components/_input.scss");
+const TPL_PAGINATION_TS: &str = include_str!("scaffold/.zero/components/Pagination.ts");
+const TPL_PAGINATION_TEST_TS: &str = include_str!("scaffold/.zero/components/Pagination.test.ts");
+const TPL_PAGINATION_SCSS: &str = include_str!("scaffold/.zero/styles/components/_pagination.scss");
 const TPL_RADIO_TS: &str = include_str!("scaffold/.zero/components/Radio.ts");
 const TPL_RADIO_TEST_TS: &str = include_str!("scaffold/.zero/components/Radio.test.ts");
 const TPL_RADIO_SCSS: &str = include_str!("scaffold/.zero/styles/components/_radio.scss");
@@ -159,6 +162,15 @@ pub fn framework_manifest() -> Vec<(&'static str, &'static str)> {
         (".zero/components/Input.ts", TPL_INPUT_TS),
         (".zero/components/Input.test.ts", TPL_INPUT_TEST_TS),
         (".zero/styles/components/_input.scss", TPL_INPUT_SCSS),
+        (".zero/components/Pagination.ts", TPL_PAGINATION_TS),
+        (
+            ".zero/components/Pagination.test.ts",
+            TPL_PAGINATION_TEST_TS,
+        ),
+        (
+            ".zero/styles/components/_pagination.scss",
+            TPL_PAGINATION_SCSS,
+        ),
         (".zero/components/Radio.ts", TPL_RADIO_TS),
         (".zero/components/Radio.test.ts", TPL_RADIO_TEST_TS),
         (".zero/styles/components/_radio.scss", TPL_RADIO_SCSS),
@@ -299,8 +311,22 @@ mod tests {
     /// from this slice so adding a component does not require duplicating
     /// per-name assertions.
     const COMPONENT_NAMES: &[&str] = &[
-        "Avatar", "Badge", "Button", "Card", "Checkbox", "Dialog", "Input", "Radio", "Select",
-        "Spinner", "Table", "Tabs", "TextArea", "Toast", "Toggle",
+        "Avatar",
+        "Badge",
+        "Button",
+        "Card",
+        "Checkbox",
+        "Dialog",
+        "Input",
+        "Pagination",
+        "Radio",
+        "Select",
+        "Spinner",
+        "Table",
+        "Tabs",
+        "TextArea",
+        "Toast",
+        "Toggle",
     ];
 
     fn fresh_scaffold() -> (tempfile::TempDir, std::path::PathBuf) {
@@ -945,7 +971,7 @@ mod tests {
             ".zero/styles/_typography.scss",
             ".zero/styles/_components.scss",
             ".zero/styles/zero.scss",
-            // 15 components × (source, test, scss partial) = 45 entries.
+            // 16 components × (source, test, scss partial) = 48 entries.
             ".zero/components/Avatar.ts",
             ".zero/components/Avatar.test.ts",
             ".zero/styles/components/_avatar.scss",
@@ -967,6 +993,9 @@ mod tests {
             ".zero/components/Input.ts",
             ".zero/components/Input.test.ts",
             ".zero/styles/components/_input.scss",
+            ".zero/components/Pagination.ts",
+            ".zero/components/Pagination.test.ts",
+            ".zero/styles/components/_pagination.scss",
             ".zero/components/Radio.ts",
             ".zero/components/Radio.test.ts",
             ".zero/styles/components/_radio.scss",

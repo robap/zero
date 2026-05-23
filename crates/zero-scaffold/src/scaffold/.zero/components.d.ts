@@ -78,6 +78,21 @@ declare module "zero/components" {
   };
   export function Input(props: InputProps): TemplateResult;
 
+  export type PaginationSize = "sm" | "md" | "lg";
+  export type PaginationProps = {
+    page: Signal<number>;
+    totalPages: Signal<number> | number;
+    size?: PaginationSize;
+    siblingCount?: number;
+    boundaryCount?: number;
+    disabled?: Signal<boolean> | boolean;
+    onChange?: (page: number) => void;
+    prevLabel?: string;
+    nextLabel?: string;
+    summary?: (page: number, totalPages: number) => TemplateResult | string;
+  };
+  export function Pagination(props: PaginationProps): TemplateResult;
+
   export type RadioProps = {
     selected: Signal<string>;
     name: string;

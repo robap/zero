@@ -33,8 +33,22 @@ fn showcase_test_runs_all_component_tests() {
     // missing test (e.g. a component shipped without its `.test.ts`) is a
     // clear failure here.
     for name in [
-        "Avatar", "Badge", "Button", "Card", "Checkbox", "Dialog", "Input", "Radio", "Select",
-        "Spinner", "Table", "Tabs", "TextArea", "Toast", "Toggle",
+        "Avatar",
+        "Badge",
+        "Button",
+        "Card",
+        "Checkbox",
+        "Dialog",
+        "Input",
+        "Pagination",
+        "Radio",
+        "Select",
+        "Spinner",
+        "Table",
+        "Tabs",
+        "TextArea",
+        "Toast",
+        "Toggle",
     ] {
         assert!(
             stdout.contains(name),

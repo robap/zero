@@ -1,6 +1,6 @@
-import { html, signal } from "zero";
-import type { TemplateResult } from "zero";
-import { Table, Badge, Button } from "zero/components";
+import { html, signal, computed, effect } from "zero";
+import type { Signal, TemplateResult } from "zero";
+import { Table, Badge, Button, Pagination } from "zero/components";
 import type { TableColumn } from "zero/components";
 
 type User = {
@@ -39,21 +39,90 @@ const columns: TableColumn<User>[] = [
 
 const rowKey = (r: User): number => r.id;
 
+const PAGE_SIZE = 3;
+
 /**
- * Showcase route for Table — three instances exercise the main path,
- * the empty state, and the loading overlay.
+ * Static / client-side paginated Table — the parent owns `page`, derives
+ * a sliced view via `computed`, and feeds it to `Table.rows`.
+ *
+ * @returns
+ */
+function paginatedSection(): TemplateResult {
+  const page = signal(1);
+  const totalPages = Math.ceil(sample.length / PAGE_SIZE);
+  const rows = computed(() =>
+    sample.slice((page.val - 1) * PAGE_SIZE, page.val * PAGE_SIZE),
+  );
+  const summary = (p: number, t: number): string => {
+    const start = (p - 1) * PAGE_SIZE + 1;
+    const end = Math.min(p * PAGE_SIZE, sample.length);
+    return `Showing ${start}–${end} of ${sample.length} (page ${p} of ${t})`;
+  };
+  return html`
+    <section class="stack gap-sm">
+      <h2 class="text-h2">Paginated</h2>
+      ${Table({ columns, rows: rows as unknown as Signal<User[]>, rowKey })}
+      ${Pagination({ page, totalPages, summary })}
+    </section>
+  `;
+}
+
+/**
+ * Mocked async-paginated Table — `page` change triggers a fake fetch
+ * that resolves with `{ rows, totalPages }` after a delay. The `busy`
+ * signal drives both `Table.loading` and `Pagination.disabled`.
+ * Replace `fakeFetch` with whatever real backend call your app uses —
+ * fetch, createHttp, GraphQL, etc. Pagination doesn't care.
+ *
+ * @returns
+ */
+function asyncSection(): TemplateResult {
+  const page = signal(1);
+  const totalPages = signal(1);
+  const rows = signal<User[]>([]);
+  const busy = signal(false);
+  const fakeFetch = (p: number): Promise<{ rows: User[]; totalPages: number }> =>
+    new Promise((resolve) =>
+      setTimeout(
+        () =>
+          resolve({
+            rows: sample.slice((p - 1) * PAGE_SIZE, p * PAGE_SIZE),
+            totalPages: Math.ceil(sample.length / PAGE_SIZE),
+          }),
+        250,
+      ),
+    );
+  effect(() => {
+    const p = page.val;
+    busy.set(true);
+    fakeFetch(p).then((res) => {
+      rows.set(res.rows);
+      totalPages.set(res.totalPages);
+      busy.set(false);
+    });
+  });
+  return html`
+    <section class="stack gap-sm">
+      <h2 class="text-h2">Async (mocked)</h2>
+      ${Table({ columns, rows, rowKey, loading: busy })}
+      ${Pagination({ page, totalPages, disabled: busy })}
+    </section>
+  `;
+}
+
+/**
+ * Showcase route for Table — five instances exercise the main path,
+ * the empty state, the loading overlay, static-paginated, and async-
+ * paginated Table-with-Pagination wiring.
  *
  * @returns
  */
 export default function TableRoute(): TemplateResult {
   const mainRows = signal<User[]>(sample);
   const clicked = signal<string | null>(null);
-
   const emptyRows = signal<User[]>([]);
-
   const loadingRows = signal<User[]>(sample.slice(0, 3));
   const loading = signal(false);
-
   return html`
     <main class="showcase-page stack pad-xl">
       <h1 class="text-h1">Table</h1>
@@ -88,6 +157,9 @@ export default function TableRoute(): TemplateResult {
           onClick: () => loading.update((v) => !v),
         })}
       </section>
+
+      ${paginatedSection()}
+      ${asyncSection()}
 
       <a class="showcase-nav-link" href="/">Back</a>
     </main>

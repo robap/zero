@@ -269,6 +269,7 @@ snippets: <https://robap.github.io/zero/components.html#component-library-refere
 | `Checkbox` | `checked: Signal<boolean>`                        |
 | `Dialog`   | `open: Signal<boolean>`                           |
 | `Input`    | `value: Signal<string>`                           |
+| `Pagination` | `page: Signal<number>`, `totalPages: Signal<number> \| number` |
 | `Radio`    | `selected: Signal<string>`                        |
 | `Select`   | `value: Signal<string>`                           |
 | `Spinner`  | —                                                 |
@@ -297,8 +298,8 @@ writes here. Files currently shipped:
 | `.zero/zero-http.d.ts`                | Type declarations for `"zero/http"`.                                   |
 | `.zero/components.d.ts`               | Type declarations for `"zero/components"`.                             |
 | `.zero/components/index.ts`           | Re-exports every shipped component.                                    |
-| `.zero/components/<Name>.ts`          | One source file per component (15 total).                              |
-| `.zero/components/<Name>.test.ts`     | One test file per component (15 total).                                |
+| `.zero/components/<Name>.ts`          | One source file per component (16 total).                              |
+| `.zero/components/<Name>.test.ts`     | One test file per component (16 total).                                |
 | `.zero/styles/_palette.scss`          | 55 framework-internal palette tokens.                                  |
 | `.zero/styles/_tokens.scss`           | Non-color design tokens.                                               |
 | `.zero/styles/_themes.scss`           | Theme aggregator + selector strategy.                                  |
@@ -309,7 +310,7 @@ writes here. Files currently shipped:
 | `.zero/styles/_utilities.scss`        | Gap, padding, and border utility classes.                              |
 | `.zero/styles/_alignment.scss`        | Alignment, justify, self, text-align, flex-direction utilities.        |
 | `.zero/styles/_components.scss`       | Aggregate of per-component partials.                                   |
-| `.zero/styles/components/_<name>.scss`| One SCSS partial per component (15 total).                             |
+| `.zero/styles/components/_<name>.scss`| One SCSS partial per component (16 total).                             |
 | `.zero/styles/zero.scss`              | Aggregate `@use`'d by `styles/app.scss`.                               |
 | `.zero/fonts/*.woff2`                 | Geist + Geist Mono, locally served.                                    |
 

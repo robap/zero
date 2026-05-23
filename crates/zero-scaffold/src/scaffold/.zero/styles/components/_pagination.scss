@@ -1,0 +1,27 @@
+// Pagination — numbered pager with prev/next buttons and ellipsis.
+// Layout via .stack / .cluster utility classes in the template.
+// Button visuals via composed .button + .button-{ghost,primary} +
+// .button-{sm,md,lg} classes; this partial only carries what is
+// genuinely unique to Pagination: list-element reset, square min-cell
+// geometry per size, and the ellipsis sentinel.
+@layer components {
+  .pagination-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  // Square hit targets per button size so single- and double-digit
+  // page numbers share a tidy row geometry. Composes onto a .button.
+  .pagination-btn.button-sm { min-width: 28px; min-height: 28px; }
+  .pagination-btn.button-md { min-width: 36px; min-height: 36px; }
+  .pagination-btn.button-lg { min-width: 44px; min-height: 44px; }
+
+  .pagination-ellipsis {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding-inline: var(--space-sm);
+    user-select: none;
+  }
+}

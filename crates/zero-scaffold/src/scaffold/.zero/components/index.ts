@@ -13,6 +13,8 @@ export { default as Dialog } from "./Dialog.ts";
 export type { DialogProps, DialogSize } from "./Dialog.ts";
 export { default as Input } from "./Input.ts";
 export type { InputProps, InputSize, InputType } from "./Input.ts";
+export { default as Pagination } from "./Pagination.ts";
+export type { PaginationProps, PaginationSize } from "./Pagination.ts";
 export { default as Radio } from "./Radio.ts";
 export type { RadioProps } from "./Radio.ts";
 export { default as Select } from "./Select.ts";

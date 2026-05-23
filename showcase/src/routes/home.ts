@@ -11,6 +11,7 @@ const components: Array<{ name: string; href: string }> = [
   { name: "Checkbox", href: "/checkbox" },
   { name: "Dialog", href: "/dialog" },
   { name: "Input", href: "/input" },
+  { name: "Pagination", href: "/pagination" },
   { name: "Radio", href: "/radio" },
   { name: "Select", href: "/select" },
   { name: "Spinner", href: "/spinner" },
