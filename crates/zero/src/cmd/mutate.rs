@@ -76,6 +76,33 @@ pub struct MutationSummary {
     pub skipped_equivalent: usize,
     pub baseline_passed: bool,
     pub outcomes: BTreeMap<PathBuf, Vec<(MutationSite, MutantStatus)>>,
+    /// Per-operator breakdown. Each field is indexed by
+    /// `Operator::index()`. `matched + unreachable` is the visitor's
+    /// view; `executed = killed + survived + errored`; `equivalent` is
+    /// the byte-compare skip count.
+    pub per_operator: PerOperatorSummary,
+}
+
+/// Per-operator aggregate of visitor matches and dispatch verdicts.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct PerOperatorSummary {
+    pub matched: [usize; 8],
+    pub unreachable: [usize; 8],
+    pub equivalent: [usize; 8],
+    pub killed: [usize; 8],
+    pub survived: [usize; 8],
+    pub errored: [usize; 8],
+}
+
+impl PerOperatorSummary {
+    pub fn executed(&self, op: Operator) -> usize {
+        let i = op.index();
+        self.killed[i] + self.survived[i] + self.errored[i]
+    }
+
+    pub fn generated(&self, op: Operator) -> usize {
+        self.executed(op)
+    }
 }
 
 impl MutationSummary {
@@ -100,8 +127,8 @@ fn parse_operators(spec: Option<&str>) -> anyhow::Result<Vec<Operator>> {
             for id in s.split(',').map(|p| p.trim()).filter(|p| !p.is_empty()) {
                 let op = Operator::parse(id).ok_or_else(|| {
                     anyhow::anyhow!(
-                        "unknown operator id: {id:?}; expected one of {:?}",
-                        Operator::ALL
+                        "unknown operator id: {id:?}; expected one of {}",
+                        Operator::list_ids()
                     )
                 })?;
                 if !out.contains(&op) {
@@ -214,6 +241,7 @@ fn write_terminal_summary<W: Write>(
     summary: &MutationSummary,
     report_base: &Path,
     quiet: bool,
+    operator_filter: Option<&[Operator]>,
 ) -> std::io::Result<()> {
     let exec = summary.killed + summary.survived + summary.errored;
     let exec_f = exec.max(1) as f64;
@@ -251,6 +279,15 @@ fn write_terminal_summary<W: Write>(
         total_skipped, summary.skipped_unreachable, summary.skipped_equivalent
     )?;
 
+    let ops_to_print = select_operators_for_block(summary, operator_filter);
+    if !ops_to_print.is_empty() {
+        writeln!(w)?;
+        writeln!(w, "Per-operator breakdown:")?;
+        for op in &ops_to_print {
+            write_per_operator_row(w, &summary.per_operator, *op)?;
+        }
+    }
+
     if !quiet && summary.survived > 0 {
         writeln!(w)?;
         writeln!(w, "Survived mutants:")?;
@@ -280,6 +317,60 @@ fn write_terminal_summary<W: Write>(
 
     writeln!(w)?;
     writeln!(w, "Mutation score: {:.1}%", 100.0 * summary.score())?;
+    Ok(())
+}
+
+/// Pick the operators whose per-operator row should appear in the terminal
+/// summary. With a filter set, every selected operator prints. Otherwise
+/// only operators whose sites all dropped before execution
+/// (`matched > 0 && executed == 0`) print — the ones most likely to confuse
+/// a reader.
+fn select_operators_for_block(
+    summary: &MutationSummary,
+    operator_filter: Option<&[Operator]>,
+) -> Vec<Operator> {
+    match operator_filter {
+        Some(filter) => filter.to_vec(),
+        None => Operator::ALL
+            .iter()
+            .copied()
+            .filter(|op| {
+                let i = op.index();
+                summary.per_operator.matched[i] > 0 && summary.per_operator.executed(*op) == 0
+            })
+            .collect(),
+    }
+}
+
+fn write_per_operator_row<W: Write>(
+    w: &mut W,
+    per_op: &PerOperatorSummary,
+    op: Operator,
+) -> std::io::Result<()> {
+    let i = op.index();
+    let matched = per_op.matched[i];
+    if matched == 0 {
+        writeln!(w, "  {}: 0 matches in src/", op.id())?;
+        return Ok(());
+    }
+    let unreachable = per_op.unreachable[i];
+    let equivalent = per_op.equivalent[i];
+    let killed = per_op.killed[i];
+    let survived = per_op.survived[i];
+    let errored = per_op.errored[i];
+    let executed = killed + survived + errored;
+    writeln!(
+        w,
+        "  {}: matched {}, executed {} (killed {}, survived {}, errored {}), unreachable {}, equivalent {}",
+        op.id(),
+        matched,
+        executed,
+        killed,
+        survived,
+        errored,
+        unreachable,
+        equivalent
+    )?;
     Ok(())
 }
 
@@ -315,7 +406,28 @@ fn write_mutation_json(
             .collect();
         files.insert(rel, serde_json::json!({ "mutants": mutants }));
     }
+    let mut operators_obj = serde_json::Map::new();
+    for op in Operator::ALL {
+        let i = op.index();
+        let executed = summary.per_operator.killed[i]
+            + summary.per_operator.survived[i]
+            + summary.per_operator.errored[i];
+        operators_obj.insert(
+            op.id().to_string(),
+            serde_json::json!({
+                "matched":     summary.per_operator.matched[i],
+                "unreachable": summary.per_operator.unreachable[i],
+                "equivalent":  summary.per_operator.equivalent[i],
+                "killed":      summary.per_operator.killed[i],
+                "survived":    summary.per_operator.survived[i],
+                "errored":     summary.per_operator.errored[i],
+                "executed":    executed,
+            }),
+        );
+    }
+
     let value = serde_json::json!({
+        "schema_version": 1,
         "totals": {
             "generated": summary.generated,
             "killed": summary.killed,
@@ -324,6 +436,7 @@ fn write_mutation_json(
             "skipped": summary.skipped_unreachable + summary.skipped_equivalent,
             "score": (summary.score() * 1000.0).round() / 1000.0,
         },
+        "operators": operators_obj,
         "files": files,
     });
     let s = serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".into());
@@ -498,12 +611,16 @@ fn generate_all_sites(
             max_mutants: None,
             covered_lines: Some(cov_set),
         };
-        let (sites, unreachable) = match generate(&raw, src, &gen_opts) {
+        let result = match generate(&raw, src, &gen_opts) {
             Ok(r) => r,
             Err(_) => continue,
         };
-        summary.skipped_unreachable += unreachable;
-        for s in sites {
+        summary.skipped_unreachable += result.skipped_unreachable;
+        for i in 0..8 {
+            summary.per_operator.matched[i] += result.per_operator.matched[i];
+            summary.per_operator.unreachable[i] += result.per_operator.unreachable[i];
+        }
+        for s in result.sites {
             all_sites.push((src.clone(), s, raw.clone(), baseline_js.clone()));
         }
     }
@@ -523,6 +640,7 @@ fn pre_apply_to_queue(
             Ok(mutated_js) => {
                 if mutated_js == *baseline_js {
                     summary.skipped_equivalent += 1;
+                    summary.per_operator.equivalent[site.operator.index()] += 1;
                 } else {
                     queue.push(MutantWork {
                         src_path: src_path.clone(),
@@ -534,6 +652,7 @@ fn pre_apply_to_queue(
             Err(_) => {
                 summary.generated += 1;
                 summary.errored += 1;
+                summary.per_operator.errored[site.operator.index()] += 1;
                 summary
                     .outcomes
                     .entry(src_path.clone())
@@ -577,10 +696,20 @@ fn consume_mutant_results(
             );
         }
         summary.generated += 1;
+        let op_idx = site.operator.index();
         match status {
-            MutantStatus::Killed => summary.killed += 1,
-            MutantStatus::Survived => summary.survived += 1,
-            MutantStatus::Errored => summary.errored += 1,
+            MutantStatus::Killed => {
+                summary.killed += 1;
+                summary.per_operator.killed[op_idx] += 1;
+            }
+            MutantStatus::Survived => {
+                summary.survived += 1;
+                summary.per_operator.survived[op_idx] += 1;
+            }
+            MutantStatus::Errored => {
+                summary.errored += 1;
+                summary.per_operator.errored[op_idx] += 1;
+            }
         }
         summary
             .outcomes
@@ -826,6 +955,7 @@ pub async fn run(
     let cwd = std::env::current_dir()?;
     let root = cwd.join(&config.project.root);
     let out = cwd.join(&config.build.out);
+    let filter_was_set = operators.is_some();
     let ops = parse_operators(operators.as_deref())?;
 
     let mut stdout = std::io::stdout().lock();
@@ -850,7 +980,13 @@ pub async fn run(
         std::process::exit(1);
     }
 
-    write_terminal_summary(&mut stdout, &summary, &cwd, quiet)?;
+    write_terminal_summary(
+        &mut stdout,
+        &summary,
+        &cwd,
+        quiet,
+        if filter_was_set { Some(&ops) } else { None },
+    )?;
     write_mutation_json(&root, &cwd, &summary)?;
 
     if summary.survived > 0 || summary.errored > 0 {
@@ -899,6 +1035,253 @@ out = "dist"
     fn parse_operators_rejects_unknown() {
         let err = parse_operators(Some("bogus")).unwrap_err();
         assert!(format!("{err}").contains("bogus"));
+    }
+
+    #[test]
+    fn mutation_json_includes_per_operator_and_schema_version() {
+        let dir = make_project(
+            "export function add(a: number, b: number) { return a + b }\n",
+            r#"import { describe, it, expect } from "zero/test";
+import { add } from "./src/foo.ts";
+describe("g", () => {
+  it("adds", () => expect(add(1, 2)).toBe(3));
+});
+"#,
+        );
+        let root = dir.path();
+        let out = root.join("dist");
+        let mut sink: Vec<u8> = Vec::new();
+        let summary = run_inner(
+            root,
+            &out,
+            root,
+            None,
+            &[Operator::Arith],
+            None,
+            true,
+            Isolation::InProcess,
+            1,
+            &mut sink,
+        )
+        .expect("ok");
+        write_mutation_json(root, root, &summary).expect("write json");
+
+        let s = fs::read_to_string(root.join("mutation/mutation.json")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+
+        assert_eq!(v["schema_version"], 1);
+        assert!(v["operators"].is_object());
+        let ops = v["operators"].as_object().unwrap();
+        assert_eq!(ops.len(), 8, "expected all 8 operators in json");
+        for id in [
+            "arith", "cmp", "bool", "cond_neg", "boundary", "lit_bool", "lit_num", "lit_str",
+        ] {
+            assert!(ops.contains_key(id), "missing operator {id}");
+        }
+        let arith = &ops["arith"];
+        assert!(arith["matched"].as_u64().unwrap() >= 1);
+        assert_eq!(
+            arith["killed"].as_u64().unwrap(),
+            arith["executed"].as_u64().unwrap()
+        );
+    }
+
+    #[test]
+    fn terminal_summary_filtered_run_prints_per_operator_block() {
+        let dir = make_project(
+            "export function unused(a: number, b: number) {\n    return a + b;\n}\nexport const ok = 1;\n",
+            r#"import { describe, it, expect } from "zero/test";
+import { ok } from "./src/foo.ts";
+describe("g", () => { it("ok", () => expect(ok).toBe(1)); });
+"#,
+        );
+        let root = dir.path();
+        let out = root.join("dist");
+        let mut sink: Vec<u8> = Vec::new();
+        let summary = run_inner(
+            root,
+            &out,
+            root,
+            None,
+            &[Operator::Arith],
+            None,
+            true,
+            Isolation::InProcess,
+            1,
+            &mut sink,
+        )
+        .expect("ok");
+
+        let mut buf: Vec<u8> = Vec::new();
+        write_terminal_summary(&mut buf, &summary, root, true, Some(&[Operator::Arith]))
+            .expect("write");
+        let s = String::from_utf8(buf).unwrap();
+        assert!(s.contains("Per-operator breakdown:"), "got:\n{s}");
+        assert!(s.contains("arith:"), "got:\n{s}");
+        assert!(s.contains("unreachable"), "got:\n{s}");
+    }
+
+    #[test]
+    fn terminal_summary_filtered_run_zero_matches_says_so() {
+        let dir = make_project(
+            "export const ok = true;\n",
+            r#"import { describe, it, expect } from "zero/test";
+import { ok } from "./src/foo.ts";
+describe("g", () => { it("ok", () => expect(ok).toBe(true)); });
+"#,
+        );
+        let root = dir.path();
+        let out = root.join("dist");
+        let mut sink: Vec<u8> = Vec::new();
+        let summary = run_inner(
+            root,
+            &out,
+            root,
+            None,
+            &[Operator::Arith],
+            None,
+            true,
+            Isolation::InProcess,
+            1,
+            &mut sink,
+        )
+        .expect("ok");
+        let mut buf: Vec<u8> = Vec::new();
+        write_terminal_summary(&mut buf, &summary, root, true, Some(&[Operator::Arith]))
+            .expect("write");
+        let s = String::from_utf8(buf).unwrap();
+        assert!(s.contains("arith: 0 matches in src/"), "got:\n{s}");
+    }
+
+    #[test]
+    fn terminal_summary_default_run_quiet_on_clean_operators() {
+        let dir = make_project(
+            "export function add(a: number, b: number) { return a + b }\n",
+            r#"import { describe, it, expect } from "zero/test";
+import { add } from "./src/foo.ts";
+describe("g", () => {
+  it("adds 1+2", () => expect(add(1, 2)).toBe(3));
+  it("adds 5+7", () => expect(add(5, 7)).toBe(12));
+});
+"#,
+        );
+        let root = dir.path();
+        let out = root.join("dist");
+        let mut sink: Vec<u8> = Vec::new();
+        let summary = run_inner(
+            root,
+            &out,
+            root,
+            None,
+            Operator::ALL,
+            None,
+            true,
+            Isolation::InProcess,
+            1,
+            &mut sink,
+        )
+        .expect("ok");
+        let mut buf: Vec<u8> = Vec::new();
+        write_terminal_summary(&mut buf, &summary, root, true, None).expect("write");
+        let s = String::from_utf8(buf).unwrap();
+        assert!(
+            !s.contains("Per-operator breakdown:"),
+            "default run should be quiet on clean operators; got:\n{s}"
+        );
+    }
+
+    #[test]
+    fn per_operator_summary_filtered_run_counts_matches() {
+        let dir = make_project(
+            "export function add(a: number, b: number) { return a + b }\n",
+            r#"import { describe, it, expect } from "zero/test";
+import { add } from "./src/foo.ts";
+describe("g", () => {
+  it("adds 1+2", () => expect(add(1, 2)).toBe(3));
+  it("adds 5+7", () => expect(add(5, 7)).toBe(12));
+});
+"#,
+        );
+        let root = dir.path();
+        let out = root.join("dist");
+        let mut sink: Vec<u8> = Vec::new();
+        let summary = run_inner(
+            root,
+            &out,
+            root,
+            None,
+            &[Operator::Arith],
+            None,
+            true,
+            Isolation::InProcess,
+            1,
+            &mut sink,
+        )
+        .expect("ok");
+        let arith = Operator::Arith.index();
+        assert!(summary.per_operator.matched[arith] >= 1);
+        assert_eq!(summary.per_operator.unreachable[arith], 0);
+        assert_eq!(summary.per_operator.equivalent[arith], 0);
+        assert!(summary.per_operator.killed[arith] >= 1);
+        assert_eq!(summary.per_operator.survived[arith], 0);
+        let cmp = Operator::Cmp.index();
+        assert_eq!(summary.per_operator.matched[cmp], 0);
+    }
+
+    #[test]
+    fn per_operator_summary_unreachable_when_uncovered() {
+        let dir = make_project(
+            "export function unused(a: number, b: number) {\n    return a + b;\n}\nexport const ok = 1;\n",
+            r#"import { describe, it, expect } from "zero/test";
+import { ok } from "./src/foo.ts";
+describe("g", () => { it("ok", () => expect(ok).toBe(1)); });
+"#,
+        );
+        let root = dir.path();
+        let out = root.join("dist");
+        let mut sink: Vec<u8> = Vec::new();
+        let summary = run_inner(
+            root,
+            &out,
+            root,
+            None,
+            &[Operator::Arith],
+            None,
+            true,
+            Isolation::InProcess,
+            1,
+            &mut sink,
+        )
+        .expect("ok");
+        let arith = Operator::Arith.index();
+        assert!(
+            summary.per_operator.matched[arith] >= 1,
+            "expected an arith match"
+        );
+        assert_eq!(
+            summary.per_operator.matched[arith], summary.per_operator.unreachable[arith],
+            "all arith matches should be unreachable"
+        );
+        assert_eq!(summary.per_operator.executed(Operator::Arith), 0);
+    }
+
+    #[test]
+    fn parse_operators_error_lists_accepted_ids() {
+        let err = parse_operators(Some("help")).unwrap_err();
+        let msg = format!("{err}");
+        for id in [
+            "arith", "cmp", "bool", "cond_neg", "boundary", "lit_bool", "lit_num", "lit_str",
+        ] {
+            assert!(msg.contains(id), "missing id {id} in: {msg}");
+        }
+        for variant in [
+            "Arith", "Cmp", "Bool", "CondNeg", "Boundary", "LitBool", "LitNum", "LitStr",
+        ] {
+            assert!(
+                !msg.contains(variant),
+                "leaked Debug name {variant} in: {msg}"
+            );
+        }
     }
 
     #[test]

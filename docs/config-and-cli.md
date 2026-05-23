@@ -172,7 +172,27 @@ with each mutation applied.
 | `--threads <n>`               | Run mutants in parallel.                               |
 | `-q, --quiet`                 | Suppress per-mutant lines; print summary only.         |
 
-Writes `mutation/mutation.json` with structured results. Exit
+Operator ids accepted by `--operators`: `arith`, `cmp`, `bool`,
+`cond_neg`, `boundary`, `lit_bool`, `lit_num`, `lit_str`.
+
+#### Reading `Generated: 0`
+
+`Generated: 0 mutants` on a `--operators` run can mean three things:
+
+- **No matches in `src/`.** The operator is implemented, but no AST
+  node in the codebase matched its swap rules.
+- **All matches on uncovered lines.** Sites were found but no
+  baseline test exercises those lines; the coverage filter drops them.
+- **All matches equivalent.** Sites were found and reached, but the
+  mutated JS was byte-identical to the baseline (rare).
+
+The per-operator breakdown printed under the headline distinguishes
+the three. A row like `arith: matched 12, executed 0 (...), unreachable
+12, equivalent 0` says "12 arith sites exist, every one is on a line
+no test reaches" — write a test that calls into that code.
+
+Writes `mutation/mutation.json` (schema version 1) with structured
+results, including a per-operator breakdown under `operators`. Exit
 code is non-zero if any mutant survived or errored.
 
 ### Type-checking

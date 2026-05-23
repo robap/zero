@@ -83,7 +83,19 @@ impl Operator {
         Operator::ALL.iter().copied().find(|op| op.id() == id)
     }
 
-    fn index(self) -> usize {
+    /// Comma-separated list of every accepted operator id, in declaration
+    /// order. The exact string returned is parseable token-by-token by
+    /// [`Operator::parse`] — split on `, ` and feed each piece back in.
+    pub fn list_ids() -> String {
+        Operator::ALL
+            .iter()
+            .map(|op| op.id())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// 0-based position in [`Operator::ALL`]. Stable across releases.
+    pub fn index(self) -> usize {
         Operator::ALL.iter().position(|o| *o == self).unwrap()
     }
 }
@@ -116,6 +128,49 @@ pub struct GenerateOptions<'a> {
     pub covered_lines: Option<&'a HashSet<u32>>,
 }
 
+/// Result of a [`generate`] pass.
+#[derive(Debug)]
+pub struct GenerateResult {
+    /// Concrete mutation sites the caller will apply and execute.
+    pub sites: Vec<MutationSite>,
+    /// Total sites filtered out because `covered_lines` did not include
+    /// their line. Aggregated across all operators.
+    pub skipped_unreachable: usize,
+    /// Per-operator tally captured during the collect walk. Indexed by
+    /// `Operator::index()`.
+    pub per_operator: PerOperatorTally,
+}
+
+/// Per-operator counts produced by the collect-mode visitor. Indexed
+/// the same way as [`Operator::ALL`].
+#[derive(Debug, Default, Clone, Copy)]
+pub struct PerOperatorTally {
+    /// AST nodes the operator's swap function accepted, before any
+    /// filtering. For arith this includes the string-concat exclusion
+    /// (matches `+` only when both sides are not string literals).
+    pub matched: [usize; 8],
+    /// Subset of `matched` that was filtered by `covered_lines` and not
+    /// returned in `sites`.
+    pub unreachable: [usize; 8],
+}
+
+impl PerOperatorTally {
+    /// Lookup helper.
+    pub fn get(&self, op: Operator) -> OperatorCounts {
+        OperatorCounts {
+            matched: self.matched[op.index()],
+            unreachable: self.unreachable[op.index()],
+        }
+    }
+}
+
+/// View of a single operator's collect-mode counts.
+#[derive(Debug, Clone, Copy)]
+pub struct OperatorCounts {
+    pub matched: usize,
+    pub unreachable: usize,
+}
+
 /// Generate the mutation sites in `source`.
 ///
 /// # Parameters
@@ -124,12 +179,12 @@ pub struct GenerateOptions<'a> {
 /// - `opts`: operator filter, max-mutant cap, optional coverage filter.
 ///
 /// # Returns
-/// `Ok((sites, skipped_unreachable))` on success.
+/// `Ok(GenerateResult { sites, skipped_unreachable, per_operator })`.
 pub fn generate(
     source: &str,
     file: &Path,
     opts: &GenerateOptions<'_>,
-) -> Result<(Vec<MutationSite>, usize), TranspileError> {
+) -> Result<GenerateResult, TranspileError> {
     let logical = file.to_string_lossy().into_owned();
     let cm: Lrc<SwcSourceMap> = Default::default();
     let fm = cm.new_source_file(
@@ -155,7 +210,7 @@ pub fn generate(
         message: format!("parse error: {e:?}"),
     })?;
 
-    let (sites, skipped) = GLOBALS.set(&Globals::new(), || {
+    let (sites, skipped, matched, unreachable_per_op) = GLOBALS.set(&Globals::new(), || {
         let unresolved_mark = Mark::new();
         let top_level_mark = Mark::new();
         let mut program = swc_core::ecma::ast::Program::Module(module);
@@ -172,14 +227,26 @@ pub fn generate(
             opts.covered_lines,
         );
         v.visit_mut_module(&mut module);
-        (v.sites, v.skipped_unreachable)
+        (
+            v.sites,
+            v.skipped_unreachable,
+            v.matched,
+            v.unreachable_per_op,
+        )
     });
 
     let limited = match opts.max_mutants {
         Some(max) if sites.len() > max => sites.into_iter().take(max).collect(),
         _ => sites,
     };
-    Ok((limited, skipped))
+    Ok(GenerateResult {
+        sites: limited,
+        skipped_unreachable: skipped,
+        per_operator: PerOperatorTally {
+            matched,
+            unreachable: unreachable_per_op,
+        },
+    })
 }
 
 /// Apply `site` to `source` and return the mutated JS.
@@ -253,7 +320,7 @@ fn locate_index(source: &str, file: &Path, site: &MutationSite) -> Result<usize,
         max_mutants: None,
         covered_lines: None,
     };
-    let (sites, _) = generate(source, file, &opts)?;
+    let sites = generate(source, file, &opts)?.sites;
     sites
         .iter()
         .position(|s| s.line == site.line && s.column == site.column)
@@ -352,6 +419,8 @@ struct MutateVisitor<'a> {
     sites: Vec<MutationSite>,
     counts: [usize; 8],
     skipped_unreachable: usize,
+    matched: [usize; 8],
+    unreachable_per_op: [usize; 8],
 }
 
 impl<'a> MutateVisitor<'a> {
@@ -370,6 +439,8 @@ impl<'a> MutateVisitor<'a> {
             sites: Vec::new(),
             counts: [0; 8],
             skipped_unreachable: 0,
+            matched: [0; 8],
+            unreachable_per_op: [0; 8],
         }
     }
 
@@ -391,6 +462,8 @@ impl<'a> MutateVisitor<'a> {
             sites: Vec::new(),
             counts: [0; 8],
             skipped_unreachable: 0,
+            matched: [0; 8],
+            unreachable_per_op: [0; 8],
         }
     }
 
@@ -425,10 +498,12 @@ impl<'a> MutateVisitor<'a> {
                 if !self.filter_allows(op) {
                     return false;
                 }
+                self.matched[idx] += 1;
                 if let Some(cov) = self.covered_lines
                     && !cov.contains(&line)
                 {
                     self.skipped_unreachable += 1;
+                    self.unreachable_per_op[idx] += 1;
                     return false;
                 }
                 self.counts[idx] += 1;
@@ -667,9 +742,9 @@ mod tests {
     fn arith_operator_generates_swap() {
         let src = "const x = 1 + 2;\n";
         let ops = vec![Operator::Arith];
-        let (sites, skipped) =
-            generate(src, &PathBuf::from("/abs/a.ts"), &opts(&ops)).expect("generate");
-        assert_eq!(skipped, 0);
+        let r = generate(src, &PathBuf::from("/abs/a.ts"), &opts(&ops)).expect("generate");
+        let sites = r.sites;
+        assert_eq!(r.skipped_unreachable, 0);
         assert_eq!(sites.len(), 1);
         assert_eq!(sites[0].operator, Operator::Arith);
         assert!(
@@ -688,7 +763,9 @@ mod tests {
     fn cmp_operator_swaps_relational() {
         let src = "const r = a < b;\n";
         let ops = vec![Operator::Cmp];
-        let (sites, _) = generate(src, &PathBuf::from("/abs/a.ts"), &opts(&ops)).expect("g");
+        let sites = generate(src, &PathBuf::from("/abs/a.ts"), &opts(&ops))
+            .expect("g")
+            .sites;
         assert_eq!(sites.len(), 1);
         assert!(
             sites[0].replacement.contains(">="),
@@ -701,7 +778,9 @@ mod tests {
     fn bool_operator_swaps_logical() {
         let src = "const r = a && b;\n";
         let ops = vec![Operator::Bool];
-        let (sites, _) = generate(src, &PathBuf::from("/abs/a.ts"), &opts(&ops)).expect("g");
+        let sites = generate(src, &PathBuf::from("/abs/a.ts"), &opts(&ops))
+            .expect("g")
+            .sites;
         assert_eq!(sites.len(), 1);
         assert!(
             sites[0].replacement.contains("||"),
@@ -714,7 +793,9 @@ mod tests {
     fn cond_neg_wraps_if_test() {
         let src = "if (a) { f(); }\n";
         let ops = vec![Operator::CondNeg];
-        let (sites, _) = generate(src, &PathBuf::from("/abs/a.ts"), &opts(&ops)).expect("g");
+        let sites = generate(src, &PathBuf::from("/abs/a.ts"), &opts(&ops))
+            .expect("g")
+            .sites;
         assert_eq!(sites.len(), 1);
         assert!(
             sites[0].replacement.starts_with('!'),
@@ -727,7 +808,9 @@ mod tests {
     fn boundary_swaps_lt_to_lte() {
         let src = "const r = a < b;\n";
         let ops = vec![Operator::Boundary];
-        let (sites, _) = generate(src, &PathBuf::from("/abs/a.ts"), &opts(&ops)).expect("g");
+        let sites = generate(src, &PathBuf::from("/abs/a.ts"), &opts(&ops))
+            .expect("g")
+            .sites;
         assert_eq!(sites.len(), 1);
         assert!(
             sites[0].replacement.contains("<="),
@@ -740,7 +823,9 @@ mod tests {
     fn lit_bool_flips() {
         let src = "const t = true;\n";
         let ops = vec![Operator::LitBool];
-        let (sites, _) = generate(src, &PathBuf::from("/abs/a.ts"), &opts(&ops)).expect("g");
+        let sites = generate(src, &PathBuf::from("/abs/a.ts"), &opts(&ops))
+            .expect("g")
+            .sites;
         assert_eq!(sites.len(), 1);
         assert_eq!(sites[0].original, "true");
         assert_eq!(sites[0].replacement, "false");
@@ -750,7 +835,9 @@ mod tests {
     fn lit_num_swaps_zero_and_one() {
         let src = "const a = 0; const b = 1;\n";
         let ops = vec![Operator::LitNum];
-        let (sites, _) = generate(src, &PathBuf::from("/abs/a.ts"), &opts(&ops)).expect("g");
+        let sites = generate(src, &PathBuf::from("/abs/a.ts"), &opts(&ops))
+            .expect("g")
+            .sites;
         assert_eq!(sites.len(), 2);
         let pairs: Vec<(String, String)> = sites
             .iter()
@@ -764,7 +851,9 @@ mod tests {
     fn lit_str_swaps_empty_and_nonempty() {
         let src = r#"const a = ""; const b = "abc";"#;
         let ops = vec![Operator::LitStr];
-        let (sites, _) = generate(src, &PathBuf::from("/abs/a.ts"), &opts(&ops)).expect("g");
+        let sites = generate(src, &PathBuf::from("/abs/a.ts"), &opts(&ops))
+            .expect("g")
+            .sites;
         assert_eq!(sites.len(), 2);
         let pairs: Vec<(String, String)> = sites
             .iter()
@@ -780,7 +869,9 @@ mod tests {
         // arith mutants should be returned.
         let src = "const r = (a + b) < c;\n";
         let ops = vec![Operator::Arith];
-        let (sites, _) = generate(src, &PathBuf::from("/abs/a.ts"), &opts(&ops)).expect("g");
+        let sites = generate(src, &PathBuf::from("/abs/a.ts"), &opts(&ops))
+            .expect("g")
+            .sites;
         assert!(sites.iter().all(|s| s.operator == Operator::Arith));
         assert!(!sites.is_empty());
     }
@@ -794,7 +885,9 @@ mod tests {
             max_mutants: Some(3),
             covered_lines: None,
         };
-        let (sites, _) = generate(src, &PathBuf::from("/abs/a.ts"), &opts).expect("g");
+        let sites = generate(src, &PathBuf::from("/abs/a.ts"), &opts)
+            .expect("g")
+            .sites;
         assert_eq!(sites.len(), 3);
     }
 
@@ -808,25 +901,27 @@ mod tests {
             max_mutants: None,
             covered_lines: Some(&covered),
         };
-        let (sites, skipped) = generate(src, &PathBuf::from("/abs/a.ts"), &opts).expect("g");
-        assert_eq!(sites.len(), 1);
-        assert_eq!(sites[0].line, 1);
-        assert_eq!(skipped, 1);
+        let r = generate(src, &PathBuf::from("/abs/a.ts"), &opts).expect("g");
+        assert_eq!(r.sites.len(), 1);
+        assert_eq!(r.sites[0].line, 1);
+        assert_eq!(r.skipped_unreachable, 1);
     }
 
     #[test]
     fn string_plus_is_not_mutated_as_arith() {
         let src = r#"const r = "a" + "b";"#;
-        let (sites, _) =
-            generate(src, &PathBuf::from("/abs/a.ts"), &opts(&[Operator::Arith])).expect("g");
+        let sites = generate(src, &PathBuf::from("/abs/a.ts"), &opts(&[Operator::Arith]))
+            .expect("g")
+            .sites;
         assert_eq!(sites.len(), 0);
     }
 
     #[test]
     fn apply_emits_valid_js_for_arith() {
         let src = "const x = 1 + 2;\n";
-        let (sites, _) =
-            generate(src, &PathBuf::from("/abs/a.ts"), &opts(&[Operator::Arith])).expect("g");
+        let sites = generate(src, &PathBuf::from("/abs/a.ts"), &opts(&[Operator::Arith]))
+            .expect("g")
+            .sites;
         let mutated = apply(src, &PathBuf::from("/abs/a.ts"), &sites[0]).expect("apply");
         assert!(
             mutated.contains("1 - 2"),
@@ -837,12 +932,13 @@ mod tests {
     #[test]
     fn apply_emits_valid_js_for_cond_neg() {
         let src = "if (a) { f(); }\n";
-        let (sites, _) = generate(
+        let sites = generate(
             src,
             &PathBuf::from("/abs/a.ts"),
             &opts(&[Operator::CondNeg]),
         )
-        .expect("g");
+        .expect("g")
+        .sites;
         let mutated = apply(src, &PathBuf::from("/abs/a.ts"), &sites[0]).expect("apply");
         assert!(
             mutated.contains("!a"),
@@ -855,5 +951,152 @@ mod tests {
         for op in Operator::ALL {
             assert_eq!(Operator::parse(op.id()), Some(*op));
         }
+    }
+
+    #[test]
+    fn arith_matches_demo_division_in_math_ceil() {
+        let src = "const pages = Math.ceil(tc / PAGE_SIZE);\n";
+        let sites = generate(
+            src,
+            &PathBuf::from("/abs/demo.ts"),
+            &opts(&[Operator::Arith]),
+        )
+        .expect("g")
+        .sites;
+        assert!(
+            sites.iter().any(|s| s.operator == Operator::Arith),
+            "expected arith site for `tc / PAGE_SIZE`, got {sites:?}"
+        );
+    }
+
+    #[test]
+    fn arith_matches_demo_mul_then_div() {
+        let src = "const pct = SlotsUsed * 100 / SlotsTotal;\n";
+        let sites = generate(
+            src,
+            &PathBuf::from("/abs/demo.ts"),
+            &opts(&[Operator::Arith]),
+        )
+        .expect("g")
+        .sites;
+        let arith_count = sites
+            .iter()
+            .filter(|s| s.operator == Operator::Arith)
+            .count();
+        assert!(
+            arith_count >= 2,
+            "expected >= 2 arith sites, got {arith_count}"
+        );
+    }
+
+    #[test]
+    fn arith_matches_demo_simple_division() {
+        let src = "function ratio(onHand: number, denom: number) { return onHand / denom; }\n";
+        let sites = generate(
+            src,
+            &PathBuf::from("/abs/demo.ts"),
+            &opts(&[Operator::Arith]),
+        )
+        .expect("g")
+        .sites;
+        assert!(sites.iter().any(|s| s.operator == Operator::Arith));
+    }
+
+    #[test]
+    fn boundary_matches_demo_lte() {
+        let src = "const low = onHand <= ReorderPoint;\n";
+        let sites = generate(
+            src,
+            &PathBuf::from("/abs/demo.ts"),
+            &opts(&[Operator::Boundary]),
+        )
+        .expect("g")
+        .sites;
+        assert!(sites.iter().any(|s| s.operator == Operator::Boundary));
+    }
+
+    #[test]
+    fn boundary_matches_demo_lte_inside_pagination() {
+        let src = "if (tc <= PAGE_SIZE) return 1;\n";
+        let sites = generate(
+            src,
+            &PathBuf::from("/abs/demo.ts"),
+            &opts(&[Operator::Boundary]),
+        )
+        .expect("g")
+        .sites;
+        assert!(sites.iter().any(|s| s.operator == Operator::Boundary));
+    }
+
+    #[test]
+    fn visitor_reports_per_operator_match_counts() {
+        let src = "const r = (a + b) < c;\nconst s = a <= b;\nconst t = a / b;\n";
+        let r = generate(
+            src,
+            &PathBuf::from("/abs/a.ts"),
+            &GenerateOptions {
+                operators: Operator::ALL,
+                max_mutants: None,
+                covered_lines: None,
+            },
+        )
+        .expect("g");
+        let arith = r.per_operator.get(Operator::Arith);
+        let cmp = r.per_operator.get(Operator::Cmp);
+        let boundary = r.per_operator.get(Operator::Boundary);
+        assert_eq!(arith.matched, 2, "arith: {:?}", arith);
+        assert_eq!(cmp.matched, 2, "cmp: {:?}", cmp);
+        assert_eq!(boundary.matched, 2, "boundary: {:?}", boundary);
+        assert_eq!(arith.unreachable, 0);
+        assert_eq!(cmp.unreachable, 0);
+        assert_eq!(boundary.unreachable, 0);
+    }
+
+    #[test]
+    fn visitor_counts_unreachable_per_operator() {
+        let src = "const r = a + b;\nconst s = c + d;\n";
+        let mut covered: HashSet<u32> = HashSet::new();
+        covered.insert(1);
+        let r = generate(
+            src,
+            &PathBuf::from("/abs/a.ts"),
+            &GenerateOptions {
+                operators: &[Operator::Arith],
+                max_mutants: None,
+                covered_lines: Some(&covered),
+            },
+        )
+        .expect("g");
+        let arith = r.per_operator.get(Operator::Arith);
+        assert_eq!(arith.matched, 2);
+        assert_eq!(arith.unreachable, 1);
+        assert_eq!(r.sites.len(), 1);
+    }
+
+    #[test]
+    fn visitor_per_operator_respects_filter() {
+        let src = "const r = (a + b) < c;\n";
+        let r = generate(
+            src,
+            &PathBuf::from("/abs/a.ts"),
+            &GenerateOptions {
+                operators: &[Operator::Arith],
+                max_mutants: None,
+                covered_lines: None,
+            },
+        )
+        .expect("g");
+        assert_eq!(r.per_operator.get(Operator::Arith).matched, 1);
+        assert_eq!(r.per_operator.get(Operator::Cmp).matched, 0);
+    }
+
+    #[test]
+    fn list_ids_round_trips_through_parse() {
+        let s = Operator::list_ids();
+        let parsed: Vec<Operator> = s
+            .split(", ")
+            .map(|t| Operator::parse(t).expect("listed id should parse"))
+            .collect();
+        assert_eq!(parsed, Operator::ALL.to_vec());
     }
 }
