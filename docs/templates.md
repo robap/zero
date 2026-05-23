@@ -88,6 +88,24 @@ the binding is a true on/off — the attribute is added when the
 value is truthy and removed when falsy. For everything else, the
 value is stringified.
 
+Static text and placeholders mix freely inside a single attribute
+value:
+
+```ts
+html`<span class="chip chip--${status} active">${label}</span>`
+html`<div style="color: ${color}; padding: ${pad}px">…</div>`
+```
+
+Any number of `${…}` substitutions can appear alongside static
+characters in one attribute. The framework joins the pieces — every
+reactive value in the attribute is tracked by a single effect, so
+the attribute re-renders once per change, not once per substitution.
+
+Boolean / null / undefined attribute semantics only apply when the
+attribute value is *just* a placeholder (`disabled=${flag}`). In a
+concat context (`class="a ${x} b"`), `null` and `undefined` render
+as empty strings and booleans stringify to `"true"` / `"false"`.
+
 Use a reactive block for derived attributes that depend on more
 than one signal:
 
@@ -120,17 +138,22 @@ html`<a href="/x" @click.stop=${handle}>x</a>`
 html`<button @click.once=${initialize}>Init</button>`
 html`<div @scroll.throttle=${onScroll}>...</div>`
 html`<input @input.debounce=${onSearch} />`
+html`<input @input.debounce:250=${onSearch} />`
 html`<input @keydown.enter=${submit} />`
 html`<input @keydown.escape=${close} />`
 ```
 
 The full set:
 
-| Family       | Modifiers                                                                            |
-|--------------|--------------------------------------------------------------------------------------|
-| Side-effect  | `.prevent` (`preventDefault`), `.stop` (`stopPropagation`), `.once`                  |
-| Timing       | `.throttle` (100 ms), `.debounce` (100 ms)                                           |
-| Key filter   | `.enter`, `.escape`, `.space`, `.tab`, `.up`, `.down`, `.left`, `.right`             |
+| Family       | Modifiers                                                                                       |
+|--------------|-------------------------------------------------------------------------------------------------|
+| Side-effect  | `.prevent` (`preventDefault`), `.stop` (`stopPropagation`), `.once`                             |
+| Timing       | `.throttle` / `.throttle:<ms>` (default 100 ms), `.debounce` / `.debounce:<ms>` (default 100 ms) |
+| Key filter   | `.enter`, `.escape`, `.space`, `.tab`, `.up`, `.down`, `.left`, `.right`                        |
+
+The `:<ms>` suffix is only valid on `.throttle` and `.debounce`;
+T02 flags it elsewhere. Malformed intervals (`:abc`, `:0`, `:-5`)
+are runtime errors.
 
 Modifiers compose: `@click.prevent.stop=${...}`,
 `@keydown.enter.prevent=${...}`. Order doesn't matter — modifiers

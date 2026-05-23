@@ -113,6 +113,120 @@ describe('commit() — attr parts', () => {
   });
 });
 
+describe('attr parts — statics shape', () => {
+  afterEach(cleanup);
+
+  it('single placeholder: statics is ["", ""]', () => {
+    const x = 'foo';
+    const tr = html`<div class=${x}></div>`;
+    const attrs = tr._template.parts.filter(p => p.type === 'attr');
+    expect(attrs.length).toBe(1);
+    expect(attrs[0].statics).toEqual(['', '']);
+  });
+
+  it('placeholder with prefix and suffix: statics captures both', () => {
+    const x = 'mid';
+    const tr = html`<div class="prefix ${x} suffix"></div>`;
+    const attrs = tr._template.parts.filter(p => p.type === 'attr');
+    expect(attrs.length).toBe(1);
+    expect(attrs[0].statics).toEqual(['prefix ', ' suffix']);
+  });
+
+  it('commits prefix+placeholder+suffix as joined string', () => {
+    const el = render(html`<span class="chip chip--${'active'} active"></span>`);
+    const span = find(el, 'span');
+    expect(span.getAttribute('class')).toBe('chip chip--active active');
+  });
+
+  it('two placeholders adjacent: statics is ["", " ", ""]', () => {
+    const tr = html`<div class="${'a'} ${'b'}"></div>`;
+    const attrs = tr._template.parts.filter(p => p.type === 'attr');
+    expect(attrs.length).toBe(1);
+    expect(attrs[0].statics).toEqual(['', ' ', '']);
+  });
+
+  it('two placeholders with no static between: statics is ["", "", ""]', () => {
+    const tr = html`<div class="${'a'}${'b'}"></div>`;
+    const attrs = tr._template.parts.filter(p => p.type === 'attr');
+    expect(attrs.length).toBe(1);
+    expect(attrs[0].statics).toEqual(['', '', '']);
+  });
+
+  it('commits two placeholders into joined attribute value', () => {
+    const el = render(html`<div class="${'a'} ${'b'}"></div>`);
+    expect(find(el, 'div').getAttribute('class')).toBe('a b');
+  });
+
+  it('signal in concat: setAttribute updates when signal changes', () => {
+    const s = signal('y');
+    const el = render(html`<div class="p ${s} s"></div>`);
+    const div = find(el, 'div');
+    expect(div.getAttribute('class')).toBe('p y s');
+    s.set('z');
+    expect(div.getAttribute('class')).toBe('p z s');
+  });
+
+  it('two signals in one attribute share a single effect', () => {
+    const a = signal('A');
+    const b = signal('B');
+    const el = render(html`<div data-x="${a}-${b}"></div>`);
+    const div = find(el, 'div');
+    expect(div.getAttribute('data-x')).toBe('A-B');
+    a.set('AA');
+    expect(div.getAttribute('data-x')).toBe('AA-B');
+    b.set('BB');
+    expect(div.getAttribute('data-x')).toBe('AA-BB');
+  });
+
+  it('reactive function in concat updates on dependency change', () => {
+    const mode = signal('dark');
+    const el = render(html`<div class="theme-${() => mode.val}"></div>`);
+    const div = find(el, 'div');
+    expect(div.getAttribute('class')).toBe('theme-dark');
+    mode.set('light');
+    expect(div.getAttribute('class')).toBe('theme-light');
+  });
+
+  it('null in concat renders as empty string', () => {
+    const el = render(html`<div class="a ${null} b"></div>`);
+    expect(find(el, 'div').getAttribute('class')).toBe('a  b');
+  });
+
+  it('undefined in concat renders as empty string', () => {
+    const el = render(html`<div class="a ${undefined} b"></div>`);
+    expect(find(el, 'div').getAttribute('class')).toBe('a  b');
+  });
+
+  it('cleanup tears down concat effect', () => {
+    const s = signal('y');
+    const el = render(html`<div class="p ${s} s"></div>`);
+    const div = find(el, 'div');
+    cleanup();
+    s.set('z');
+    expect(div.getAttribute('class')).toBe('p y s');
+  });
+
+  it('style attribute with two placeholders interleaves correctly', () => {
+    const c = signal('red');
+    const p = signal(4);
+    const el = render(html`<div style="color: ${c}; padding: ${p}px"></div>`);
+    const div = find(el, 'div');
+    expect(div.getAttribute('style')).toBe('color: red; padding: 4px');
+    p.set(8);
+    expect(div.getAttribute('style')).toBe('color: red; padding: 8px');
+  });
+
+  it('single-placeholder boolean semantics preserved: false removes', () => {
+    const el = render(html`<input disabled=${false} />`);
+    expect(find(el, 'input').hasAttribute('disabled')).toBeFalsy();
+  });
+
+  it('single-placeholder boolean semantics preserved: true sets ""', () => {
+    const el = render(html`<input disabled=${true} />`);
+    expect(find(el, 'input').getAttribute('disabled')).toBe('');
+  });
+});
+
 describe('commit() — node parts', () => {
   afterEach(cleanup);
 
@@ -263,6 +377,131 @@ describe('commit() — event bindings', () => {
     cleanup();
     fire(btn, 'click');
     expect(handler.callCount).toBe(1);
+  });
+});
+
+describe('event timing modifiers — :NNN interval', () => {
+  afterEach(cleanup);
+
+  it('parses bare .debounce: modifiers is ["debounce"]', () => {
+    const h = () => {};
+    const tr = html`<input @input.debounce=${h} />`;
+    const event = tr._template.parts.find(p => p.type === 'event');
+    expect(event.modifiers).toEqual(['debounce']);
+  });
+
+  it('parses .debounce:250: modifiers is ["debounce:250"]', () => {
+    const h = () => {};
+    const tr = html`<input @input.debounce:250=${h} />`;
+    const event = tr._template.parts.find(p => p.type === 'event');
+    expect(event.modifiers).toEqual(['debounce:250']);
+  });
+
+  it('parses combined modifiers: ["prevent", "throttle:500"]', () => {
+    const h = () => {};
+    const tr = html`<a @click.prevent.throttle:500=${h}>x</a>`;
+    const event = tr._template.parts.find(p => p.type === 'event');
+    expect(event.modifiers).toEqual(['prevent', 'throttle:500']);
+  });
+
+  it('commit throws on .debounce:abc', () => {
+    const h = () => {};
+    expect(() => render(html`<input @input.debounce:abc=${h} />`))
+      .toThrow('debounce:abc');
+  });
+
+  it('commit throws on .debounce: (empty suffix)', () => {
+    const h = () => {};
+    expect(() => render(html`<input @input.debounce:=${h} />`))
+      .toThrow('debounce:');
+  });
+
+  it('commit throws on .debounce:0', () => {
+    const h = () => {};
+    expect(() => render(html`<input @input.debounce:0=${h} />`))
+      .toThrow('> 0');
+  });
+
+  it('commit throws on .debounce:-5', () => {
+    const h = () => {};
+    expect(() => render(html`<input @input.debounce:-5=${h} />`))
+      .toThrow('debounce:-5');
+  });
+
+  it('.debounce:250 passes 250 to setTimeout', () => {
+    const calls = [];
+    const origSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = (cb, ms) => {
+      calls.push(ms);
+      return origSetTimeout(cb, ms);
+    };
+    try {
+      const handler = spy();
+      const el = render(html`<input @input.debounce:250=${handler} />`);
+      fire(find(el, 'input'), 'input');
+      expect(calls.length).toBe(1);
+      expect(calls[0]).toBe(250);
+    } finally {
+      globalThis.setTimeout = origSetTimeout;
+    }
+  });
+
+  it('bare .debounce passes 100 to setTimeout', () => {
+    const calls = [];
+    const origSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = (cb, ms) => {
+      calls.push(ms);
+      return origSetTimeout(cb, ms);
+    };
+    try {
+      const handler = spy();
+      const el = render(html`<input @input.debounce=${handler} />`);
+      fire(find(el, 'input'), 'input');
+      expect(calls.length).toBe(1);
+      expect(calls[0]).toBe(100);
+    } finally {
+      globalThis.setTimeout = origSetTimeout;
+    }
+  });
+
+  it('.prevent combined with .debounce:300 commits without error', () => {
+    const calls = [];
+    const origSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = (cb, ms) => {
+      calls.push(ms);
+      return origSetTimeout(cb, ms);
+    };
+    try {
+      const handler = spy();
+      const el = render(html`<form @submit.prevent.debounce:300=${handler}></form>`);
+      fire(find(el, 'form'), 'submit');
+      expect(calls.length).toBe(1);
+      expect(calls[0]).toBe(300);
+    } finally {
+      globalThis.setTimeout = origSetTimeout;
+    }
+  });
+
+  it('.throttle:500 honors 500ms', () => {
+    const calls = [];
+    const origNow = Date.now;
+    let nowVal = 1000;
+    Date.now = () => nowVal;
+    try {
+      const handler = spy();
+      const el = render(html`<div @scroll.throttle:500=${handler}></div>`);
+      const div = find(el, 'div');
+      fire(div, 'scroll');
+      expect(handler.callCount).toBe(1);
+      nowVal = 1100; // 100ms later — below 500 threshold
+      fire(div, 'scroll');
+      expect(handler.callCount).toBe(1);
+      nowVal = 1600; // 600ms later — over 500 threshold
+      fire(div, 'scroll');
+      expect(handler.callCount).toBe(2);
+    } finally {
+      Date.now = origNow;
+    }
   });
 });
 

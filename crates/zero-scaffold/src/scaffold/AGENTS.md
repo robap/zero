@@ -455,7 +455,7 @@ Import the `TemplateResult` type via `@typedef`, not at runtime.
 - **`navigate` / `back` / `forward` / `route()` / `inject()` require a running app.**
 - **Same-origin `<a>` clicks are intercepted by default.** Opt out with
   `target="_blank"`, `download`, or `data-external`.
-- **`.throttle` and `.debounce` use a fixed 100ms interval.** Not configurable.
+- **`.throttle` and `.debounce` default to 100 ms.** Override per call with a `:<ms>` suffix, e.g. `@input.debounce:250=${onSearch}`. Suffix is only valid on these two modifiers.
 
 ---
 

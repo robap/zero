@@ -3,7 +3,31 @@ import { effect, _createScope } from './reactivity.js';
 // real DOM in production).
 
 /**
- * @typedef {{ fragment: DocumentFragment, parts: any[] }} Template
+ * @typedef {{ type: 'attr', path: number[], name: string, statics: string[] }} AttrPart
+ *   `statics.length === valueCount + 1`. For `class=${x}` the statics array
+ *   is `['', '']` (one value); for `class="a ${x} b ${y} c"` it is
+ *   `['a ', ' b ', ' c']` (two values). The commit loop advances the value
+ *   cursor by `statics.length - 1` for each attr part.
+ */
+
+/**
+ * @typedef {{ type: 'event', path: number[], event: string, modifiers: string[] }} EventPart
+ */
+
+/**
+ * @typedef {{ type: 'ref', path: number[] }} RefPart
+ */
+
+/**
+ * @typedef {{ type: 'node', path: number[] }} NodePart
+ */
+
+/**
+ * @typedef {AttrPart | EventPart | RefPart | NodePart} Part
+ */
+
+/**
+ * @typedef {{ fragment: DocumentFragment, parts: Part[] }} Template
  */
 
 /**
@@ -45,6 +69,9 @@ function _parseTemplate(strings) {
   const parentPath = [];
   let currentAttrName = '';
   let currentAttrValue = '';
+  /** @type {string[] | null} */
+  let attrStatics = null;
+  let attrHasPlaceholders = false;
   let currentTagName = '';
   let currentCloseTagName = '';
   let currentTextData = '';
@@ -67,12 +94,30 @@ function _parseTemplate(strings) {
     }
   }
 
-  function flushStaticAttr() {
-    if (currentAttrName) {
+  /**
+   * Close out the current attribute. If `attrHasPlaceholders`, push the
+   * trailing static fragment and emit a multi-placeholder `attr` part.
+   * Otherwise, set the attribute statically on the parent element.
+   * @internal
+   * @returns {void}
+   */
+  function flushAttr() {
+    if (!currentAttrName) return;
+    if (attrHasPlaceholders) {
+      attrStatics.push(currentAttrValue);
+      parts.push({
+        type: 'attr',
+        path: [...parentPath],
+        name: currentAttrName,
+        statics: attrStatics,
+      });
+    } else {
       parent.setAttribute(currentAttrName, currentAttrValue);
-      currentAttrName = '';
-      currentAttrValue = '';
     }
+    currentAttrName = '';
+    currentAttrValue = '';
+    attrStatics = null;
+    attrHasPlaceholders = false;
   }
 
   function childPath(childIndex) {
@@ -166,7 +211,7 @@ function _parseTemplate(strings) {
             state = AFTER_ATTR_NAME;
           } else if (ch === '>') {
             // Boolean attribute terminating the tag, e.g. `<input disabled>`.
-            flushStaticAttr();
+            flushAttr();
             state = TEXT;
           } else {
             currentAttrName += ch;
@@ -180,7 +225,7 @@ function _parseTemplate(strings) {
             state = ATTR_VALUE_SQ;
           } else if (ch === '>') {
             // Boolean attribute terminating the tag, e.g. `<input disabled >`.
-            flushStaticAttr();
+            flushAttr();
             state = TEXT;
           } else if (ch === '=') {
             // skip
@@ -195,7 +240,7 @@ function _parseTemplate(strings) {
 
         case ATTR_VALUE_DQ:
           if (ch === '"') {
-            flushStaticAttr();
+            flushAttr();
             state = IN_TAG;
           } else {
             currentAttrValue += ch;
@@ -204,7 +249,7 @@ function _parseTemplate(strings) {
 
         case ATTR_VALUE_SQ:
           if (ch === "'") {
-            flushStaticAttr();
+            flushAttr();
             state = IN_TAG;
           } else {
             currentAttrValue += ch;
@@ -213,10 +258,10 @@ function _parseTemplate(strings) {
 
         case ATTR_VALUE_UNQUOTED:
           if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
-            flushStaticAttr();
+            flushAttr();
             state = IN_TAG;
           } else if (ch === '>') {
-            flushStaticAttr();
+            flushAttr();
             state = TEXT;
           } else {
             currentAttrValue += ch;
@@ -257,17 +302,25 @@ function _parseTemplate(strings) {
           if (currentAttrName.startsWith('@')) {
             const [eventPart, ...modifiers] = currentAttrName.slice(1).split('.');
             parts.push({ type: 'event', path, event: eventPart, modifiers });
+            currentAttrName = '';
+            currentAttrValue = '';
+            if (state === AFTER_ATTR_NAME) state = IN_TAG;
           } else if (currentAttrName === 'ref') {
             parts.push({ type: 'ref', path });
+            currentAttrName = '';
+            currentAttrValue = '';
+            if (state === AFTER_ATTR_NAME) state = IN_TAG;
           } else {
-            parts.push({ type: 'attr', path, name: currentAttrName });
+            // attr — accumulate static fragment, defer emit until value closes.
+            if (attrStatics === null) attrStatics = [];
+            attrStatics.push(currentAttrValue);
+            currentAttrValue = '';
+            attrHasPlaceholders = true;
+            // AFTER_ATTR_NAME means unquoted `name=${x}` — switch into
+            // ATTR_VALUE_UNQUOTED so the trailing terminator (whitespace
+            // or `>`) closes the value via flushAttr().
+            if (state === AFTER_ATTR_NAME) state = ATTR_VALUE_UNQUOTED;
           }
-          // The dynamic part owns this attribute now — clear static state so
-          // the closing quote/space/`>` doesn't also setAttribute().
-          currentAttrName = '';
-          currentAttrValue = '';
-          // Transition to IN_TAG so subsequent characters parse correctly
-          if (state === AFTER_ATTR_NAME) state = IN_TAG;
           break;
         }
         default:
@@ -329,7 +382,30 @@ function _applyAttr(el, name, v) {
   else el.setAttribute(name, String(v));
 }
 
-function _commitAttr(el, name, value) {
+/**
+ * @internal
+ * @param {Element} el
+ * @param {string} name
+ * @param {string[]} statics
+ * @param {unknown[]} values
+ * @returns {void}
+ */
+function _commitAttr(el, name, statics, values) {
+  if (statics.length === 2 && statics[0] === '' && statics[1] === '') {
+    _commitAttrSingle(el, name, values[0]);
+    return;
+  }
+  _commitAttrJoined(el, name, statics, values);
+}
+
+/**
+ * @internal
+ * @param {Element} el
+ * @param {string} name
+ * @param {unknown} value
+ * @returns {void}
+ */
+function _commitAttrSingle(el, name, value) {
   if (_isReactive(value)) {
     effect(() => _applyAttr(el, name, value.val));
   } else if (typeof value === 'function') {
@@ -337,6 +413,51 @@ function _commitAttr(el, name, value) {
   } else {
     _applyAttr(el, name, value);
   }
+}
+
+/**
+ * @internal
+ * @param {Element} el
+ * @param {string} name
+ * @param {string[]} statics
+ * @param {unknown[]} values
+ * @returns {void}
+ */
+function _commitAttrJoined(el, name, statics, values) {
+  const anyReactive = values.some(v => _isReactive(v) || typeof v === 'function');
+  if (anyReactive) {
+    effect(() => _setJoinedAttr(el, name, statics, values));
+  } else {
+    _setJoinedAttr(el, name, statics, values);
+  }
+}
+
+/**
+ * @internal
+ * @param {Element} el
+ * @param {string} name
+ * @param {string[]} statics
+ * @param {unknown[]} values
+ * @returns {void}
+ */
+function _setJoinedAttr(el, name, statics, values) {
+  let out = statics[0];
+  for (let i = 0; i < values.length; i++) {
+    out += _coerceConcatValue(values[i]) + statics[i + 1];
+  }
+  el.setAttribute(name, out);
+}
+
+/**
+ * @internal
+ * @param {unknown} v
+ * @returns {string}
+ */
+function _coerceConcatValue(v) {
+  if (v == null) return '';
+  if (_isReactive(v)) return _coerceConcatValue(v.val);
+  if (typeof v === 'function') return _coerceConcatValue(v());
+  return String(v);
 }
 
 function _nextSiblingAfter(anchor, state) {
@@ -535,12 +656,41 @@ function _commitNode(anchor, value) {
   return state;
 }
 
+/**
+ * Parse a timing modifier value (`throttle` / `debounce`) from the modifiers
+ * list. Returns `0` when the modifier is absent, `100` for the bare form, or
+ * the integer ms from a `:NNN` suffix. Throws on malformed suffixes
+ * (`debounce:` / `debounce:abc` / `debounce:-5` / `debounce:1.5` /
+ * `debounce:0`).
+ * @internal
+ * @param {string[]} modifiers
+ * @param {'throttle' | 'debounce'} name
+ * @returns {number}
+ */
+function _readTimingModifier(modifiers, name) {
+  for (const m of modifiers) {
+    if (m === name) return 100;
+    if (m.startsWith(name + ':')) {
+      const tail = m.slice(name.length + 1);
+      if (!/^\d+$/.test(tail)) {
+        throw new Error(`html: invalid modifier '${m}' — expected '${name}:<ms>' with positive integer`);
+      }
+      const n = Number(tail);
+      if (n <= 0) {
+        throw new Error(`html: invalid modifier '${m}' — interval must be > 0`);
+      }
+      return n;
+    }
+  }
+  return 0;
+}
+
 function _wrapEventHandler(modifiers, handler) {
   const keyFilters = modifiers.filter(m => m in KEY_MODIFIERS);
   const hasPrevent = modifiers.includes('prevent');
   const hasStop = modifiers.includes('stop');
-  const throttleMs = modifiers.includes('throttle') ? 100 : 0;
-  const debounceMs = modifiers.includes('debounce') ? 100 : 0;
+  const throttleMs = _readTimingModifier(modifiers, 'throttle');
+  const debounceMs = _readTimingModifier(modifiers, 'debounce');
 
   let baseHandler = (e) => {
     if (keyFilters.length > 0 && !keyFilters.some(m => e.key === KEY_MODIFIERS[m])) return;
@@ -593,16 +743,21 @@ export function commit(templateResult, container) {
   // would otherwise shift subsequent path indices in the childNodes arrays.
   const targets = _template.parts.map(part => _walkPath(clone, part.path));
 
+  let valueCursor = 0;
   for (let i = 0; i < _template.parts.length; i++) {
     const part = _template.parts[i];
     const target = targets[i];
-    const value = _values[i];
 
     switch (part.type) {
-      case 'attr':  _commitAttr(target, part.name, value); break;
-      case 'event': _commitEvent(target, part.event, part.modifiers, value); break;
-      case 'ref':   _commitRef(target, value); break;
-      case 'node':  _commitNode(target, value); break;
+      case 'attr': {
+        const n = part.statics.length - 1;
+        _commitAttr(target, part.name, part.statics, _values.slice(valueCursor, valueCursor + n));
+        valueCursor += n;
+        break;
+      }
+      case 'event': _commitEvent(target, part.event, part.modifiers, _values[valueCursor]); valueCursor++; break;
+      case 'ref':   _commitRef(target, _values[valueCursor]); valueCursor++; break;
+      case 'node':  _commitNode(target, _values[valueCursor]); valueCursor++; break;
     }
   }
 

@@ -20,9 +20,17 @@ const ALLOWED_MODIFIERS: &[&str] = &[
     "down", "left", "right",
 ];
 
+/// Modifiers that accept a `:NNN` integer-ms suffix.
+const TIMING_MODIFIERS: &[&str] = &["throttle", "debounce"];
+
 fn modifier_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"@(\w+)((?:\.\w+)+)\s*=").unwrap())
+    // Each segment is `.<name>` optionally followed by `:<suffix>`. The
+    // suffix matcher is permissive (any chars except whitespace, dot,
+    // equals, angle-brackets, quotes) so that malformed forms like
+    // `.debounce:` or `.debounce:abc` still reach per-segment validation
+    // rather than being silently skipped by the lint rule.
+    RE.get_or_init(|| Regex::new(r#"@(\w+)((?:\.\w+(?::[^\s.=<>'"]*)?)+)\s*="#).unwrap())
 }
 
 /// Run T02 over `ctx.module`.
@@ -61,22 +69,38 @@ impl<'a, 'b> Visit for T02Visitor<'a, 'b> {
                             continue;
                         }
                         let seg_offset_in_group = cursor;
-                        if !ALLOWED_MODIFIERS.contains(&seg) {
+                        let (base, suffix_opt) = match seg.split_once(':') {
+                            Some((b, s)) => (b, Some(s)),
+                            None => (seg, None),
+                        };
+                        let base_ok = ALLOWED_MODIFIERS.contains(&base);
+                        let suffix_ok = match suffix_opt {
+                            None => true,
+                            Some(s) => {
+                                TIMING_MODIFIERS.contains(&base)
+                                    && !s.is_empty()
+                                    && s.chars().all(|c| c.is_ascii_digit())
+                            }
+                        };
+                        if !base_ok || !suffix_ok {
                             let dot_offset_in_raw = segment_start_in_raw + seg_offset_in_group - 1;
                             let pos =
                                 quasi.span.lo + swc_core::common::BytePos(dot_offset_in_raw as u32);
                             let property = format!(".{seg}");
-                            self.diags.push(diag_at(
-                                "T02",
-                                self.ctx,
-                                pos,
-                                property,
-                                "modifier",
+                            let message = if !base_ok {
                                 format!(
                                     "unknown event modifier `.{seg}` — see §3 \
                                      'Event Handling' in the spec for the supported set."
-                                ),
-                            ));
+                                )
+                            } else {
+                                format!(
+                                    "invalid modifier `.{seg}` — `:<ms>` suffix is only valid on \
+                                     `.throttle` / `.debounce` with positive integer milliseconds \
+                                     (e.g. `.debounce:250`)"
+                                )
+                            };
+                            self.diags
+                                .push(diag_at("T02", self.ctx, pos, property, "modifier", message));
                         }
                         cursor += seg.len() + 1; // +1 for the '.'
                     }
@@ -149,6 +173,57 @@ mod tests {
         }
         assert!(dot_col > 0, "couldn't locate dot in source");
         assert_eq!(d[0].column, dot_col, "column mismatch: {:?}", d[0]);
+    }
+
+    #[test]
+    fn does_not_fire_on_debounce_with_numeric_suffix() {
+        let d = run("const x = html`<input @input.debounce:250=${h}/>`;");
+        assert!(d.is_empty(), "expected none, got {d:?}");
+    }
+
+    #[test]
+    fn fires_on_prevent_with_numeric_suffix() {
+        let d = run("const x = html`<button @click.prevent:200=${h}></button>`;");
+        assert_eq!(d.len(), 1, "expected 1, got {d:?}");
+        assert_eq!(d[0].property, ".prevent:200");
+    }
+
+    #[test]
+    fn does_not_fire_on_throttle_with_numeric_suffix() {
+        let d = run("const x = html`<div @scroll.throttle:500=${h}></div>`;");
+        assert!(d.is_empty(), "expected none, got {d:?}");
+    }
+
+    #[test]
+    fn does_not_fire_on_combined_prevent_debounce_suffix() {
+        let d = run("const x = html`<input @click.prevent.debounce:300=${h}/>`;");
+        assert!(d.is_empty(), "expected none, got {d:?}");
+    }
+
+    #[test]
+    fn fires_on_debounce_empty_suffix() {
+        let d = run("const x = html`<input @input.debounce:=${h}/>`;");
+        assert!(!d.is_empty(), "expected diagnostic, got none");
+    }
+
+    #[test]
+    fn fires_on_debounce_nondigit_suffix() {
+        let d = run("const x = html`<input @input.debounce:abc=${h}/>`;");
+        assert!(!d.is_empty(), "expected diagnostic, got none");
+    }
+
+    #[test]
+    fn fires_on_enter_with_numeric_suffix() {
+        let d = run("const x = html`<input @keydown.enter:50=${h}/>`;");
+        assert_eq!(d.len(), 1, "expected 1, got {d:?}");
+        assert_eq!(d[0].property, ".enter:50");
+    }
+
+    #[test]
+    fn fires_on_unknown_base_with_suffix() {
+        let d = run("const x = html`<button @click.foo:1=${h}></button>`;");
+        assert_eq!(d.len(), 1, "expected 1, got {d:?}");
+        assert_eq!(d[0].property, ".foo:1");
     }
 
     #[test]
