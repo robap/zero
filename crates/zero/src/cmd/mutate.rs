@@ -73,13 +73,19 @@ pub struct MutationSummary {
     pub survived: usize,
     pub errored: usize,
     pub skipped_unreachable: usize,
-    pub skipped_equivalent: usize,
+    /// Mutants whose mutated JS byte-matches the baseline JS (caught at
+    /// pre-apply).
+    pub skipped_equivalent_byte: usize,
+    /// Mutants the visitor's static-equivalence pre-pass proved no-op by
+    /// AST shape (never enter the worker queue).
+    pub skipped_equivalent_static: usize,
     pub baseline_passed: bool,
     pub outcomes: BTreeMap<PathBuf, Vec<(MutationSite, MutantStatus)>>,
     /// Per-operator breakdown. Each field is indexed by
     /// `Operator::index()`. `matched + unreachable` is the visitor's
-    /// view; `executed = killed + survived + errored`; `equivalent` is
-    /// the byte-compare skip count.
+    /// view; `executed = killed + survived + errored`; `equivalent_byte`
+    /// is the byte-compare skip count; `equivalent_static` is the
+    /// AST-shape skip count.
     pub per_operator: PerOperatorSummary,
 }
 
@@ -88,7 +94,8 @@ pub struct MutationSummary {
 pub struct PerOperatorSummary {
     pub matched: [usize; 8],
     pub unreachable: [usize; 8],
-    pub equivalent: [usize; 8],
+    pub equivalent_byte: [usize; 8],
+    pub equivalent_static: [usize; 8],
     pub killed: [usize; 8],
     pub survived: [usize; 8],
     pub errored: [usize; 8],
@@ -272,11 +279,16 @@ fn write_terminal_summary<W: Write>(
         summary.errored,
         pct(summary.errored)
     )?;
-    let total_skipped = summary.skipped_unreachable + summary.skipped_equivalent;
+    let total_skipped = summary.skipped_unreachable
+        + summary.skipped_equivalent_byte
+        + summary.skipped_equivalent_static;
     writeln!(
         w,
-        "  Skipped:   {:>3}  [unreachable: {}, equivalent: {}]",
-        total_skipped, summary.skipped_unreachable, summary.skipped_equivalent
+        "  Skipped:   {:>3}  [unreachable: {}, equivalent-byte: {}, equivalent-static: {}]",
+        total_skipped,
+        summary.skipped_unreachable,
+        summary.skipped_equivalent_byte,
+        summary.skipped_equivalent_static,
     )?;
 
     let ops_to_print = select_operators_for_block(summary, operator_filter);
@@ -354,14 +366,15 @@ fn write_per_operator_row<W: Write>(
         return Ok(());
     }
     let unreachable = per_op.unreachable[i];
-    let equivalent = per_op.equivalent[i];
+    let equivalent_byte = per_op.equivalent_byte[i];
+    let equivalent_static = per_op.equivalent_static[i];
     let killed = per_op.killed[i];
     let survived = per_op.survived[i];
     let errored = per_op.errored[i];
     let executed = killed + survived + errored;
     writeln!(
         w,
-        "  {}: matched {}, executed {} (killed {}, survived {}, errored {}), unreachable {}, equivalent {}",
+        "  {}: matched {}, executed {} (killed {}, survived {}, errored {}), unreachable {}, equivalent-byte {}, equivalent-static {}",
         op.id(),
         matched,
         executed,
@@ -369,7 +382,8 @@ fn write_per_operator_row<W: Write>(
         survived,
         errored,
         unreachable,
-        equivalent
+        equivalent_byte,
+        equivalent_static,
     )?;
     Ok(())
 }
@@ -415,25 +429,32 @@ fn write_mutation_json(
         operators_obj.insert(
             op.id().to_string(),
             serde_json::json!({
-                "matched":     summary.per_operator.matched[i],
-                "unreachable": summary.per_operator.unreachable[i],
-                "equivalent":  summary.per_operator.equivalent[i],
-                "killed":      summary.per_operator.killed[i],
-                "survived":    summary.per_operator.survived[i],
-                "errored":     summary.per_operator.errored[i],
-                "executed":    executed,
+                "matched":            summary.per_operator.matched[i],
+                "unreachable":        summary.per_operator.unreachable[i],
+                "equivalent_byte":    summary.per_operator.equivalent_byte[i],
+                "equivalent_static":  summary.per_operator.equivalent_static[i],
+                "killed":             summary.per_operator.killed[i],
+                "survived":           summary.per_operator.survived[i],
+                "errored":            summary.per_operator.errored[i],
+                "executed":           executed,
             }),
         );
     }
 
+    let total_skipped = summary.skipped_unreachable
+        + summary.skipped_equivalent_byte
+        + summary.skipped_equivalent_static;
     let value = serde_json::json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "totals": {
             "generated": summary.generated,
             "killed": summary.killed,
             "survived": summary.survived,
             "errored": summary.errored,
-            "skipped": summary.skipped_unreachable + summary.skipped_equivalent,
+            "skipped": total_skipped,
+            "skipped_unreachable": summary.skipped_unreachable,
+            "skipped_equivalent_byte": summary.skipped_equivalent_byte,
+            "skipped_equivalent_static": summary.skipped_equivalent_static,
             "score": (summary.score() * 1000.0).round() / 1000.0,
         },
         "operators": operators_obj,
@@ -453,7 +474,8 @@ fn write_mutation_json(
 ///   resolved against this, and report paths are stripped against this so
 ///   the user sees the paths they typed.
 /// - `threads`: number of mutants exercised in parallel (subprocess
-///   isolation only). `1` = sequential, current default.
+///   isolation only). `1` = sequential; the CLI defaults to
+///   `min(available_parallelism, 8)`.
 /// - `target`, `operators`, `max_mutants`, `quiet`, `isolation`,
 ///   `progress`: see CLI surface in spec §3.1.
 #[allow(clippy::too_many_arguments)]
@@ -616,9 +638,11 @@ fn generate_all_sites(
             Err(_) => continue,
         };
         summary.skipped_unreachable += result.skipped_unreachable;
+        summary.skipped_equivalent_static += result.skipped_equivalent_static;
         for i in 0..8 {
             summary.per_operator.matched[i] += result.per_operator.matched[i];
             summary.per_operator.unreachable[i] += result.per_operator.unreachable[i];
+            summary.per_operator.equivalent_static[i] += result.per_operator.equivalent_static[i];
         }
         for s in result.sites {
             all_sites.push((src.clone(), s, raw.clone(), baseline_js.clone()));
@@ -639,8 +663,8 @@ fn pre_apply_to_queue(
         match apply(raw_src, src_path, site) {
             Ok(mutated_js) => {
                 if mutated_js == *baseline_js {
-                    summary.skipped_equivalent += 1;
-                    summary.per_operator.equivalent[site.operator.index()] += 1;
+                    summary.skipped_equivalent_byte += 1;
+                    summary.per_operator.equivalent_byte[site.operator.index()] += 1;
                 } else {
                     queue.push(MutantWork {
                         src_path: src_path.clone(),
@@ -1069,7 +1093,7 @@ describe("g", () => {
         let s = fs::read_to_string(root.join("mutation/mutation.json")).unwrap();
         let v: serde_json::Value = serde_json::from_str(&s).unwrap();
 
-        assert_eq!(v["schema_version"], 1);
+        assert_eq!(v["schema_version"], 2);
         assert!(v["operators"].is_object());
         let ops = v["operators"].as_object().unwrap();
         assert_eq!(ops.len(), 8, "expected all 8 operators in json");
@@ -1084,6 +1108,25 @@ describe("g", () => {
             arith["killed"].as_u64().unwrap(),
             arith["executed"].as_u64().unwrap()
         );
+    }
+
+    #[test]
+    fn schema_version_is_2() {
+        let dir = tempfile::tempdir().unwrap();
+        let summary = MutationSummary::default();
+        write_mutation_json(dir.path(), dir.path(), &summary).expect("write json");
+        let s = fs::read_to_string(dir.path().join("mutation/mutation.json")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["schema_version"], 2);
+        let totals = v["totals"].as_object().expect("totals object");
+        assert_eq!(totals["skipped_equivalent_byte"].as_u64().unwrap(), 0);
+        assert_eq!(totals["skipped_equivalent_static"].as_u64().unwrap(), 0);
+        assert_eq!(totals["skipped_unreachable"].as_u64().unwrap(), 0);
+        let ops = v["operators"].as_object().expect("operators object");
+        let arith = &ops["arith"];
+        assert_eq!(arith["equivalent_byte"].as_u64().unwrap(), 0);
+        assert_eq!(arith["equivalent_static"].as_u64().unwrap(), 0);
+        assert!(arith.get("equivalent").is_none());
     }
 
     #[test]
@@ -1221,7 +1264,8 @@ describe("g", () => {
         let arith = Operator::Arith.index();
         assert!(summary.per_operator.matched[arith] >= 1);
         assert_eq!(summary.per_operator.unreachable[arith], 0);
-        assert_eq!(summary.per_operator.equivalent[arith], 0);
+        assert_eq!(summary.per_operator.equivalent_byte[arith], 0);
+        assert_eq!(summary.per_operator.equivalent_static[arith], 0);
         assert!(summary.per_operator.killed[arith] >= 1);
         assert_eq!(summary.per_operator.survived[arith], 0);
         let cmp = Operator::Cmp.index();
@@ -1419,5 +1463,123 @@ describe("g", () => {
         .expect("ok");
         assert!(summary.baseline_passed);
         assert_eq!(summary.generated, 0);
+    }
+
+    #[test]
+    fn apply_skips_static_equivalent_literals_when_indexing() {
+        // Regression guard: collect-mode skips the `"x"` signal-init literal
+        // as static-equivalent, so apply-mode must skip it too — otherwise
+        // the Nth-site index drifts and the "ok" mutant lands on "x".
+        let src = r#"import { signal } from "zero";
+const s = signal({ k: "x" });
+export function setOk() { s.set({ k: "ok" }); }
+export function getK() { return s.val.k; }
+"#;
+        let path = std::path::Path::new("/abs/foo.ts");
+        let r = zero_test_runner::mutate::generate(
+            src,
+            path,
+            &zero_test_runner::mutate::GenerateOptions {
+                operators: &[Operator::LitStr],
+                max_mutants: None,
+                covered_lines: None,
+            },
+        )
+        .expect("gen");
+        assert_eq!(r.sites.len(), 1);
+        let out = zero_test_runner::mutate::apply(src, path, &r.sites[0]).expect("apply");
+        assert!(out.contains("k: \"x\""), "x should be untouched: {out}");
+        assert!(
+            out.contains("k: \"\""),
+            "ok should be mutated to empty: {out}"
+        );
+    }
+
+    #[test]
+    fn mutate_reclassifies_static_equivalents_end_to_end() {
+        // Mirrors the demo's `src/stores/parts.ts`: an `as const` array used
+        // only for type derivation, plus a module-level `signal({...})` whose
+        // initial value is overwritten before any read.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write_zero_toml(root);
+        fs::create_dir_all(root.join("src/stores")).unwrap();
+        fs::write(
+            root.join("src/stores/parts.ts"),
+            r#"import { signal } from "zero";
+export const PART_STATUSES = ["out", "critical", "needs-reorder", "in-stock"] as const;
+export type PartStatus = (typeof PART_STATUSES)[number];
+type PartsState =
+  | { kind: "loading" }
+  | { kind: "ok"; items: number[] }
+  | { kind: "error" };
+export const partsSignal = signal<PartsState>({ kind: "loading" });
+export function load() {
+  partsSignal.set({ kind: "ok", items: [] });
+}
+export function error() {
+  partsSignal.set({ kind: "error" });
+}
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("parts.test.ts"),
+            r#"import { describe, it, expect } from "zero/test";
+import { load, partsSignal } from "./src/stores/parts.ts";
+describe("parts", () => {
+  it("loads ok", () => {
+    load();
+    expect(partsSignal.val.kind).toBe("ok");
+  });
+});
+"#,
+        )
+        .unwrap();
+
+        let out = root.join("dist");
+        let mut sink: Vec<u8> = Vec::new();
+        let summary = run_inner(
+            root,
+            &out,
+            root,
+            None,
+            &[Operator::LitStr],
+            None,
+            true,
+            Isolation::InProcess,
+            1,
+            &mut sink,
+        )
+        .expect("ok");
+
+        assert!(summary.baseline_passed, "baseline failed: {summary:?}");
+        assert_eq!(summary.survived, 0, "survived should be 0: {summary:?}");
+        assert_eq!(
+            summary.skipped_equivalent_static, 5,
+            "expected 5 static-equivalents (4 array members + 1 signal init): {summary:?}"
+        );
+        let lit_str = Operator::LitStr.index();
+        assert_eq!(summary.per_operator.equivalent_static[lit_str], 5);
+        assert!(
+            (summary.score() - 1.0).abs() < f64::EPSILON,
+            "expected score 1.0, got {}",
+            summary.score()
+        );
+
+        write_mutation_json(root, root, &summary).expect("write json");
+        let s = fs::read_to_string(root.join("mutation/mutation.json")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["schema_version"], 2);
+        assert_eq!(
+            v["totals"]["skipped_equivalent_static"].as_u64().unwrap(),
+            5
+        );
+        assert_eq!(
+            v["operators"]["lit_str"]["equivalent_static"]
+                .as_u64()
+                .unwrap(),
+            5
+        );
     }
 }

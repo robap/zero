@@ -169,7 +169,7 @@ with each mutation applied.
 |-------------------------------|--------------------------------------------------------|
 | `--operators <csv>`           | Restrict to operator families (e.g. `arith,bool`).     |
 | `--max-mutants <n>`           | Cap total mutants generated.                           |
-| `--threads <n>`               | Run mutants in parallel.                               |
+| `--threads <n>`               | Run mutants in parallel. Defaults to `min(cores, 8)` — parallel by default; the cap keeps headroom on bigger boxes for IDE / build processes. Pass `1` for sequential. |
 | `-q, --quiet`                 | Suppress per-mutant lines; print summary only.         |
 
 Operator ids accepted by `--operators`: `arith`, `cmp`, `bool`,
@@ -177,23 +177,44 @@ Operator ids accepted by `--operators`: `arith`, `cmp`, `bool`,
 
 #### Reading `Generated: 0`
 
-`Generated: 0 mutants` on a `--operators` run can mean three things:
+`Generated: 0 mutants` on a `--operators` run can mean four things:
 
 - **No matches in `src/`.** The operator is implemented, but no AST
   node in the codebase matched its swap rules.
 - **All matches on uncovered lines.** Sites were found but no
   baseline test exercises those lines; the coverage filter drops them.
-- **All matches equivalent.** Sites were found and reached, but the
-  mutated JS was byte-identical to the baseline (rare).
+- **All matches byte-equivalent.** Sites were found and reached, but
+  the mutated JS was byte-identical to the baseline (rare).
+- **All matches statically-equivalent.** The visitor proved every
+  matched literal no-op by AST shape (see below).
 
 The per-operator breakdown printed under the headline distinguishes
-the three. A row like `arith: matched 12, executed 0 (...), unreachable
-12, equivalent 0` says "12 arith sites exist, every one is on a line
-no test reaches" — write a test that calls into that code.
+the four. A row like
+`arith: matched 12, executed 0 (...), unreachable 12, equivalent-byte 0,
+equivalent-static 0`
+says "12 arith sites exist, every one is on a line no test reaches" —
+write a test that calls into that code.
 
-Writes `mutation/mutation.json` (schema version 1) with structured
-results, including a per-operator breakdown under `operators`. Exit
-code is non-zero if any mutant survived or errored.
+#### Reading `equivalent-static`
+
+`equivalent-static` counts mutants the visitor proved no-op by AST
+shape before they reach the worker queue: members of a module-level
+`const X = [...] as const` array that's only referenced in type
+position (`typeof X`, `(typeof X)[number]`), and property literals
+inside a module-level `signal({...})` / `computed({...})` initializer
+that every later `.set(...)` overwrites in source order. These never
+pad `Survived` and never burn worker cycles.
+
+The headline `Skipped` row shows
+`[unreachable: N, equivalent-byte: M, equivalent-static: K]` so the
+three sub-buckets stay distinct.
+
+Writes `mutation/mutation.json` (schema version 2) with structured
+results, including a per-operator breakdown under `operators` (each
+operator object has `equivalent_byte` and `equivalent_static` fields)
+and split totals (`skipped_unreachable`, `skipped_equivalent_byte`,
+`skipped_equivalent_static`). Exit code is non-zero if any mutant
+survived or errored.
 
 ### Type-checking
 

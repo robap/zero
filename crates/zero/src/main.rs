@@ -1,6 +1,15 @@
 use clap::{Parser, Subcommand};
 use zero::cmd;
 
+/// Default thread count for `zero mutate`: cgroup-aware core count, capped
+/// at 8 to leave headroom on bigger machines for the user's IDE / build.
+fn default_threads() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .clamp(1, 8)
+}
+
 #[derive(Parser)]
 #[command(name = "zero", version, about = "The zero framework CLI")]
 struct Cli {
@@ -48,9 +57,10 @@ enum Commands {
         /// Suppress per-mutant progress lines; print summary only
         #[arg(long, short = 'q', default_value_t = false)]
         quiet: bool,
-        /// Number of mutants to exercise in parallel. Each worker runs in its
-        /// own subprocess; defaults to 1 (sequential).
-        #[arg(long, default_value_t = 1)]
+        /// Number of mutants to exercise in parallel. Each worker runs in
+        /// its own subprocess; defaults to `min(cores, 8)`. Pass `1` for
+        /// sequential.
+        #[arg(long, default_value_t = default_threads())]
         threads: usize,
     },
     /// Refresh framework files in .zero/
@@ -125,5 +135,41 @@ async fn main() {
     if let Err(err) = result {
         eprintln!("error: {err}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    fn parsed_threads(args: &[&str]) -> usize {
+        let cli = Cli::try_parse_from(args).expect("parse");
+        match cli.command {
+            Commands::Mutate { threads, .. } => threads,
+            _ => panic!("expected mutate"),
+        }
+    }
+
+    #[test]
+    fn threads_default_uses_available_parallelism() {
+        let got = parsed_threads(&["zero", "mutate"]);
+        assert_eq!(got, default_threads());
+    }
+
+    #[test]
+    fn threads_explicit_overrides_default() {
+        assert_eq!(parsed_threads(&["zero", "mutate", "--threads", "2"]), 2);
+    }
+
+    #[test]
+    fn threads_explicit_one_still_works() {
+        assert_eq!(parsed_threads(&["zero", "mutate", "--threads", "1"]), 1);
+    }
+
+    #[test]
+    fn default_threads_is_bounded_and_at_least_one() {
+        let n = default_threads();
+        assert!((1..=8).contains(&n), "got {n}");
     }
 }

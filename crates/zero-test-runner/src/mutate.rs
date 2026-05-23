@@ -11,21 +11,24 @@
 //! coordinates (1-based line + column). The emitted JS carries no source
 //! map; the harness reports mutant failures by the pre-recorded position.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use swc_core::common::sync::Lrc;
-use swc_core::common::{FileName, GLOBALS, Globals, Mark, SourceMap as SwcSourceMap, Spanned};
+use swc_core::common::{
+    BytePos, FileName, GLOBALS, Globals, Mark, SourceMap as SwcSourceMap, Spanned,
+};
 use swc_core::ecma::ast::{
-    BinExpr, BinaryOp, CondExpr, DoWhileStmt, EsVersion, Expr, ForStmt, IfStmt, Lit, Module,
-    UnaryExpr, UnaryOp, WhileStmt,
+    BinExpr, BinaryOp, CallExpr, Callee, CondExpr, Decl, DoWhileStmt, EsVersion, Expr, ForStmt,
+    Ident, IfStmt, Lit, MemberProp, Module, ModuleDecl, ModuleItem, Pat, Prop, PropOrSpread, Stmt,
+    TsType, UnaryExpr, UnaryOp, VarDecl, VarDeclarator, WhileStmt,
 };
 use swc_core::ecma::codegen::Emitter;
 use swc_core::ecma::codegen::text_writer::JsWriter;
 use swc_core::ecma::parser::{Parser, StringInput, Syntax, TsSyntax, lexer::Lexer};
 use swc_core::ecma::transforms::base::{fixer::fixer, hygiene::hygiene, resolver};
 use swc_core::ecma::transforms::typescript::strip;
-use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use zero_transpile::TranspileError;
 
@@ -136,6 +139,9 @@ pub struct GenerateResult {
     /// Total sites filtered out because `covered_lines` did not include
     /// their line. Aggregated across all operators.
     pub skipped_unreachable: usize,
+    /// Total sites the visitor proved no-op by AST shape (e.g. `as const`
+    /// arrays used only for type derivation). Aggregated across operators.
+    pub skipped_equivalent_static: usize,
     /// Per-operator tally captured during the collect walk. Indexed by
     /// `Operator::index()`.
     pub per_operator: PerOperatorTally,
@@ -152,6 +158,9 @@ pub struct PerOperatorTally {
     /// Subset of `matched` that was filtered by `covered_lines` and not
     /// returned in `sites`.
     pub unreachable: [usize; 8],
+    /// Subset of `matched` that the visitor proved no-op by AST shape
+    /// (static-equivalent) and dropped before adding to `sites`.
+    pub equivalent_static: [usize; 8],
 }
 
 impl PerOperatorTally {
@@ -160,6 +169,7 @@ impl PerOperatorTally {
         OperatorCounts {
             matched: self.matched[op.index()],
             unreachable: self.unreachable[op.index()],
+            equivalent_static: self.equivalent_static[op.index()],
         }
     }
 }
@@ -169,6 +179,7 @@ impl PerOperatorTally {
 pub struct OperatorCounts {
     pub matched: usize,
     pub unreachable: usize,
+    pub equivalent_static: usize,
 }
 
 /// Generate the mutation sites in `source`.
@@ -210,30 +221,38 @@ pub fn generate(
         message: format!("parse error: {e:?}"),
     })?;
 
-    let (sites, skipped, matched, unreachable_per_op) = GLOBALS.set(&Globals::new(), || {
-        let unresolved_mark = Mark::new();
-        let top_level_mark = Mark::new();
-        let mut program = swc_core::ecma::ast::Program::Module(module);
-        program.mutate(resolver(unresolved_mark, top_level_mark, true));
-        program.mutate(strip(unresolved_mark, top_level_mark));
-        let mut module = match program {
-            swc_core::ecma::ast::Program::Module(m) => m,
-            swc_core::ecma::ast::Program::Script(_) => unreachable!(),
-        };
-        let mut v = MutateVisitor::new_collect(
-            cm.clone(),
-            file.to_path_buf(),
-            opts.operators,
-            opts.covered_lines,
-        );
-        v.visit_mut_module(&mut module);
-        (
-            v.sites,
-            v.skipped_unreachable,
-            v.matched,
-            v.unreachable_per_op,
-        )
-    });
+    // Run the static-equivalence pre-pass on the *pre-strip* module so
+    // `as const` (TsConstAssertion) nodes are still present.
+    let static_equivalence = analyze_static_equivalence(&module, &cm);
+
+    let (sites, skipped, skipped_static, matched, unreachable_per_op, equivalent_static_per_op) =
+        GLOBALS.set(&Globals::new(), || {
+            let unresolved_mark = Mark::new();
+            let top_level_mark = Mark::new();
+            let mut program = swc_core::ecma::ast::Program::Module(module);
+            program.mutate(resolver(unresolved_mark, top_level_mark, true));
+            program.mutate(strip(unresolved_mark, top_level_mark));
+            let mut module = match program {
+                swc_core::ecma::ast::Program::Module(m) => m,
+                swc_core::ecma::ast::Program::Script(_) => unreachable!(),
+            };
+            let mut v = MutateVisitor::new_collect(
+                cm.clone(),
+                file.to_path_buf(),
+                opts.operators,
+                opts.covered_lines,
+                static_equivalence,
+            );
+            v.visit_mut_module(&mut module);
+            (
+                v.sites,
+                v.skipped_unreachable,
+                v.skipped_equivalent_static,
+                v.matched,
+                v.unreachable_per_op,
+                v.equivalent_static_per_op,
+            )
+        });
 
     let limited = match opts.max_mutants {
         Some(max) if sites.len() > max => sites.into_iter().take(max).collect(),
@@ -242,9 +261,11 @@ pub fn generate(
     Ok(GenerateResult {
         sites: limited,
         skipped_unreachable: skipped,
+        skipped_equivalent_static: skipped_static,
         per_operator: PerOperatorTally {
             matched,
             unreachable: unreachable_per_op,
+            equivalent_static: equivalent_static_per_op,
         },
     })
 }
@@ -286,6 +307,11 @@ pub fn apply(source: &str, file: &Path, site: &MutationSite) -> Result<String, T
 
     let target_index = locate_index(source, file, site)?;
 
+    // Mirror `generate()`'s pre-pass so Apply-mode visits skip the same
+    // literals Collect-mode skipped — otherwise the Nth-site index drifts and
+    // the wrong literal gets mutated.
+    let static_equivalence = analyze_static_equivalence(&module, &cm);
+
     let module = GLOBALS.set(&Globals::new(), || {
         let unresolved_mark = Mark::new();
         let top_level_mark = Mark::new();
@@ -296,8 +322,13 @@ pub fn apply(source: &str, file: &Path, site: &MutationSite) -> Result<String, T
             swc_core::ecma::ast::Program::Module(m) => m,
             swc_core::ecma::ast::Program::Script(_) => unreachable!(),
         };
-        let mut v =
-            MutateVisitor::new_apply(cm.clone(), file.to_path_buf(), site.operator, target_index);
+        let mut v = MutateVisitor::new_apply(
+            cm.clone(),
+            file.to_path_buf(),
+            site.operator,
+            target_index,
+            static_equivalence,
+        );
         v.visit_mut_module(&mut module);
         let mut program = swc_core::ecma::ast::Program::Module(module);
         program.mutate(hygiene());
@@ -402,6 +433,331 @@ fn print_expr(expr: &Expr, cm: &Lrc<SwcSourceMap>) -> String {
     }
 }
 
+/// Result of the static-equivalence pre-pass. Holds the `(line, column)` of
+/// every literal the visitor should tally as `equivalent_static` instead of
+/// emitting as a [`MutationSite`]. The pre-pass runs *before* TS strip so
+/// `as const` assertions are still visible in the AST.
+#[derive(Debug, Default)]
+struct StaticEquivalence {
+    sites: HashSet<(u32, u32)>,
+}
+
+impl StaticEquivalence {
+    fn contains(&self, line: u32, column: u32) -> bool {
+        self.sites.contains(&(line, column))
+    }
+}
+
+/// A module-level `const Name = [...] as const` binding captured by the
+/// pre-pass first phase. The pre-pass second phase decides whether it
+/// qualifies for static-equivalent tallying.
+#[derive(Debug)]
+struct AsConstCandidate {
+    name: swc_core::atoms::Atom,
+    /// `BytePos` of the binding identifier itself, so the reference walker
+    /// can skip the declaration site.
+    binding_lo: BytePos,
+    /// `(line, column)` of every literal element in the array body.
+    members: Vec<(u32, u32)>,
+}
+
+/// Walk `module` and produce a [`StaticEquivalence`] map. Must be called on
+/// the parsed AST *before* TS type stripping — `as const` (`TsConstAssertion`)
+/// nodes are gone after `strip()`.
+fn analyze_static_equivalence(module: &Module, cm: &Lrc<SwcSourceMap>) -> StaticEquivalence {
+    let mut out = StaticEquivalence::default();
+    analyze_as_const(module, cm, &mut out);
+    analyze_signal_init(module, cm, &mut out);
+    out
+}
+
+fn analyze_as_const(module: &Module, cm: &Lrc<SwcSourceMap>, out: &mut StaticEquivalence) {
+    let candidates = collect_as_const_candidates(module, cm);
+    if candidates.is_empty() {
+        return;
+    }
+    let mut bad: HashSet<swc_core::atoms::Atom> = HashSet::new();
+    let mut analyzer = ReferenceAnalyzer {
+        candidates: &candidates,
+        ts_depth: 0,
+        bad: &mut bad,
+    };
+    module.visit_with(&mut analyzer);
+    for c in &candidates {
+        if !bad.contains(&c.name) {
+            for pos in &c.members {
+                out.sites.insert(*pos);
+            }
+        }
+    }
+}
+
+/// First pre-pass phase: find every module-level `const <Name> = [...] as const`
+/// and capture each array literal's element positions.
+fn collect_as_const_candidates(module: &Module, cm: &Lrc<SwcSourceMap>) -> Vec<AsConstCandidate> {
+    let mut out = Vec::new();
+    for_each_top_level_var(module, |v| extract_as_const_decls(v, cm, &mut out));
+    out
+}
+
+/// Apply `f` to every module-level `VarDecl`, including those wrapped in an
+/// `export` declaration.
+fn for_each_top_level_var<F: FnMut(&VarDecl)>(module: &Module, mut f: F) {
+    for item in &module.body {
+        match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(v))) => f(v),
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(e)) => {
+                if let Decl::Var(v) = &e.decl {
+                    f(v);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn extract_as_const_decls(var: &VarDecl, cm: &Lrc<SwcSourceMap>, out: &mut Vec<AsConstCandidate>) {
+    for d in &var.decls {
+        if let Some(c) = match_as_const_declarator(d, cm) {
+            out.push(c);
+        }
+    }
+}
+
+fn match_as_const_declarator(
+    d: &VarDeclarator,
+    cm: &Lrc<SwcSourceMap>,
+) -> Option<AsConstCandidate> {
+    let binding = match &d.name {
+        Pat::Ident(b) => &b.id,
+        _ => return None,
+    };
+    let init = d.init.as_deref()?;
+    let assertion = match init {
+        Expr::TsConstAssertion(a) => a,
+        _ => return None,
+    };
+    let arr = match &*assertion.expr {
+        Expr::Array(a) => a,
+        _ => return None,
+    };
+    let mut members = Vec::new();
+    for elem in &arr.elems {
+        if let Some(el) = elem
+            && let Expr::Lit(lit) = &*el.expr
+            && let Some(pos) = literal_line_col(lit, cm)
+        {
+            members.push(pos);
+        }
+    }
+    Some(AsConstCandidate {
+        name: binding.sym.clone(),
+        binding_lo: binding.span.lo(),
+        members,
+    })
+}
+
+fn literal_line_col(lit: &Lit, cm: &Lrc<SwcSourceMap>) -> Option<(u32, u32)> {
+    match lit {
+        Lit::Str(_) | Lit::Num(_) | Lit::Bool(_) => {
+            let pos = cm.lookup_char_pos(lit.span().lo());
+            Some((pos.line as u32, (pos.col_display + 1) as u32))
+        }
+        _ => None,
+    }
+}
+
+/// Second pre-pass phase: walk the module and disqualify any candidate whose
+/// binding name appears in a runtime position (anywhere outside a TS type
+/// node, excluding the binding declaration itself).
+struct ReferenceAnalyzer<'a> {
+    candidates: &'a [AsConstCandidate],
+    ts_depth: u32,
+    bad: &'a mut HashSet<swc_core::atoms::Atom>,
+}
+
+impl<'a> ReferenceAnalyzer<'a> {
+    fn candidate_for(&self, ident: &Ident) -> Option<&AsConstCandidate> {
+        self.candidates.iter().find(|c| c.name == ident.sym)
+    }
+}
+
+impl<'a> Visit for ReferenceAnalyzer<'a> {
+    fn visit_ts_type(&mut self, n: &TsType) {
+        self.ts_depth += 1;
+        n.visit_children_with(self);
+        self.ts_depth -= 1;
+    }
+
+    fn visit_ident(&mut self, n: &Ident) {
+        if self.ts_depth > 0 {
+            return;
+        }
+        if let Some(c) = self.candidate_for(n)
+            && n.span.lo() != c.binding_lo
+        {
+            self.bad.insert(c.name.clone());
+        }
+    }
+}
+
+/// A module-level `const Name = signal({...})` (or `computed({...})`)
+/// candidate captured by the pre-pass first phase.
+#[derive(Debug)]
+struct SignalCandidate {
+    name: swc_core::atoms::Atom,
+    binding_lo: BytePos,
+    /// `(line, column)` of each literal property *value* in the initial
+    /// object passed to `signal(...)`.
+    property_values: Vec<(u32, u32)>,
+}
+
+fn analyze_signal_init(module: &Module, cm: &Lrc<SwcSourceMap>, out: &mut StaticEquivalence) {
+    let candidates = collect_signal_candidates(module, cm);
+    if candidates.is_empty() {
+        return;
+    }
+    let mut set_calls: HashMap<swc_core::atoms::Atom, Vec<BytePos>> = HashMap::new();
+    let mut other_refs: HashMap<swc_core::atoms::Atom, Vec<BytePos>> = HashMap::new();
+    let mut walker = SignalReferenceWalker {
+        candidates: &candidates,
+        ts_depth: 0,
+        exempt: HashSet::new(),
+        set_calls: &mut set_calls,
+        other_refs: &mut other_refs,
+    };
+    module.visit_with(&mut walker);
+    for c in &candidates {
+        let sets = set_calls.get(&c.name);
+        let Some(sets) = sets.filter(|v| !v.is_empty()) else {
+            continue; // no .set() calls → can't prove overwrite-before-read
+        };
+        let min_set = *sets.iter().min().unwrap();
+        let refs_empty = other_refs.get(&c.name).is_none_or(|v| v.is_empty());
+        let refs_all_after_set = other_refs
+            .get(&c.name)
+            .is_none_or(|v| v.iter().all(|r| *r > min_set));
+        if refs_empty || refs_all_after_set {
+            for pos in &c.property_values {
+                out.sites.insert(*pos);
+            }
+        }
+    }
+}
+
+fn collect_signal_candidates(module: &Module, cm: &Lrc<SwcSourceMap>) -> Vec<SignalCandidate> {
+    let mut out = Vec::new();
+    for_each_top_level_var(module, |v| {
+        for d in &v.decls {
+            if let Some(c) = match_signal_declarator(d, cm) {
+                out.push(c);
+            }
+        }
+    });
+    out
+}
+
+fn match_signal_declarator(d: &VarDeclarator, cm: &Lrc<SwcSourceMap>) -> Option<SignalCandidate> {
+    let binding = match &d.name {
+        Pat::Ident(b) => &b.id,
+        _ => return None,
+    };
+    let call = match d.init.as_deref()? {
+        Expr::Call(c) => c,
+        _ => return None,
+    };
+    let callee_ident = match &call.callee {
+        Callee::Expr(e) => match &**e {
+            Expr::Ident(i) => i,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    if &*callee_ident.sym != "signal" && &*callee_ident.sym != "computed" {
+        return None;
+    }
+    let first_arg = call.args.first()?;
+    if first_arg.spread.is_some() {
+        return None;
+    }
+    let obj = match &*first_arg.expr {
+        Expr::Object(o) => o,
+        _ => return None,
+    };
+    let mut property_values = Vec::new();
+    for prop in &obj.props {
+        if let PropOrSpread::Prop(p) = prop
+            && let Prop::KeyValue(kv) = &**p
+            && let Expr::Lit(lit) = &*kv.value
+            && let Some(pos) = literal_line_col(lit, cm)
+        {
+            property_values.push(pos);
+        }
+    }
+    Some(SignalCandidate {
+        name: binding.sym.clone(),
+        binding_lo: binding.span.lo(),
+        property_values,
+    })
+}
+
+/// Walks the module once collecting per-candidate `.set()` call positions and
+/// "other reference" positions used to decide dominance.
+struct SignalReferenceWalker<'a> {
+    candidates: &'a [SignalCandidate],
+    ts_depth: u32,
+    /// `BytePos` of `Ident` nodes that are the receiver of a recognised
+    /// `Name.set(...)` call; `visit_ident` skips these so they don't count
+    /// as "other references."
+    exempt: HashSet<BytePos>,
+    set_calls: &'a mut HashMap<swc_core::atoms::Atom, Vec<BytePos>>,
+    other_refs: &'a mut HashMap<swc_core::atoms::Atom, Vec<BytePos>>,
+}
+
+impl<'a> Visit for SignalReferenceWalker<'a> {
+    fn visit_ts_type(&mut self, n: &TsType) {
+        self.ts_depth += 1;
+        n.visit_children_with(self);
+        self.ts_depth -= 1;
+    }
+
+    fn visit_call_expr(&mut self, n: &CallExpr) {
+        if let Callee::Expr(e) = &n.callee
+            && let Expr::Member(m) = &**e
+            && let Expr::Ident(obj_ident) = &*m.obj
+            && let MemberProp::Ident(prop_ident) = &m.prop
+            && &*prop_ident.sym == "set"
+            && self.candidates.iter().any(|c| c.name == obj_ident.sym)
+        {
+            self.exempt.insert(obj_ident.span.lo());
+            self.set_calls
+                .entry(obj_ident.sym.clone())
+                .or_default()
+                .push(n.span.lo());
+        }
+        n.visit_children_with(self);
+    }
+
+    fn visit_ident(&mut self, n: &Ident) {
+        if self.ts_depth > 0 {
+            return;
+        }
+        let Some(c) = self.candidates.iter().find(|c| c.name == n.sym) else {
+            return;
+        };
+        if n.span.lo() == c.binding_lo {
+            return;
+        }
+        if self.exempt.contains(&n.span.lo()) {
+            return;
+        }
+        self.other_refs
+            .entry(c.name.clone())
+            .or_default()
+            .push(n.span.lo());
+    }
+}
+
 enum Mode {
     Collect,
     Apply {
@@ -416,11 +772,18 @@ struct MutateVisitor<'a> {
     mode: Mode,
     operators_filter: Option<&'a [Operator]>,
     covered_lines: Option<&'a HashSet<u32>>,
+    /// Literal (line, column) positions the pre-pass marked as
+    /// static-equivalent. In Apply mode this is always empty — apply-time
+    /// visits never reach these positions because they were dropped from
+    /// `sites` at collect time.
+    static_equivalence: StaticEquivalence,
     sites: Vec<MutationSite>,
     counts: [usize; 8],
     skipped_unreachable: usize,
+    skipped_equivalent_static: usize,
     matched: [usize; 8],
     unreachable_per_op: [usize; 8],
+    equivalent_static_per_op: [usize; 8],
 }
 
 impl<'a> MutateVisitor<'a> {
@@ -429,6 +792,7 @@ impl<'a> MutateVisitor<'a> {
         file: PathBuf,
         operators_filter: &'a [Operator],
         covered_lines: Option<&'a HashSet<u32>>,
+        static_equivalence: StaticEquivalence,
     ) -> Self {
         Self {
             cm,
@@ -436,11 +800,14 @@ impl<'a> MutateVisitor<'a> {
             mode: Mode::Collect,
             operators_filter: Some(operators_filter),
             covered_lines,
+            static_equivalence,
             sites: Vec::new(),
             counts: [0; 8],
             skipped_unreachable: 0,
+            skipped_equivalent_static: 0,
             matched: [0; 8],
             unreachable_per_op: [0; 8],
+            equivalent_static_per_op: [0; 8],
         }
     }
 
@@ -449,6 +816,7 @@ impl<'a> MutateVisitor<'a> {
         file: PathBuf,
         operator: Operator,
         target_index: usize,
+        static_equivalence: StaticEquivalence,
     ) -> Self {
         Self {
             cm,
@@ -459,11 +827,14 @@ impl<'a> MutateVisitor<'a> {
             },
             operators_filter: None,
             covered_lines: None,
+            static_equivalence,
             sites: Vec::new(),
             counts: [0; 8],
             skipped_unreachable: 0,
+            skipped_equivalent_static: 0,
             matched: [0; 8],
             unreachable_per_op: [0; 8],
+            equivalent_static_per_op: [0; 8],
         }
     }
 
@@ -499,6 +870,13 @@ impl<'a> MutateVisitor<'a> {
                     return false;
                 }
                 self.matched[idx] += 1;
+                // Static-equivalence runs *before* the coverage filter so a
+                // statically-proven no-op never double-counts as unreachable.
+                if self.static_equivalence.contains(line, column) {
+                    self.skipped_equivalent_static += 1;
+                    self.equivalent_static_per_op[idx] += 1;
+                    return false;
+                }
                 if let Some(cov) = self.covered_lines
                     && !cov.contains(&line)
                 {
@@ -522,6 +900,11 @@ impl<'a> MutateVisitor<'a> {
                 target_index,
             } => {
                 if operator != op {
+                    return false;
+                }
+                // Apply mode must skip the same literals Collect skipped, or
+                // the Nth-site index drifts and the wrong literal is mutated.
+                if self.static_equivalence.contains(line, column) {
                     return false;
                 }
                 let current = self.counts[idx];
@@ -1098,5 +1481,165 @@ mod tests {
             .map(|t| Operator::parse(t).expect("listed id should parse"))
             .collect();
         assert_eq!(parsed, Operator::ALL.to_vec());
+    }
+
+    #[test]
+    fn static_equivalence_as_const_type_only() {
+        let src = "const PART_STATUSES = [\"out\", \"critical\", \"needs-reorder\", \"in-stock\"] as const;\n\
+            type PartStatus = (typeof PART_STATUSES)[number];\n\
+            export function get(s: PartStatus): PartStatus { return s; }\n";
+        let r = generate(src, &PathBuf::from("/abs/a.ts"), &opts(&[Operator::LitStr])).expect("g");
+        assert!(r.sites.is_empty(), "expected no sites, got {:?}", r.sites);
+        assert_eq!(r.skipped_equivalent_static, 4);
+        let lit_str = Operator::LitStr.index();
+        assert_eq!(r.per_operator.equivalent_static[lit_str], 4);
+    }
+
+    #[test]
+    fn static_equivalence_as_const_runtime_read_disqualifies() {
+        let src = "const TAGS = [\"a\", \"b\"] as const;\n\
+            for (const t of TAGS) console.log(t);\n";
+        let r = generate(src, &PathBuf::from("/abs/a.ts"), &opts(&[Operator::LitStr])).expect("g");
+        let lit_str = Operator::LitStr.index();
+        assert_eq!(r.sites.len(), 2, "expected 2 sites, got {:?}", r.sites);
+        assert_eq!(r.per_operator.equivalent_static[lit_str], 0);
+        assert_eq!(r.skipped_equivalent_static, 0);
+    }
+
+    #[test]
+    fn static_equivalence_as_const_inside_function_not_eligible() {
+        let src = "function f() {\n\
+              const TAGS = [\"a\", \"b\"] as const;\n\
+              type T = (typeof TAGS)[number];\n\
+              return TAGS;\n\
+            }\n";
+        let r = generate(src, &PathBuf::from("/abs/a.ts"), &opts(&[Operator::LitStr])).expect("g");
+        let lit_str = Operator::LitStr.index();
+        assert_eq!(r.sites.len(), 2, "expected 2 sites, got {:?}", r.sites);
+        assert_eq!(r.per_operator.equivalent_static[lit_str], 0);
+    }
+
+    #[test]
+    fn static_equivalence_as_const_indexed_access_only_is_type_only() {
+        let src = "const X = [\"a\"] as const;\ntype Y = typeof X;\ntype Z = Y[number];\n";
+        let r = generate(src, &PathBuf::from("/abs/a.ts"), &opts(&[Operator::LitStr])).expect("g");
+        let lit_str = Operator::LitStr.index();
+        assert!(r.sites.is_empty(), "expected no sites, got {:?}", r.sites);
+        assert_eq!(r.per_operator.equivalent_static[lit_str], 1);
+    }
+
+    #[test]
+    fn static_equivalence_signal_init_overwritten_before_read() {
+        let src = "import { signal } from \"zero\";\n\
+            type S = { kind: \"loading\" | \"ok\" };\n\
+            const s = signal<S>({ kind: \"loading\" });\n\
+            export function load() { s.set({ kind: \"ok\" }); }\n\
+            export function read() { return s.kind; }\n";
+        let r = generate(src, &PathBuf::from("/abs/a.ts"), &opts(&[Operator::LitStr])).expect("g");
+        let lit_str = Operator::LitStr.index();
+        // "loading" is the static-equivalent initial value; "ok" is the value
+        // being written inside `s.set(...)` and remains a normal mutation site.
+        assert_eq!(r.per_operator.equivalent_static[lit_str], 1);
+        let lit_sites: Vec<_> = r
+            .sites
+            .iter()
+            .filter(|s| s.operator == Operator::LitStr)
+            .collect();
+        assert_eq!(
+            lit_sites.len(),
+            1,
+            "expected only `\"ok\"`, got {:?}",
+            lit_sites
+        );
+        assert_eq!(lit_sites[0].original, "\"ok\"");
+    }
+
+    #[test]
+    fn static_equivalence_signal_read_precedes_set() {
+        // The read (`console.log(s.kind)`) occurs in source order BEFORE any
+        // .set() call → the initial `"x"` must remain a normal mutation site.
+        let src = "const s = signal({ kind: \"x\" });\n\
+            console.log(s.kind);\n\
+            s.set({ kind: \"y\" });\n";
+        let r = generate(src, &PathBuf::from("/abs/a.ts"), &opts(&[Operator::LitStr])).expect("g");
+        let lit_str = Operator::LitStr.index();
+        assert_eq!(r.per_operator.equivalent_static[lit_str], 0);
+        let lit_sites: Vec<_> = r
+            .sites
+            .iter()
+            .filter(|s| s.operator == Operator::LitStr)
+            .collect();
+        // Two sites: "x" (init) and "y" (set arg).
+        assert_eq!(lit_sites.len(), 2);
+        assert!(lit_sites.iter().any(|s| s.original == "\"x\""));
+    }
+
+    #[test]
+    fn static_equivalence_signal_no_set_call() {
+        let src = "const s = signal({ kind: \"loading\" });\n\
+            export function read() { return s.kind; }\n";
+        let r = generate(src, &PathBuf::from("/abs/a.ts"), &opts(&[Operator::LitStr])).expect("g");
+        let lit_str = Operator::LitStr.index();
+        assert_eq!(r.per_operator.equivalent_static[lit_str], 0);
+        let lit_sites: Vec<_> = r
+            .sites
+            .iter()
+            .filter(|s| s.operator == Operator::LitStr)
+            .collect();
+        assert_eq!(lit_sites.len(), 1, "got {:?}", lit_sites);
+        assert_eq!(lit_sites[0].original, "\"loading\"");
+    }
+
+    #[test]
+    fn static_equivalence_signal_inside_function_not_eligible() {
+        let src = "function make() {\n\
+              const s = signal({ kind: \"x\" });\n\
+              s.set({ kind: \"y\" });\n\
+              return s;\n\
+            }\n";
+        let r = generate(src, &PathBuf::from("/abs/a.ts"), &opts(&[Operator::LitStr])).expect("g");
+        let lit_str = Operator::LitStr.index();
+        // Not module-level → rule does not apply; "x" remains a site.
+        assert_eq!(r.per_operator.equivalent_static[lit_str], 0);
+        let lit_sites: Vec<_> = r
+            .sites
+            .iter()
+            .filter(|s| s.operator == Operator::LitStr)
+            .collect();
+        assert!(lit_sites.iter().any(|s| s.original == "\"x\""));
+    }
+
+    #[test]
+    fn static_equivalence_signal_multiple_properties() {
+        let src = "const s = signal({ kind: \"loading\", count: 0 });\n\
+            export function load() { s.set({ kind: \"ok\", count: 1 }); }\n\
+            export function read() { return s.kind; }\n";
+        let r = generate(
+            src,
+            &PathBuf::from("/abs/a.ts"),
+            &opts(&[Operator::LitStr, Operator::LitNum]),
+        )
+        .expect("g");
+        let lit_str = Operator::LitStr.index();
+        let lit_num = Operator::LitNum.index();
+        // Initial property values are static-equivalent:
+        //   "loading" (str) and 0 (num).
+        assert_eq!(r.per_operator.equivalent_static[lit_str], 1);
+        assert_eq!(r.per_operator.equivalent_static[lit_num], 1);
+        // .set(...) values stay live and are mutated sites: "ok" and 1.
+        let str_sites: Vec<_> = r
+            .sites
+            .iter()
+            .filter(|s| s.operator == Operator::LitStr)
+            .collect();
+        assert_eq!(str_sites.len(), 1, "got {:?}", str_sites);
+        assert_eq!(str_sites[0].original, "\"ok\"");
+        let num_sites: Vec<_> = r
+            .sites
+            .iter()
+            .filter(|s| s.operator == Operator::LitNum)
+            .collect();
+        assert_eq!(num_sites.len(), 1, "got {:?}", num_sites);
+        assert_eq!(num_sites[0].original, "1");
     }
 }
