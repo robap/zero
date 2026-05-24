@@ -264,7 +264,7 @@ teaching pages): <https://robap.github.io/zero/linting.html>.
 | S01  | one 200-line function                                                                | split into named helpers (target ≤ 80 lines).                                        |
 
 Tests (`*.test.{ts,js,tsx,jsx}` / `*.spec.{ts,js,tsx,jsx}`) are exempt
-from the T-rules and R03; everything else still applies.
+from the T-rules, R03, and S01; everything else still applies.
 
 ---
 

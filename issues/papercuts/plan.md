@@ -29,13 +29,13 @@ None. Open questions in the spec are resolved by this plan:
 
 ## Steps
 
-- [ ] **Step 0: Baseline test run**
-- [ ] **Step 1: Update L12 diagnostic message (R1)**
-- [ ] **Step 2: Update `docs/linting.md` L12 row (R1)**
-- [ ] **Step 3: Document the fetch-receives-a-Request contract (R2)**
-- [ ] **Step 4: Exempt test files from S01 (R3)**
-- [ ] **Step 5: Update S01 documentation (R3.1)**
-- [ ] **Step 6: Full workspace verification**
+- [x] **Step 0: Baseline test run**
+- [x] **Step 1: Update L12 diagnostic message (R1)**
+- [x] **Step 2: Update `docs/linting.md` L12 row (R1)**
+- [x] **Step 3: Document the fetch-receives-a-Request contract (R2)**
+- [x] **Step 4: Exempt test files from S01 (R3)**
+- [x] **Step 5: Update S01 documentation (R3.1)**
+- [x] **Step 6: Full workspace verification**
 
 ---
 

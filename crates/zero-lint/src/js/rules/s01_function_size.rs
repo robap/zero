@@ -19,6 +19,9 @@ const MAX_LINES: u32 = 80;
 
 /// Run S01 over `ctx.module`.
 pub fn check(ctx: &FileCtx<'_>) -> Vec<Diagnostic> {
+    if ctx.is_test_file {
+        return Vec::new();
+    }
     let mut v = S01Visitor {
         ctx,
         diags: Vec::new(),
@@ -222,5 +225,21 @@ mod tests {
         let src = format!("const x = function() {body};");
         let d = run(&src);
         assert_eq!(d[0].property, "<anonymous>");
+    }
+
+    #[test]
+    fn does_not_fire_in_test_file() {
+        let body = big_body(90);
+        let src = format!("function f() {body}");
+        let d = run_at(&src, "/tmp/src/foo.test.ts");
+        assert!(d.is_empty(), "expected none, got {d:?}");
+    }
+
+    #[test]
+    fn does_not_fire_on_describe_in_test_file() {
+        let body = big_body(90);
+        let src = format!("describe(\"X\", () => {body});");
+        let d = run_at(&src, "/tmp/src/foo.test.ts");
+        assert!(d.is_empty(), "expected none, got {d:?}");
     }
 }

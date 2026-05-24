@@ -51,6 +51,11 @@ hard-coded value the lint flags is a drift away from a token.
 | L12  | `align-items: center; justify-content: center;`          | Utility classes from `_alignment.scss`: `class="… align-center justify-center"`.                                  |
 | L13  | `var(--radius-pill)` (renamed) / `var(--pad-sm)` (utility name, not a token) | The lint names the missing custom property. Either fix the typo, run `zero update`, or declare the token in `styles/app.scss`. |
 
+L12's fix is to drop the declaration from SCSS and add the utility
+class to the consuming element — not to add the utility class to the
+same SCSS rule. The selector keeps its semantic name; alignment lives
+in the class list.
+
 ## JS/TS framework idiom rules
 
 These rules cover `src/**.{ts,js,tsx,jsx}`. The teaching chapter
@@ -76,14 +81,14 @@ column.
 ## Test-file exemptions
 
 `*.test.{ts,js,tsx,jsx}` and `*.spec.{ts,js,tsx,jsx}` files are
-exempt from the **T-rules** and **R03**. Tests legitimately
-reach into the DOM (`querySelector`-style assertions, custom
-event dispatch helpers) and legitimately declare module-level
-signals as test fixtures.
+exempt from the **T-rules**, **R03**, and **S01**. Tests legitimately
+reach into the DOM (`querySelector`-style assertions, custom event
+dispatch helpers), legitimately declare module-level signals as test
+fixtures, and `describe` bodies grow with test count — structural,
+not a code smell.
 
-`R02`, `C01`, `C02`, `I01`, `I02`, and `S01` still apply in
-tests — they're about correctness or code health, not about
-framework-idiomatic UI code.
+`R02`, `C01`, `C02`, `I01`, and `I02` still apply in tests —
+they're about correctness, not framework-idiomatic UI code.
 
 ## Authoring posture
 

@@ -30,7 +30,9 @@ pub fn check(file: &Path, decl: &Decl) -> Option<Diagnostic> {
         column: decl.column,
         property: decl.property.clone(),
         value: decl.value.clone(),
-        message: format!("use the .{utility} utility class instead of writing this inline"),
+        message: format!(
+            "apply class=\"{utility}\" on the element instead of declaring this property on a project-local selector"
+        ),
     })
 }
 

@@ -174,6 +174,44 @@ stale data race, no zombie promise.
 The `init.fetch` override is per-call; the client's
 constructor-time `fetch` (if any) is the default.
 
+## Spying on fetch in tests
+
+Every client method (`get`, `post`, `put`, `patch`, `delete`,
+`request`) normalises its arguments into a single `Request` and
+passes **that one `Request`** to the injected `fetch`. The injected
+`fetch` never receives a `(url, init)` pair — only `(req)`.
+
+This is the same shape middleware sees (middleware operates on
+`Request` — see [Middleware](#middleware) above), so the boundary
+stays uniform from middleware all the way down to the network call.
+
+When you spy on `fetch` in a test, read `(arg as Request).url` /
+`.method` / `.headers` — not `arg` itself:
+
+```ts
+import { createHttp } from "zero/http";
+import { spy } from "zero/test";
+
+it("requests the user record", async () => {
+  const fetchSpy = spy<typeof fetch>(
+    async () => new Response(JSON.stringify({ id: 42 }), {
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+  const api = createHttp({ fetch: fetchSpy });
+
+  await api.get("/users/42");
+
+  const req = fetchSpy.calls[0][0] as Request;
+  expect(req.url).toMatch(/\/users\/42$/);
+  expect(req.method).toBe("GET");
+});
+```
+
+`req.url` is the fully resolved URL (relative URLs are resolved
+against the document base). Use a regex or `endsWith` rather than
+strict equality if you care about the path but not the origin.
+
 ## One client per backend
 
 Reach for one `HttpClient` instance per backend you talk to.
