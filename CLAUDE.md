@@ -5,8 +5,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Run all Rust tests (workspace)
+# Run all Rust tests (workspace). Heavy integration tests that spawn the
+# `zero` CLI (e2e_init_*, showcase_*, examples_*, component_library,
+# build_full, lint_examples) are marked `#[ignore = "slow"]` and skipped
+# by default — fast loop for day-to-day work.
 cargo test --workspace
+
+# Run the full suite, including the slow integration tests. Use this in
+# CI and before pushing changes that touch init/build/dev/test flows.
+cargo test --workspace -- --include-ignored
 
 # Run tests for a single crate
 cargo test -p zero-bundler

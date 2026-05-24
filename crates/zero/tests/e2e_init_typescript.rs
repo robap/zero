@@ -1,6 +1,7 @@
 //! End-to-end test: `zero init` (TS scaffold) → `zero test` → `zero build --sourcemap`.
 
 #[test]
+#[ignore = "slow"]
 fn ts_scaffold_round_trip() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(

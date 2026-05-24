@@ -11,6 +11,7 @@ fn node_available() -> bool {
 }
 
 #[test]
+#[ignore = "slow"]
 fn init_then_build_produces_valid_output() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(

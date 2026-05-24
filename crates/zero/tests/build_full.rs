@@ -1,6 +1,7 @@
 //! Full integration test for `zero build`: JS bundle, CSS copy, manifest, index.html.
 
 #[test]
+#[ignore = "slow"]
 fn full_build_produces_all_outputs() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(

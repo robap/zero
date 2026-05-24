@@ -34,6 +34,7 @@ impl Drop for ChildGuard {
 }
 
 #[test]
+#[ignore = "slow"]
 fn init_then_dev_serves_all_expected_urls() {
     let tmp = tempfile::tempdir().unwrap();
     let port = pick_free_port();

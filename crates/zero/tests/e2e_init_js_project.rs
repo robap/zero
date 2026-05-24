@@ -6,6 +6,7 @@
 use std::fs;
 
 #[test]
+#[ignore = "slow"]
 fn js_project_after_renaming_scaffold_files() {
     let tmp = tempfile::tempdir().unwrap();
     fs::write(

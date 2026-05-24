@@ -8,16 +8,19 @@ use std::path::Path;
 mod common;
 
 #[test]
+#[ignore = "slow"]
 fn counter_builds() {
     build_example("counter");
 }
 
 #[test]
+#[ignore = "slow"]
 fn todos_builds() {
     build_example("todos");
 }
 
 #[test]
+#[ignore = "slow"]
 fn tracker_builds() {
     build_example("tracker");
 }

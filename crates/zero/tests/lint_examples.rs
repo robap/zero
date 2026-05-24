@@ -6,6 +6,7 @@ use assert_cmd::Command;
 use common::{prepare_example, prepare_showcase};
 
 #[test]
+#[ignore = "slow"]
 fn tracker_lints_clean() {
     let tmp = prepare_example("tracker");
     let out = Command::cargo_bin("zero")
@@ -24,6 +25,7 @@ fn tracker_lints_clean() {
 }
 
 #[test]
+#[ignore = "slow"]
 fn showcase_lints_clean() {
     let tmp = prepare_showcase();
     let out = Command::cargo_bin("zero")

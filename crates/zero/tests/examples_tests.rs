@@ -9,16 +9,19 @@ use predicates::str::contains;
 mod common;
 
 #[test]
+#[ignore = "slow"]
 fn counter_tests_pass() {
     run_example_tests("counter");
 }
 
 #[test]
+#[ignore = "slow"]
 fn todos_tests_pass() {
     run_example_tests("todos");
 }
 
 #[test]
+#[ignore = "slow"]
 fn tracker_tests_pass() {
     run_example_tests("tracker");
 }

@@ -8,6 +8,7 @@ use predicates::str::contains;
 mod common;
 
 #[test]
+#[ignore = "slow"]
 fn showcase_test_runs_all_component_tests() {
     let tmp = common::prepare_showcase();
 

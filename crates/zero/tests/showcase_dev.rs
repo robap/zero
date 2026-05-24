@@ -38,6 +38,7 @@ impl Drop for ChildGuard {
 }
 
 #[test]
+#[ignore = "slow"]
 fn showcase_dev_serves_home_and_components_index() {
     let tmp = common::prepare_showcase();
     let port = pick_free_port();

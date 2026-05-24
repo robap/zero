@@ -17,6 +17,7 @@ fn scaffold_temp_project() -> tempfile::TempDir {
 }
 
 #[test]
+#[ignore = "slow"]
 fn scaffolded_home_test_passes() {
     let tmp = scaffold_temp_project();
     Command::cargo_bin("zero")
@@ -29,6 +30,7 @@ fn scaffolded_home_test_passes() {
 }
 
 #[test]
+#[ignore = "slow"]
 fn failing_test_produces_nonzero_exit_and_fail_output() {
     let tmp = scaffold_temp_project();
 
@@ -48,6 +50,7 @@ fn failing_test_produces_nonzero_exit_and_fail_output() {
 }
 
 #[test]
+#[ignore = "slow"]
 fn broken_file_reports_error_and_other_tests_still_run() {
     let tmp = scaffold_temp_project();
 
@@ -76,6 +79,7 @@ fn broken_file_reports_error_and_other_tests_still_run() {
 }
 
 #[test]
+#[ignore = "slow"]
 fn target_filter_runs_only_matched_file() {
     let tmp = scaffold_temp_project();
 

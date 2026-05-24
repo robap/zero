@@ -14,6 +14,7 @@ mod common;
 static CWD_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
+#[ignore = "slow"]
 fn showcase_build_emits_components_in_bundle_and_css() {
     let tmp = common::prepare_showcase();
 
