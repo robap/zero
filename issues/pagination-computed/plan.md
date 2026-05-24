@@ -35,12 +35,12 @@ None. Resolutions to the spec's open questions:
 
 ## Steps
 
-- [ ] **Step 1: Create `_internal.ts` with `Reactive`/`isReactive`/`read` and its test file**
-- [ ] **Step 2: Ship `_internal.ts` via the scaffold manifest**
-- [ ] **Step 3: Refactor `Pagination.ts` to use shared helpers and widen prop types**
-- [ ] **Step 4: Refactor `Combobox.ts` to use shared helpers and widen prop type**
-- [ ] **Step 5: Widen `components.d.ts` ambient prop types to accept `Computed`**
-- [ ] **Step 6: Document `Computed` acceptance in `docs/components.md`**
+- [x] **Step 1: Create `_internal.ts` with `Reactive`/`isReactive`/`read` and its test file**
+- [x] **Step 2: Ship `_internal.ts` via the scaffold manifest**
+- [x] **Step 3: Refactor `Pagination.ts` to use shared helpers and widen prop types**
+- [x] **Step 4: Refactor `Combobox.ts` to use shared helpers and widen prop type**
+- [x] **Step 5: Widen `components.d.ts` ambient prop types to accept `Computed`**
+- [x] **Step 6: Document `Computed` acceptance in `docs/components.md`**
 
 ---
 

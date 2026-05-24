@@ -1,49 +1,21 @@
 import { html } from "zero";
 import type { Signal, TemplateResult } from "zero";
+import { read, type Reactive } from "./_internal.ts";
 
 export type PaginationSize = "sm" | "md" | "lg";
 
 export type PaginationProps = {
   page: Signal<number>;
-  totalPages: Signal<number> | number;
+  totalPages: Reactive<number> | number;
   size?: PaginationSize;
   siblingCount?: number;
   boundaryCount?: number;
-  disabled?: Signal<boolean> | boolean;
+  disabled?: Reactive<boolean> | boolean;
   onChange?: (page: number) => void;
   prevLabel?: string;
   nextLabel?: string;
   summary?: (page: number, totalPages: number) => TemplateResult | string;
 };
-
-/**
- * Duck-types a prop value as a `Signal<T>` (has both `.val` and `.set`).
- *
- * @template T
- * @param p Prop value, either signal-wrapped or plain.
- * @returns
- * @internal
- */
-function isSignal<T>(p: Signal<T> | T): p is Signal<T> {
-  return (
-    typeof p === "object" &&
-    p !== null &&
-    "val" in p &&
-    typeof (p as { set?: unknown }).set === "function"
-  );
-}
-
-/**
- * Read a signal-or-plain prop, returning the underlying value.
- *
- * @template T
- * @param p
- * @returns
- * @internal
- */
-function read<T>(p: Signal<T> | T): T {
-  return isSignal(p) ? p.val : p;
-}
 
 /**
  * Inclusive integer range. Returns an empty array when `end < start`.
@@ -100,10 +72,11 @@ function pageItems(
 /**
  * Pagination — numbered pager with prev/next buttons and ellipsis.
  * Controlled by `page: Signal<number>`. `totalPages` and `disabled`
- * accept either a signal or a plain value so async parents can update
- * them without remount. Pages are 1-indexed. Visual treatment composes
- * `.button` + `.button-{ghost,primary}` + `.button-${size}` so this
- * component carries no duplicated button CSS.
+ * accept a `Signal`, a `Computed`, or a plain value so async parents
+ * can update them without remount. Pages are 1-indexed. Visual
+ * treatment composes `.button` + `.button-{ghost,primary}` +
+ * `.button-${size}` so this component carries no duplicated button
+ * CSS.
  *
  * @param props
  * @returns

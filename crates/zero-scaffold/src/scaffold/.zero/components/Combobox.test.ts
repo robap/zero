@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "zero/test";
 import { render, find, findAll, fire, cleanup, spy } from "zero/test";
-import { signal } from "zero";
+import { signal, computed } from "zero";
 import Combobox from "./Combobox.ts";
 import type { ComboboxOption } from "./Combobox.ts";
 
@@ -353,6 +353,19 @@ describe("Combobox", () => {
     fireInput(input, "a", 1);
     await wait(25);
     expect(loader.callCount).toBe(0);
+  });
+
+  it("accepts a computed disabled and toggles when it flips", () => {
+    const value = signal("");
+    const guard = signal(false);
+    const disabled = computed(() => guard.val);
+    const el = render(
+      Combobox({ value, loadOptions: staticLoader(ABC), disabled }),
+    );
+    const input = find(el, "input.combobox-input")!;
+    expect(input.hasAttribute("disabled")).toBe(false);
+    guard.set(true);
+    expect(input.hasAttribute("disabled")).toBe(true);
   });
 
   it("disabled (signal) toggles state without remount", async () => {

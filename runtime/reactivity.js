@@ -71,34 +71,38 @@ export function signal(initialValue) {
  * @returns {{ readonly val: T }}
  */
 export function computed(fn) {
-  let _value;
-  let _dirty = true;
-  const _subscribers = new Set();
+  const state = { _value: undefined, _dirty: true, _subscribers: new Set() };
 
   const self = {
     _sources: new Set(),
     _notify() {
-      if (_dirty) return;
-      _dirty = true;
-      for (const observer of [..._subscribers]) observer._notify();
+      if (state._dirty) return;
+      state._dirty = true;
+      for (const observer of [...state._subscribers]) observer._notify();
     },
     get val() {
-      if (_dirty) {
-        _unsubscribeAll(self);
-        _observerStack.push(self);
-        try {
-          _value = fn();
-        } finally {
-          _observerStack.pop();
-        }
-        _dirty = false;
-      }
-      _subscribe(_subscribers);
-      return _value;
+      if (state._dirty) _recomputeComputed(self, state, fn);
+      _subscribe(state._subscribers);
+      return state._value;
     },
   };
 
   return self;
+}
+
+// Extracted from `computed()`'s `get val()` so the recompute branch lives
+// in its own function. Inlining it back triggers a Boa GC MapLock panic at
+// process exit when the recompute path runs from inside heavy template
+// machinery (see auto-memory `boa-maplock-finalizer`).
+function _recomputeComputed(self, state, fn) {
+  _unsubscribeAll(self);
+  _observerStack.push(self);
+  try {
+    state._value = fn();
+  } finally {
+    _observerStack.pop();
+  }
+  state._dirty = false;
 }
 
 /**

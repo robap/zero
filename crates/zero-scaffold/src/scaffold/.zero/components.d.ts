@@ -2,7 +2,7 @@
 // against the source under .zero/components/. Populated by per-component
 // steps; entries inside the module block are kept alphabetical.
 declare module "zero/components" {
-  import type { Signal, TemplateResult } from "zero";
+  import type { Signal, Computed, TemplateResult } from "zero";
 
   export type AvatarSize = "sm" | "md" | "lg" | "xl";
   export type AvatarProps = {
@@ -58,7 +58,7 @@ declare module "zero/components" {
     size?: ComboboxSize;
     placeholder?: string;
     label?: string;
-    disabled?: Signal<boolean> | boolean;
+    disabled?: Signal<boolean> | Computed<boolean> | boolean;
     debounceMs?: number;
     minQueryLength?: number;
     noResultsLabel?: string;
@@ -99,11 +99,11 @@ declare module "zero/components" {
   export type PaginationSize = "sm" | "md" | "lg";
   export type PaginationProps = {
     page: Signal<number>;
-    totalPages: Signal<number> | number;
+    totalPages: Signal<number> | Computed<number> | number;
     size?: PaginationSize;
     siblingCount?: number;
     boundaryCount?: number;
-    disabled?: Signal<boolean> | boolean;
+    disabled?: Signal<boolean> | Computed<boolean> | boolean;
     onChange?: (page: number) => void;
     prevLabel?: string;
     nextLabel?: string;

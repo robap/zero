@@ -29,6 +29,7 @@ const TPL_TYPOGRAPHY_SCSS: &str = include_str!("scaffold/.zero/styles/_typograph
 const TPL_ZERO_SCSS: &str = include_str!("scaffold/.zero/styles/zero.scss");
 const TPL_AGENTS_MD: &str = include_str!("scaffold/AGENTS.md");
 const TPL_COMPONENTS_INDEX_TS: &str = include_str!("scaffold/.zero/components/index.ts");
+const TPL_COMPONENTS_INTERNAL_TS: &str = include_str!("scaffold/.zero/components/_internal.ts");
 const TPL_COMPONENTS_DTS: &str = include_str!("scaffold/.zero/components.d.ts");
 const TPL_COMPONENTS_AGGREGATE_SCSS: &str = include_str!("scaffold/.zero/styles/_components.scss");
 
@@ -143,6 +144,7 @@ pub fn framework_manifest() -> Vec<(&'static str, &'static str)> {
         ),
         (".zero/styles/zero.scss", TPL_ZERO_SCSS),
         (".zero/components/index.ts", TPL_COMPONENTS_INDEX_TS),
+        (".zero/components/_internal.ts", TPL_COMPONENTS_INTERNAL_TS),
         (".zero/components.d.ts", TPL_COMPONENTS_DTS),
         (".zero/components/Avatar.ts", TPL_AVATAR_TS),
         (".zero/components/Avatar.test.ts", TPL_AVATAR_TEST_TS),
@@ -476,6 +478,24 @@ mod tests {
                 "components.d.ts missing function declaration for {name}: {dts}"
             );
         }
+    }
+
+    #[test]
+    fn components_dts_accepts_computed_for_widened_props() {
+        let (_dir, root) = fresh_scaffold();
+        let dts = fs::read_to_string(root.join(".zero/components.d.ts")).unwrap();
+        assert!(
+            dts.contains("totalPages: Signal<number> | Computed<number> | number"),
+            "components.d.ts: PaginationProps.totalPages must accept Computed: {dts}"
+        );
+        assert!(
+            dts.contains("disabled?: Signal<boolean> | Computed<boolean> | boolean"),
+            "components.d.ts: disabled must accept Computed: {dts}"
+        );
+        assert!(
+            dts.contains("import type { Signal, Computed, TemplateResult } from \"zero\""),
+            "components.d.ts must import Computed alongside Signal: {dts}"
+        );
     }
 
     #[test]
@@ -974,6 +994,7 @@ mod tests {
             ".zero/zero-http.d.ts",
             ".zero/components.d.ts",
             ".zero/components/index.ts",
+            ".zero/components/_internal.ts",
             // Design-system SCSS partials + aggregate.
             ".zero/styles/_palette.scss",
             ".zero/styles/_tokens.scss",

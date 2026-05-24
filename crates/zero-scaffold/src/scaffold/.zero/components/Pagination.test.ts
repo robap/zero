@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "zero/test";
 import { render, find, findAll, fire, cleanup, text, spy } from "zero/test";
-import { signal } from "zero";
+import { signal, computed } from "zero";
 import Pagination from "./Pagination.ts";
 
 /**
@@ -153,6 +153,26 @@ describe("Pagination", () => {
     expect(find(el, "nav.pagination")).toBe(nav);
     expect(pageBtns(el).map(btnText)).toEqual(["1", "2", "3", "4", "5"]);
     expect(find(el, ".pagination-prev")!.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("accepts a computed totalPages and renders the right page list", () => {
+    const page = signal(1);
+    const raw = signal(5);
+    const totalPages = computed(() => raw.val);
+    const el = render(Pagination({ page, totalPages }));
+    expect(pageBtns(el).map(btnText)).toEqual(["1", "2", "3", "4", "5"]);
+  });
+
+  it("recomputes when the computed totalPages dependency changes", () => {
+    const page = signal(1);
+    const raw = signal(3);
+    const totalPages = computed(() => raw.val);
+    const el = render(Pagination({ page, totalPages }));
+    const nav = find(el, "nav.pagination")!;
+    expect(pageBtns(el).map(btnText)).toEqual(["1", "2", "3"]);
+    raw.set(5);
+    expect(find(el, "nav.pagination")).toBe(nav);
+    expect(pageBtns(el).map(btnText)).toEqual(["1", "2", "3", "4", "5"]);
   });
 
   it("out-of-range page clamps for rendering only", () => {

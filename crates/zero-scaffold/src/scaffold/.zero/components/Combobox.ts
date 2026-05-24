@@ -1,5 +1,6 @@
 import { html, signal, effect, ref } from "zero";
 import type { Signal, TemplateResult, Ref } from "zero";
+import { read, type Reactive } from "./_internal.ts";
 
 export type ComboboxSize = "sm" | "md" | "lg";
 
@@ -15,42 +16,13 @@ export type ComboboxProps = {
   size?: ComboboxSize;
   placeholder?: string;
   label?: string;
-  disabled?: Signal<boolean> | boolean;
+  disabled?: Reactive<boolean> | boolean;
   debounceMs?: number;
   minQueryLength?: number;
   noResultsLabel?: string;
   loadingLabel?: string;
   onChange?: (value: string, option: ComboboxOption) => void;
 };
-
-/**
- * Duck-types a prop value as a `Signal<T>` (has both `.val` and `.set`).
- *
- * @template T
- * @param p Prop value, either signal-wrapped or plain.
- * @returns
- * @internal
- */
-function isSignal<T>(p: Signal<T> | T): p is Signal<T> {
-  return (
-    typeof p === "object" &&
-    p !== null &&
-    "val" in p &&
-    typeof (p as { set?: unknown }).set === "function"
-  );
-}
-
-/**
- * Read a signal-or-plain prop, returning the underlying value.
- *
- * @template T
- * @param p
- * @returns
- * @internal
- */
-function read<T>(p: Signal<T> | T): T {
-  return isSignal(p) ? p.val : p;
-}
 
 let _comboboxIdCounter = 0;
 

@@ -159,7 +159,7 @@ once you redefine the public tokens.
 | `Combobox` | `value: Signal<string>`, `loadOptions: (q) => Promise<ComboboxOption[]>`; optional `initialLabel`, `size`, `placeholder`, `label`, `disabled`, `debounceMs`, `minQueryLength`, `noResultsLabel`, `loadingLabel`, `onChange` | `Combobox({ value, loadOptions: loadUsers })` |
 | `Dialog`   | `open: Signal<boolean>`; optional `size`, `title`, `children`, `onClose`   | `Dialog({ open, title: "Confirm", children: html\`…\` })`                        |
 | `Input`    | `value: Signal<string>`; optional `type`, `size`, `placeholder`, `label`   | `Input({ value: name, label: "Name", type: "text" })`                            |
-| `Pagination` | `page: Signal<number>`, `totalPages: Signal<number> \| number`; optional `size`, `siblingCount`, `boundaryCount`, `disabled`, `onChange`, `summary` | `Pagination({ page, totalPages: 10 })`                                          |
+| `Pagination` | `page: Signal<number>`, `totalPages: Signal<number> \| Computed<number> \| number`; optional `size`, `siblingCount`, `boundaryCount`, `disabled`, `onChange`, `summary` | `Pagination({ page, totalPages: 10 })`                                          |
 | `Radio`    | `selected: Signal<string>`, `name`, `value`; optional `label`              | `Radio({ selected: choice, name: "size", value: "lg", label: "Large" })`         |
 | `Select`   | `value: Signal<string>`, `options: SelectOption[]`; optional `label`       | `Select({ value: country, options: [{ value: "us", label: "USA" }] })`           |
 | `Spinner`  | optional `variant`, `size`, `label`                                        | `Spinner({ size: "lg", label: "Loading" })`                                      |
@@ -189,6 +189,13 @@ The convention across the library:
 - **Children are templates.** Where a component accepts children,
   it accepts `TemplateResult` or a `string`. Pass `html\`…\``
   for arbitrary markup.
+
+Props typed `Signal<T> | T` accept a `Computed<T>` too where noted:
+`Pagination.totalPages`, `Pagination.disabled`, and
+`Combobox.disabled`. Pass a plain value when it's static, a `Signal`
+when the parent mutates it, or a `Computed` when it's derived from
+other reactive state (e.g.
+`computed(() => Math.ceil(totalCount.val / pageSize))`).
 
 The signatures above are the public surface; the source of truth
 is `crates/zero-scaffold/src/scaffold/.zero/components.d.ts`,
