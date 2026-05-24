@@ -248,6 +248,10 @@ If you're new to signals: **[Reactivity](./reactivity.html)** is
 the most important chapter. It's the one new concept zero asks you
 to learn.
 
+Once you've shipped your first edit, read
+**[Agentic coding with zero](./agentic-coding.html)** for the
+verification rhythm we recommend.
+
 Then, in roughly the order they show up in a real app:
 
 - **[Components](./components.html)** — props, children,

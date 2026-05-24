@@ -31,14 +31,14 @@ one-line nod from `docs/getting-started.md`. No code changes; pure docs.
 
 ## Steps
 
-- [ ] **Step 1: Shift `nav_order` on existing docs to free slot 3**
-- [ ] **Step 2: Create `docs/agentic-coding.md` skeleton (frontmatter + intro + section headings)**
-- [ ] **Step 3: Write the "Verification rhythm" section**
-- [ ] **Step 4: Write the "Refine → Plan → Implement" workflow section**
-- [ ] **Step 5: Write the "Skill snippets (Claude Code)" section**
-- [ ] **Step 6: Write the "A friction log for the framework itself" section**
-- [ ] **Step 7: Wire cross-references (index.md "Start here" bullet, getting-started nod, internal page links)**
-- [ ] **Step 8: Verify — link sweep, length budget, Jekyll smoke build**
+- [x] **Step 1: Shift `nav_order` on existing docs to free slot 3**
+- [x] **Step 2: Create `docs/agentic-coding.md` skeleton (frontmatter + intro + section headings)**
+- [x] **Step 3: Write the "Verification rhythm" section**
+- [x] **Step 4: Write the "Refine → Plan → Implement" workflow section**
+- [x] **Step 5: Write the "Skill snippets (Claude Code)" section**
+- [x] **Step 6: Write the "A friction log for the framework itself" section**
+- [x] **Step 7: Wire cross-references (index.md "Start here" bullet, getting-started nod, internal page links)**
+- [x] **Step 8: Verify — link sweep, length budget, Jekyll smoke build**
 
 ---
 

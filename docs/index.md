@@ -28,6 +28,9 @@ once you've got it running.
 
 - **[Getting Started](./getting-started.html)** — install through
   first edit. The 5-minute on-ramp.
+- **[Agentic coding](./agentic-coding.html)** — the verification
+  rhythm zero's tooling is designed around. Read this before your
+  second feature.
 - **[Reactivity](./reactivity.html)** — `signal`, `computed`,
   `effect`. The one new concept the framework asks you to learn.
 
