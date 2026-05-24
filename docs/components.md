@@ -164,7 +164,7 @@ once you redefine the public tokens.
 | `Select`   | `value: Signal<string>`, `options: SelectOption[]`; optional `label`       | `Select({ value: country, options: [{ value: "us", label: "USA" }] })`           |
 | `Spinner`  | optional `variant`, `size`, `label`                                        | `Spinner({ size: "lg", label: "Loading" })`                                      |
 | `Tabs`     | `active: Signal<string>`, `tabs`, `panels`                                 | `Tabs({ active, tabs: [...], panels: { ... } })`                                 |
-| `Table`    | `columns`, `rows: Signal<T[]>`, `rowKey`; optional `density`, `loading`    | `Table({ columns, rows, rowKey: r => r.id })`                                    |
+| `Table`    | `columns`, `rows: Signal<T[]>`, `rowKey`; optional `density`, `loading`, `sort`, `onSortChange` | `Table({ columns, rows, rowKey: r => r.id })`                                    |
 | `TextArea` | `value: Signal<string>`; optional `rows`, `placeholder`, `label`           | `TextArea({ value: notes, rows: 5, label: "Notes" })`                            |
 | `Toast`    | `open: Signal<boolean>`, `message`; optional `variant`, `duration`         | `Toast({ open, message: "Saved", variant: "success" })`                          |
 | `Toggle`   | `checked: Signal<boolean>`; optional `label`, `disabled`                   | `Toggle({ checked: darkMode, label: "Dark mode" })`                              |
@@ -198,6 +198,44 @@ init` / `zero update`.
 For component patterns in larger apps — when to reach for the
 shipped components vs. raw HTML, how to compose them, when to
 build your own — see [Best Practices §7](./best-practices.html#7-component-usage).
+
+## Table sort
+
+`Table` supports per-column sort. Mark a column with `sortable: true`
+and pass a `sort` signal that the parent owns:
+
+```ts
+import { signal } from "zero";
+import { Table } from "zero/components";
+import type { SortState, TableColumn } from "zero/components";
+
+const sort = signal<SortState | null>(null);
+const columns: TableColumn<User>[] = [
+  { key: "name",  label: "Name",  sortable: true },
+  { key: "score", label: "Score", sortable: true, align: "end" },
+];
+
+// Client-side: Table sorts a copy of `rows` itself.
+Table({ columns, rows, rowKey, sort });
+
+// Server-side: pass onSortChange. Table emits intent; the parent
+// re-fetches and updates `rows`. Table does not reorder locally.
+Table({ columns, rows, rowKey, sort, onSortChange: (next) => refetch(next) });
+```
+
+| Mode         | `onSortChange` set | Behavior                                                                |
+|--------------|--------------------|-------------------------------------------------------------------------|
+| Client-side  | No                 | `sort.set(next)`; renders `rows` reordered via column `compare` or default. |
+| Server-side  | Yes                | `sort.set(next)` then `onSortChange(next)`; renders `rows` as the parent provides. |
+
+Clicking a sortable header cycles **asc → desc → unsorted** on the active
+column. Clicking a different sortable column resets to asc on the new
+column.
+
+The default comparator handles numbers (subtraction), strings
+(`localeCompare`), and nullish values (sorted last in asc, first in
+desc). For mixed-type columns or custom orderings, pass
+`compare: (a, b) => number` on the column.
 
 ---
 

@@ -1,7 +1,7 @@
 import { html, signal, computed, effect } from "zero";
 import type { Signal, TemplateResult } from "zero";
 import { Table, Badge, Button, Pagination } from "zero/components";
-import type { TableColumn } from "zero/components";
+import type { SortState, TableColumn } from "zero/components";
 
 type User = {
   id: number;
@@ -111,9 +111,44 @@ function asyncSection(): TemplateResult {
 }
 
 /**
- * Showcase route for Table — five instances exercise the main path,
- * the empty state, the loading overlay, static-paginated, and async-
- * paginated Table-with-Pagination wiring.
+ * Client-side sortable Table — every sortable column owns its sort
+ * cycle locally. The `score` column includes a deliberate `null` so
+ * the default comparator's null-handling is visible. To switch into
+ * server-side mode, pass `onSortChange` and re-fetch `rows` from the
+ * parent — Table emits intent only and never reorders locally.
+ *
+ * @returns
+ */
+function sortableSection(): TemplateResult {
+  const data: User[] = sample.map((u) =>
+    u.name === "Yuki Tanaka" ? { ...u, score: null as unknown as number } : u,
+  );
+  const rows = signal<User[]>(data);
+  const sort = signal<SortState | null>(null);
+  const sortableColumns: TableColumn<User>[] = [
+    { key: "name", label: "Name", sortable: true },
+    { key: "email", label: "Email", width: "240px" },
+    { key: "role", label: "Role", sortable: true },
+    { key: "score", label: "Score", align: "end", sortable: true },
+  ];
+  return html`
+    <section class="stack gap-sm">
+      <h2 class="text-h2">Sortable (client-side)</h2>
+      <p class="text-small text-muted">
+        Click a sortable header to cycle asc → desc → unsorted. Pass
+        <code>onSortChange</code> to switch into server-side mode — Table
+        emits intent and renders whatever the parent's <code>rows</code>
+        signal contains, instead of sorting locally.
+      </p>
+      ${Table({ columns: sortableColumns, rows, rowKey, sort })}
+    </section>
+  `;
+}
+
+/**
+ * Showcase route for Table — six instances exercise the main path,
+ * the empty state, the loading overlay, sortable headers, static-
+ * paginated, and async-paginated Table-with-Pagination wiring.
  *
  * @returns
  */
@@ -158,6 +193,7 @@ export default function TableRoute(): TemplateResult {
         })}
       </section>
 
+      ${sortableSection()}
       ${paginatedSection()}
       ${asyncSection()}
 

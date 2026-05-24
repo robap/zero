@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "zero/test";
 import { render, find, findAll, fire, cleanup, text, spy } from "zero/test";
 import { signal, html } from "zero";
 import Table from "./Table.ts";
-import type { TableColumn } from "./Table.ts";
+import type { SortState, TableColumn } from "./Table.ts";
 
 type User = { id: number; name: string; role: string; score: number };
 
@@ -138,5 +138,197 @@ describe("Table", () => {
     const rows = signal<User[]>([sample[0]!, { ...sample[1]!, id: 1 }]);
     const columns: TableColumn<User>[] = [{ key: "name", label: "Name" }];
     expect(() => render(Table({ columns, rows, rowKey }))).toThrow("duplicate key");
+  });
+});
+
+describe("Table sort", () => {
+  afterEach(cleanup);
+
+  it("renders a sortable column as a button inside a th with aria-sort='none'", () => {
+    const rows = signal<User[]>(sample);
+    const sort = signal<SortState | null>(null);
+    const columns: TableColumn<User>[] = [
+      { key: "name", label: "Name", sortable: true },
+    ];
+    const el = render(Table({ columns, rows, rowKey, sort }));
+    const th = find(el, ".table-th")!;
+    expect(th).toBeTruthy();
+    expect(th.getAttribute("aria-sort")).toBe("none");
+    expect(find(th, "button.table-sort-btn")).toBeTruthy();
+  });
+
+  it("cycles asc -> desc -> null and updates aria-sort and row order on each click", () => {
+    const rows = signal<User[]>(sample);
+    const sort = signal<SortState | null>(null);
+    const columns: TableColumn<User>[] = [
+      { key: "name", label: "Name", sortable: true },
+    ];
+    const el = render(Table({ columns, rows, rowKey, sort }));
+    const btn = find(el, "button.table-sort-btn")!;
+    const th = find(el, ".table-th")!;
+
+    fire(btn, "click");
+    expect(sort.val).toEqual({ key: "name", dir: "asc" });
+    expect(th.getAttribute("aria-sort")).toBe("ascending");
+    expect(text(findAll(el, ".table-row")[0]!, ".table-td")).toBe("Ada");
+
+    fire(btn, "click");
+    expect(sort.val).toEqual({ key: "name", dir: "desc" });
+    expect(th.getAttribute("aria-sort")).toBe("descending");
+    expect(text(findAll(el, ".table-row")[0]!, ".table-td")).toBe("Marcus");
+
+    fire(btn, "click");
+    expect(sort.val).toBeNull();
+    expect(th.getAttribute("aria-sort")).toBe("none");
+    expect(text(findAll(el, ".table-row")[0]!, ".table-td")).toBe("Ada");
+  });
+
+  it("clicking a different sortable column resets to asc on the new column", () => {
+    const rows = signal<User[]>(sample);
+    const sort = signal<SortState | null>({ key: "name", dir: "desc" });
+    const columns: TableColumn<User>[] = [
+      { key: "name", label: "Name", sortable: true },
+      { key: "score", label: "Score", sortable: true },
+    ];
+    const el = render(Table({ columns, rows, rowKey, sort }));
+    const ths = findAll(el, ".table-th");
+    const scoreBtn = find(ths[1]!, "button.table-sort-btn")!;
+    fire(scoreBtn, "click");
+    expect(sort.val).toEqual({ key: "score", dir: "asc" });
+    expect(ths[0]!.getAttribute("aria-sort")).toBe("none");
+    expect(ths[1]!.getAttribute("aria-sort")).toBe("ascending");
+  });
+
+  it("default comparator sorts numbers and strings correctly in both directions", () => {
+    const rows = signal<User[]>(sample);
+    const sort = signal<SortState | null>(null);
+    const columns: TableColumn<User>[] = [
+      { key: "name", label: "Name", sortable: true },
+      { key: "score", label: "Score", sortable: true },
+    ];
+    const el = render(Table({ columns, rows, rowKey, sort }));
+
+    sort.set({ key: "score", dir: "asc" });
+    expect(text(findAll(el, ".table-row")[0]!, ".table-td")).toBe("Marcus");
+    sort.set({ key: "score", dir: "desc" });
+    expect(text(findAll(el, ".table-row")[0]!, ".table-td")).toBe("Ada");
+
+    sort.set({ key: "name", dir: "asc" });
+    expect(text(findAll(el, ".table-row")[0]!, ".table-td")).toBe("Ada");
+    sort.set({ key: "name", dir: "desc" });
+    expect(text(findAll(el, ".table-row")[0]!, ".table-td")).toBe("Marcus");
+  });
+
+  it("sorts nullish values last in asc, first in desc", () => {
+    type Nullable = { id: number; name: string; score: number | null };
+    const data: Nullable[] = [
+      { id: 1, name: "Ada", score: 92 },
+      { id: 2, name: "Lin", score: null },
+      { id: 3, name: "Marcus", score: 64 },
+    ];
+    const rows = signal<Nullable[]>(data);
+    const sort = signal<SortState | null>(null);
+    const columns: TableColumn<Nullable>[] = [
+      { key: "name", label: "Name" },
+      { key: "score", label: "Score", sortable: true },
+    ];
+    const key = (r: Nullable): number => r.id;
+    const el = render(Table({ columns, rows, rowKey: key, sort }));
+
+    sort.set({ key: "score", dir: "asc" });
+    const ascNames = findAll(el, ".table-row").map((r) => text(r, ".table-td"));
+    expect(ascNames[ascNames.length - 1]).toBe("Lin");
+
+    sort.set({ key: "score", dir: "desc" });
+    const descNames = findAll(el, ".table-row").map((r) => text(r, ".table-td"));
+    expect(descNames[0]).toBe("Lin");
+  });
+
+  it("uses a column's custom compare instead of the default row[key] comparison", () => {
+    type WithPriority = { id: number; name: string; priority: number };
+    const data: WithPriority[] = [
+      { id: 1, name: "Charlie", priority: 1 },
+      { id: 2, name: "Alpha", priority: 3 },
+      { id: 3, name: "Bravo", priority: 2 },
+    ];
+    const rows = signal<WithPriority[]>(data);
+    const sort = signal<SortState | null>(null);
+    const columns: TableColumn<WithPriority>[] = [
+      {
+        key: "name",
+        label: "Name",
+        sortable: true,
+        compare: (a, b) => a.priority - b.priority,
+      },
+    ];
+    const key = (r: WithPriority): number => r.id;
+    const el = render(Table({ columns, rows, rowKey: key, sort }));
+    sort.set({ key: "name", dir: "asc" });
+    const order = findAll(el, ".table-row").map((r) => text(r, ".table-td"));
+    expect(order).toEqual(["Charlie", "Bravo", "Alpha"]);
+  });
+
+  it("throws when a column is sortable but no sort signal was passed", () => {
+    const rows = signal<User[]>(sample);
+    const columns: TableColumn<User>[] = [
+      { key: "name", label: "Name", sortable: true },
+    ];
+    expect(() => render(Table({ columns, rows, rowKey }))).toThrow("sort");
+  });
+
+  it("fires onSortChange with the next sort state when a header is clicked", () => {
+    const rows = signal<User[]>(sample);
+    const sort = signal<SortState | null>(null);
+    const onSortChange = spy<(s: SortState | null) => void>();
+    const columns: TableColumn<User>[] = [
+      { key: "name", label: "Name", sortable: true },
+    ];
+    const el = render(Table({ columns, rows, rowKey, sort, onSortChange }));
+    fire(find(el, "button.table-sort-btn")!, "click");
+    expect(onSortChange).toHaveBeenCalledTimes(1);
+    expect(onSortChange).toHaveBeenCalledWith({ key: "name", dir: "asc" });
+  });
+
+  it("in server-side mode, renders rows in the parent's order regardless of sort", () => {
+    const unsortedOrder: User[] = [
+      { id: 3, name: "Marcus", role: "user", score: 64 },
+      { id: 1, name: "Ada", role: "admin", score: 92 },
+      { id: 2, name: "Lin", role: "user", score: 78 },
+    ];
+    const rows = signal<User[]>(unsortedOrder);
+    const sort = signal<SortState | null>(null);
+    const onSortChange = spy<(s: SortState | null) => void>();
+    const columns: TableColumn<User>[] = [
+      { key: "name", label: "Name", sortable: true },
+    ];
+    const el = render(Table({ columns, rows, rowKey, sort, onSortChange }));
+    fire(find(el, "button.table-sort-btn")!, "click");
+    const rendered = findAll(el, ".table-row").map((r) => text(r, ".table-td"));
+    expect(rendered).toEqual(["Marcus", "Ada", "Lin"]);
+  });
+
+  it("in server-side mode, the sort signal still updates on click", () => {
+    const rows = signal<User[]>(sample);
+    const sort = signal<SortState | null>(null);
+    const onSortChange = spy<(s: SortState | null) => void>();
+    const columns: TableColumn<User>[] = [
+      { key: "name", label: "Name", sortable: true },
+    ];
+    const el = render(Table({ columns, rows, rowKey, sort, onSortChange }));
+    fire(find(el, "button.table-sort-btn")!, "click");
+    expect(sort.val).toEqual({ key: "name", dir: "asc" });
+  });
+
+  it("renders non-sortable columns as plain th without aria-sort or a button", () => {
+    const rows = signal<User[]>(sample);
+    const sort = signal<SortState | null>(null);
+    const columns: TableColumn<User>[] = [
+      { key: "name", label: "Name", sortable: true },
+      { key: "role", label: "Role" },
+    ];
+    const el = render(Table({ columns, rows, rowKey, sort }));
+    const ths = findAll(el, ".table-th");
+    expect(ths[1]!.getAttribute("aria-sort")).toBeNull();
+    expect(find(ths[1]!, "button")).toBeNull();
   });
 });

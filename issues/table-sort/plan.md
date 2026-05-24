@@ -29,11 +29,11 @@ None. The spec's open questions are all planner choices, resolved below:
 
 ## Steps
 
-- [ ] **Step 1: Extend public types for sort**
-- [ ] **Step 2: Implement sort behavior, header rendering, and tests**
-- [ ] **Step 3: Style the sortable header button and indicator**
-- [ ] **Step 4: Add a sortable variant to the Table showcase route**
-- [ ] **Step 5: Document the sort API in `docs/components.md`**
+- [x] **Step 1: Extend public types for sort**
+- [x] **Step 2: Implement sort behavior, header rendering, and tests**
+- [x] **Step 3: Style the sortable header button and indicator**
+- [x] **Step 4: Add a sortable variant to the Table showcase route**
+- [x] **Step 5: Document the sort API in `docs/components.md`**
 
 ---
 

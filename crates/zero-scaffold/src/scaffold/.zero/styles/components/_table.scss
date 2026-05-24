@@ -65,4 +65,27 @@
     place-items: center;
     background: color-mix(in srgb, var(--color-bg) 60%, transparent);
   }
+
+  .table-sort-btn {
+    width: 100%;
+    justify-content: flex-start;
+    padding-inline: 0;
+    padding-block: 0;
+    background: transparent;
+    border: none;
+    font: inherit;
+    font-weight: var(--weight-semibold);
+    color: var(--color-text);
+  }
+
+  .table-align-end    .table-sort-btn { justify-content: flex-end; }
+  .table-align-center .table-sort-btn { justify-content: center; }
+
+  .table-sort-icon {
+    margin-inline-start: var(--space-xs);
+    font-size: var(--font-size-sm);
+    line-height: 1;
+  }
+
+  .table-th[aria-sort="none"] .table-sort-icon { opacity: 0.4; }
 }
