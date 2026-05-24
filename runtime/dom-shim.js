@@ -793,6 +793,51 @@ function _attachInputProps(el) {
   _defineStringAttrProp(el, "type", "type");
   _defineStringAttrProp(el, "placeholder", "placeholder");
   _defineStringAttrProp(el, "htmlFor", "for");
+  _attachInputSelection(el);
+}
+
+/**
+ * Attach `selectionStart` / `selectionEnd` (numeric, default 0) and
+ * `setSelectionRange()` on `el`. Mirrors the HTMLInputElement selection
+ * surface that the Combobox component depends on at runtime and under
+ * `zero test`.
+ * @internal
+ * @param {object} el
+ * @returns {void}
+ */
+function _attachInputSelection(el) {
+  el._selStart = 0;
+  el._selEnd = 0;
+  Object.defineProperty(el, "selectionStart", {
+    get() { return el._selStart; },
+    set(v) { el._selStart = Number.isFinite(+v) ? +v : 0; },
+    configurable: true,
+    enumerable: true,
+  });
+  Object.defineProperty(el, "selectionEnd", {
+    get() { return el._selEnd; },
+    set(v) { el._selEnd = Number.isFinite(+v) ? +v : 0; },
+    configurable: true,
+    enumerable: true,
+  });
+  el.setSelectionRange = _setSelectionRange;
+}
+
+/**
+ * `setSelectionRange` shared method body. Lives at module scope rather
+ * than as a per-element closure so it cannot accumulate per-element
+ * captures across the Boa heap.
+ * @internal
+ * @param {number} start
+ * @param {number} end
+ * @returns {void}
+ */
+function _setSelectionRange(start, end) {
+  const len = (this.value ?? "").length;
+  const s = Number.isFinite(+start) ? +start : 0;
+  const e = Number.isFinite(+end) ? +end : 0;
+  this._selStart = Math.min(Math.max(0, s), len);
+  this._selEnd = Math.min(Math.max(0, e), len);
 }
 
 /**

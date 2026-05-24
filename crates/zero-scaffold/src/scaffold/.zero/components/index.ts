@@ -9,6 +9,8 @@ export { default as Card } from "./Card.ts";
 export type { CardProps, CardVariant } from "./Card.ts";
 export { default as Checkbox } from "./Checkbox.ts";
 export type { CheckboxProps } from "./Checkbox.ts";
+export { default as Combobox } from "./Combobox.ts";
+export type { ComboboxOption, ComboboxProps, ComboboxSize } from "./Combobox.ts";
 export { default as Dialog } from "./Dialog.ts";
 export type { DialogProps, DialogSize } from "./Dialog.ts";
 export { default as Input } from "./Input.ts";

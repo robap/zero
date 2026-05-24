@@ -49,6 +49,9 @@ const TPL_CARD_SCSS: &str = include_str!("scaffold/.zero/styles/components/_card
 const TPL_CHECKBOX_TS: &str = include_str!("scaffold/.zero/components/Checkbox.ts");
 const TPL_CHECKBOX_TEST_TS: &str = include_str!("scaffold/.zero/components/Checkbox.test.ts");
 const TPL_CHECKBOX_SCSS: &str = include_str!("scaffold/.zero/styles/components/_checkbox.scss");
+const TPL_COMBOBOX_TS: &str = include_str!("scaffold/.zero/components/Combobox.ts");
+const TPL_COMBOBOX_TEST_TS: &str = include_str!("scaffold/.zero/components/Combobox.test.ts");
+const TPL_COMBOBOX_SCSS: &str = include_str!("scaffold/.zero/styles/components/_combobox.scss");
 const TPL_DIALOG_TS: &str = include_str!("scaffold/.zero/components/Dialog.ts");
 const TPL_DIALOG_TEST_TS: &str = include_str!("scaffold/.zero/components/Dialog.test.ts");
 const TPL_DIALOG_SCSS: &str = include_str!("scaffold/.zero/styles/components/_dialog.scss");
@@ -156,6 +159,9 @@ pub fn framework_manifest() -> Vec<(&'static str, &'static str)> {
         (".zero/components/Checkbox.ts", TPL_CHECKBOX_TS),
         (".zero/components/Checkbox.test.ts", TPL_CHECKBOX_TEST_TS),
         (".zero/styles/components/_checkbox.scss", TPL_CHECKBOX_SCSS),
+        (".zero/components/Combobox.ts", TPL_COMBOBOX_TS),
+        (".zero/components/Combobox.test.ts", TPL_COMBOBOX_TEST_TS),
+        (".zero/styles/components/_combobox.scss", TPL_COMBOBOX_SCSS),
         (".zero/components/Dialog.ts", TPL_DIALOG_TS),
         (".zero/components/Dialog.test.ts", TPL_DIALOG_TEST_TS),
         (".zero/styles/components/_dialog.scss", TPL_DIALOG_SCSS),
@@ -316,6 +322,7 @@ mod tests {
         "Button",
         "Card",
         "Checkbox",
+        "Combobox",
         "Dialog",
         "Input",
         "Pagination",
@@ -971,7 +978,7 @@ mod tests {
             ".zero/styles/_typography.scss",
             ".zero/styles/_components.scss",
             ".zero/styles/zero.scss",
-            // 16 components × (source, test, scss partial) = 48 entries.
+            // 17 components × (source, test, scss partial) = 51 entries.
             ".zero/components/Avatar.ts",
             ".zero/components/Avatar.test.ts",
             ".zero/styles/components/_avatar.scss",
@@ -987,6 +994,9 @@ mod tests {
             ".zero/components/Checkbox.ts",
             ".zero/components/Checkbox.test.ts",
             ".zero/styles/components/_checkbox.scss",
+            ".zero/components/Combobox.ts",
+            ".zero/components/Combobox.test.ts",
+            ".zero/styles/components/_combobox.scss",
             ".zero/components/Dialog.ts",
             ".zero/components/Dialog.test.ts",
             ".zero/styles/components/_dialog.scss",

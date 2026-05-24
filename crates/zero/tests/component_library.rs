@@ -38,6 +38,7 @@ fn showcase_test_runs_all_component_tests() {
         "Button",
         "Card",
         "Checkbox",
+        "Combobox",
         "Dialog",
         "Input",
         "Pagination",

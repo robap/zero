@@ -144,7 +144,7 @@ a common mistake when porting from React. See
 
 ## Component library reference
 
-zero ships sixteen production-ready components under the bare
+zero ships seventeen production-ready components under the bare
 specifier `"zero/components"`. They use the design system tokens
 covered in [Theming](./theming.html), so they take on your brand
 once you redefine the public tokens.
@@ -156,6 +156,7 @@ once you redefine the public tokens.
 | `Button`   | optional `variant`, `size`, `disabled`, `loading`, `onClick`, `children`   | `Button({ variant: "primary", onClick: save, children: "Save" })`                |
 | `Card`     | optional `variant`, `title`, `children`                                    | `Card({ title: "Profile", children: html\`<p>…</p>\` })`                         |
 | `Checkbox` | `checked: Signal<boolean>`; optional `label`, `disabled`                   | `Checkbox({ checked: agreed, label: "I agree" })`                                |
+| `Combobox` | `value: Signal<string>`, `loadOptions: (q) => Promise<ComboboxOption[]>`; optional `initialLabel`, `size`, `placeholder`, `label`, `disabled`, `debounceMs`, `minQueryLength`, `noResultsLabel`, `loadingLabel`, `onChange` | `Combobox({ value, loadOptions: loadUsers })` |
 | `Dialog`   | `open: Signal<boolean>`; optional `size`, `title`, `children`, `onClose`   | `Dialog({ open, title: "Confirm", children: html\`…\` })`                        |
 | `Input`    | `value: Signal<string>`; optional `type`, `size`, `placeholder`, `label`   | `Input({ value: name, label: "Name", type: "text" })`                            |
 | `Pagination` | `page: Signal<number>`, `totalPages: Signal<number> \| number`; optional `size`, `siblingCount`, `boundaryCount`, `disabled`, `onChange`, `summary` | `Pagination({ page, totalPages: 10 })`                                          |

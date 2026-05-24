@@ -198,3 +198,21 @@ describe('document listeners', () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('input selection APIs', () => {
+  afterEach(cleanup);
+
+  it('setSelectionRange writes selectionStart/End', () => {
+    const el = document.createElement('input');
+    el.value = 'foobar';
+    el.setSelectionRange(3, 6);
+    expect(el.selectionStart).toBe(3);
+    expect(el.selectionEnd).toBe(6);
+  });
+
+  it('defaults to 0/0', () => {
+    const el = document.createElement('input');
+    expect(el.selectionStart).toBe(0);
+    expect(el.selectionEnd).toBe(0);
+  });
+});

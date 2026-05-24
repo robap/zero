@@ -9,6 +9,7 @@ const components: Array<{ name: string; href: string }> = [
   { name: "Button", href: "/button" },
   { name: "Card", href: "/card" },
   { name: "Checkbox", href: "/checkbox" },
+  { name: "Combobox", href: "/combobox" },
   { name: "Dialog", href: "/dialog" },
   { name: "Input", href: "/input" },
   { name: "Pagination", href: "/pagination" },

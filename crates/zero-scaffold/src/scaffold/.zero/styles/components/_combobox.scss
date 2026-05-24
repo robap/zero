@@ -1,0 +1,95 @@
+// Combobox — input + dropdown typeahead with inline ghost completion.
+// The combobox input composes `.input` + `.input-{size}` directly for
+// padding, border, radius, focus, hover, disabled, and placeholder
+// treatment — no duplicate rules here. This partial owns only the
+// combobox-specific layout (field row + absolutely-positioned dropdown
+// and spinner) and option/empty/loading row styling. `z-index: 900`
+// keeps the dropdown above inline content and below Dialog (z-index
+// 1000).
+@layer components {
+  .combobox {
+    position: relative;
+    display: inline-block;
+    inline-size: 100%;
+    max-inline-size: 24rem;
+  }
+  .combobox-field {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+  .combobox-input {
+    flex: 1 1 auto;
+    inline-size: 100%;
+  }
+
+  .combobox-label {
+    display: block;
+    font-size: var(--font-size-sm);
+    font-weight: var(--weight-medium);
+    margin-block-end: var(--space-xs);
+    color: var(--color-text);
+  }
+
+  // `.border` (from _utilities.scss) supplies the dropdown border so
+  // this rule does not redeclare it. `.pad-0` resets the browser's
+  // default `<ul>` padding; only the inline-axis margin reset is kept
+  // here because no utility covers it.
+  .combobox-list {
+    position: absolute;
+    inset-inline-start: 0;
+    inset-block-start: 100%;
+    margin-block-start: var(--space-xs);
+    margin-inline: 0;
+    inline-size: 100%;
+    max-block-size: min(20rem, 60vh);
+    overflow-y: auto;
+    list-style: none;
+    background: var(--color-surface);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    z-index: 900;
+  }
+  .combobox-list[hidden] { display: none; }
+
+  .combobox-option {
+    padding-inline: var(--space-md);
+    padding-block: var(--space-sm);
+    cursor: pointer;
+    color: var(--color-text);
+  }
+  .combobox-option:hover,
+  .combobox-option-active {
+    background: var(--color-primary);
+    color: var(--color-primary-fg);
+  }
+
+  .combobox-empty,
+  .combobox-loading {
+    padding-inline: var(--space-md);
+    padding-block: var(--space-sm);
+    color: var(--color-text-muted);
+    cursor: default;
+  }
+
+  .combobox-spinner {
+    position: absolute;
+    inset-inline-end: var(--space-sm);
+    inline-size: 1em;
+    block-size: 1em;
+    border: 2px solid var(--color-border);
+    border-block-start-color: var(--color-primary);
+    border-radius: 50%;
+    animation: combobox-spin 0.6s linear infinite;
+  }
+  .combobox-spinner[hidden] { display: none; }
+
+  @keyframes combobox-spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .combobox-disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+}

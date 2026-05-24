@@ -49,6 +49,24 @@ declare module "zero/components" {
   };
   export function Checkbox(props: CheckboxProps): TemplateResult;
 
+  export type ComboboxSize = "sm" | "md" | "lg";
+  export type ComboboxOption = { value: string; label: string };
+  export type ComboboxProps = {
+    value: Signal<string>;
+    loadOptions: (query: string) => Promise<ComboboxOption[]>;
+    initialLabel?: string;
+    size?: ComboboxSize;
+    placeholder?: string;
+    label?: string;
+    disabled?: Signal<boolean> | boolean;
+    debounceMs?: number;
+    minQueryLength?: number;
+    noResultsLabel?: string;
+    loadingLabel?: string;
+    onChange?: (value: string, option: ComboboxOption) => void;
+  };
+  export function Combobox(props: ComboboxProps): TemplateResult;
+
   export type DialogSize = "sm" | "md" | "lg";
   export type DialogProps = {
     open: Signal<boolean>;
