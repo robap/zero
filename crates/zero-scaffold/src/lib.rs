@@ -632,6 +632,7 @@ mod tests {
             "## Common mistakes",
             "### When to reach for which primitive",
             "### Reach for these first",
+            "### When to run what",
         ] {
             assert!(
                 agents.contains(sentinel),
@@ -641,6 +642,14 @@ mod tests {
         assert!(
             agents.contains("framework-owned just like the files under `.zero/`"),
             "AGENTS.md missing framework-ownership note in the .zero/ section: {agents}"
+        );
+        assert!(
+            agents.contains("zero mutate"),
+            "AGENTS.md Quick Start must mention `zero mutate`: {agents}"
+        );
+        assert!(
+            agents.contains("--coverage"),
+            "AGENTS.md Quick Start must mention `--coverage`: {agents}"
         );
     }
 

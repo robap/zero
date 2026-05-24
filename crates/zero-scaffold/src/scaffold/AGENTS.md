@@ -16,16 +16,30 @@ Identifiers prefixed with `_` or `__` are internal — never import them.
 ## Quick start
 
 ```bash
-zero init        # scaffold a project
-zero update      # refresh framework-owned files in <root>/.zero/
-zero dev         # dev server (file watching + full-page reload)
-zero test        # run *.test.{ts,js} and *.spec.{ts,js}
-zero build       # production build
-zero preview     # serve the production build locally
-zero lint        # SCSS + JS/TS idiom checks
+zero init [--yes]                   # scaffold a project
+zero update [--yes]                 # refresh framework-owned files in .zero/
+zero dev                            # dev server (file watch + full-page reload)
+zero test [pattern] [--coverage]    # run *.test.{ts,js}; --coverage to coverage/coverage.json
+zero mutate [pattern] [--threads N] [--operators ID,…] [--max-mutants N] [--quiet]
+                                    # mutation testing across src/
+zero build [--sourcemap|--no-sourcemap]   # production build
+zero lint [--quiet]                 # SCSS + JS/TS idiom checks
 ```
 
-Full CLI reference: <https://robap.github.io/zero/config-and-cli.html>.
+Full CLI reference: <https://robap.github.io/zero/config-and-cli.html> —
+every flag the CLI accepts is documented there.
+
+### When to run what
+
+- `zero lint` — after any `.ts` / `.js` / `.scss` edit. Sub-second; catches the
+  L- and R- rules below before they reach tests.
+- `zero test` — after any logic change. Add `--coverage` to write
+  `coverage/coverage.json` and print per-file line / function coverage to the
+  terminal.
+- `zero mutate` — before declaring a task done on correctness-critical code.
+  `--threads N` parallelizes (defaults to `min(cores, 8)`);
+  `--operators arith,cmp` narrows the run; `--max-mutants N` caps it.
+- Every subcommand has its own `--help`.
 
 Generated project layout:
 

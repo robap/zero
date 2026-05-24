@@ -20,10 +20,10 @@ recorded in **Risks and Assumptions** for downstream specs to pick up.
 
 ## Steps
 
-- [ ] **Step 1: Rewrite the AGENTS.md Quick Start block to include flags and `mutate`**
-- [ ] **Step 2: Add the "When to run what" subsection immediately below**
-- [ ] **Step 3: Extend the scaffold regression tests in `crates/zero-scaffold/src/lib.rs`**
-- [ ] **Step 4: Cross-check `docs/config-and-cli.md` and record any flag-coverage gaps as follow-up**
+- [x] **Step 1: Rewrite the AGENTS.md Quick Start block to include flags and `mutate`**
+- [x] **Step 2: Add the "When to run what" subsection immediately below**
+- [x] **Step 3: Extend the scaffold regression tests in `crates/zero-scaffold/src/lib.rs`**
+- [x] **Step 4: Cross-check `docs/config-and-cli.md` and record any flag-coverage gaps as follow-up**
 
 ---
 
@@ -324,3 +324,19 @@ None to source. The executor:
   AGENTS.md edited is the embedded template at
   `crates/zero-scaffold/src/scaffold/AGENTS.md`, which ships via
   `include_str!` to every scaffolded user project on next `zero update`.
+
+## Follow-up notes (Step 4 cross-check)
+
+Spec R6 cross-check of `docs/config-and-cli.md` against the flags listed in
+the new Quick Start:
+
+- `--yes` — documented (lines 93, 107). ✓
+- `--coverage` — documented (line 156). ✓
+- `--sourcemap` — documented (line 141). ✓
+- `--no-sourcemap` — **missing from `docs/config-and-cli.md`** even though
+  `zero build --help` lists it ("Suppress the source map even if
+  `[build] sourcemap = true` is set"). Filed as a docs follow-up — does not
+  block this spec.
+- `--threads`, `--operators`, `--max-mutants`, `-q, --quiet` (mutate) —
+  documented (lines 170–173). ✓
+- `-q, --quiet` (lint) — documented (line 266). ✓
