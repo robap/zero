@@ -470,21 +470,26 @@ fn rewrite_imports(src: &str) -> String {
 /// Convert every ES export form into CJS `exports.x = x;` assignments and
 /// strip the `export` keyword from the original declarations.
 fn rewrite_exports(mut out: String, src: &str) -> String {
-    let export_default_fn = Regex::new(r"(?m)^export\s+default\s+function\s+(\w+)").unwrap();
+    // Capture group 1 of the fn regexes is an optional `async ` modifier
+    // (with trailing space) so it round-trips into the replacement; group 2
+    // is the function name.
+    let export_default_fn =
+        Regex::new(r"(?m)^export\s+default\s+(async\s+)?function\s+(\w+)").unwrap();
     let export_default_val = Regex::new(r"(?m)^export\s+default\s+").unwrap();
-    let export_named_fn = Regex::new(r"(?m)^export\s+function\s+(\w+)").unwrap();
+    let export_named_fn = Regex::new(r"(?m)^export\s+(async\s+)?function\s+(\w+)").unwrap();
     let export_named_const = Regex::new(r"(?m)^export\s+(const|let|var)\s+(\w+)").unwrap();
     let export_named_class = Regex::new(r"(?m)^export\s+class\s+(\w+)").unwrap();
     let export_block = Regex::new(r"(?ms)^export\s*\{\s*([^}]+?)\s*\}\s*;?").unwrap();
 
     out = export_default_fn
         .replace_all(&out, |caps: &regex::Captures<'_>| {
-            format!("function {}", &caps[1])
+            let async_kw = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            format!("{async_kw}function {}", &caps[2])
         })
         .into_owned();
     let default_fn_names: Vec<String> = export_default_fn
         .captures_iter(src)
-        .map(|c| c[1].to_string())
+        .map(|c| c[2].to_string())
         .collect();
     for name in &default_fn_names {
         out.push_str(&format!("\nexports.default = {name};\n"));
@@ -498,11 +503,12 @@ fn rewrite_exports(mut out: String, src: &str) -> String {
 
     let named_fn_names: Vec<String> = export_named_fn
         .captures_iter(&out.clone())
-        .map(|c| c[1].to_string())
+        .map(|c| c[2].to_string())
         .collect();
     out = export_named_fn
         .replace_all(&out, |caps: &regex::Captures<'_>| {
-            format!("function {}", &caps[1])
+            let async_kw = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            format!("{async_kw}function {}", &caps[2])
         })
         .into_owned();
     for name in &named_fn_names {
@@ -565,10 +571,13 @@ fn rewrite_export_block(inner: &str) -> String {
     lines
 }
 
-/// Rewrite relative `__zero_require('./…')` calls to root-relative module
-/// IDs (or to `'zero'` / `'zero/http'` for synthetic deps).
+/// Rewrite every `__zero_require('<spec>')` call to the resolved module ID
+/// so the require key matches the `__zero_define` registration. Without this,
+/// relative paths stay as `./…` (wrong key) and bare specifiers like
+/// `'zero/components'` survive unrewritten despite registering under their
+/// resolved path (`./.zero/components/index.ts`).
 fn resolve_relative_requires(out: String, root: &Path, id: &ModuleId) -> String {
-    let require_re = Regex::new(r#"__zero_require\('(\.[^']+)'\)"#).unwrap();
+    let require_re = Regex::new(r#"__zero_require\('([^']+)'\)"#).unwrap();
     let importer_dir = if let ModuleId::User(rel) = id {
         let abs = root.join(rel.strip_prefix("./").unwrap_or(rel));
         abs.parent().unwrap_or(root).to_path_buf()
@@ -612,8 +621,12 @@ fn rewrite_http_exports(body: &str) -> anyhow::Result<String> {
 
 /// Extract import (and re-export) specifiers from an ES module source file.
 fn extract_imports(src: &str) -> Vec<String> {
+    // The clause set must stay in lock-step with `rewrite_imports`. The
+    // combined form `import Default, { … }` is listed first because the
+    // looser `\w+` clause would otherwise match `Default` and then fail at
+    // the comma, dropping the specifier on the floor.
     let import_re = Regex::new(
-        r#"(?ms)import\s+(?:\{[^}]*\}|\*\s+as\s+\w+|\w+|\s*)\s*from\s+['"]([^'"]+)['"]|import\s+['"]([^'"]+)['"]"#,
+        r#"(?ms)import\s+(?:\w+\s*,\s*\{[^}]*\}|\{[^}]*\}|\*\s+as\s+\w+|\w+|\s*)\s*from\s+['"]([^'"]+)['"]|import\s+['"]([^'"]+)['"]"#,
     )
     .unwrap();
     let reexport_re =
@@ -645,6 +658,49 @@ import Home from "./routes/home.js";
         let imports = extract_imports(src);
         assert!(imports.contains(&"zero".to_string()));
         assert!(imports.contains(&"./routes/home.js".to_string()));
+    }
+
+    #[test]
+    fn rewrite_rewrites_async_named_export() {
+        // `export async function foo` must lose the `export` keyword and gain
+        // an `exports.foo = foo` line, just like a plain `export function`.
+        // Without this, the keyword survives into the bundle and SWC's
+        // minifier rejects the file with `ImportExportInScript`.
+        let src = "export async function load() { return 1; }\n";
+        let result = rewrite_module(
+            src,
+            Path::new("/root"),
+            &ModuleId::User(PathBuf::from("./src/routes/home.ts")),
+            &HashMap::new(),
+        )
+        .unwrap();
+        assert!(
+            !result.contains("export async function"),
+            "export keyword survived: {result}"
+        );
+        assert!(
+            result.contains("async function load"),
+            "async modifier was dropped: {result}"
+        );
+        assert!(
+            result.contains("exports.load = load"),
+            "named export binding missing: {result}"
+        );
+    }
+
+    #[test]
+    fn extract_imports_finds_combined_default_and_named() {
+        // `import Default, { named } from "<spec>"` — rewrite_imports handles
+        // this form, so extract_imports must too, or the dependency walker
+        // skips the file and the bundle defines no factory for it.
+        let src = r#"
+import Home, { load as loadHome } from "./routes/home.ts";
+"#;
+        let imports = extract_imports(src);
+        assert!(
+            imports.contains(&"./routes/home.ts".to_string()),
+            "combined-import specifier missing: {imports:?}"
+        );
     }
 
     #[test]
@@ -972,6 +1028,37 @@ const app = new App();
         assert!(bundled.contains(r#"__zero_define("./src/util.js""#));
         assert!(bundled.contains(r#"__zero_define("./src/inner.ts""#));
         assert!(!bundled.contains(": number"), "type leaked: {bundled}");
+    }
+
+    #[test]
+    fn bundle_rewrites_zero_components_require_to_resolved_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("web");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir_all(root.join(".zero/components")).unwrap();
+        std::fs::write(
+            root.join(".zero/components/index.ts"),
+            "export const Button = 1;\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("src/app.ts"),
+            "import { Button } from \"zero/components\";\nconsole.log(Button);\n",
+        )
+        .unwrap();
+        let result = with_cwd(dir.path(), || bundle(&write_minimal_config(&root), false));
+        let bundled = result.unwrap().code;
+        // The require call must reference the registered module ID, not the
+        // unresolved bare specifier — otherwise `__zero_modules[id]` is undef
+        // at runtime and crashes with "is not a function".
+        assert!(
+            bundled.contains(r#"__zero_require("./.zero/components/index.ts")"#),
+            "expected require to resolve to component index path: {bundled}"
+        );
+        assert!(
+            !bundled.contains(r#"__zero_require("zero/components")"#),
+            "unresolved bare specifier survived in bundle: {bundled}"
+        );
     }
 
     #[test]

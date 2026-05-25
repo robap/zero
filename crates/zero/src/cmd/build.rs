@@ -20,16 +20,43 @@ use zero_config::Config;
 /// `Ok(())` on success, an error otherwise.
 pub async fn run(sourcemap_override: Option<bool>) -> anyhow::Result<()> {
     let config = Config::load_from_cwd()?;
+    build_inner(&config, sourcemap_override).await
+}
+
+/// Build core, callable with a pre-loaded `Config` (lets `zero preview`
+/// share the same config snapshot it uses to serve the output).
+///
+/// # Parameters
+/// - `config`: validated `zero.toml` config.
+/// - `sourcemap_override`: `Some(true)` / `Some(false)` from the CLI flag,
+///   `None` falls back to `[build] sourcemap` in the config.
+///
+/// # Returns
+/// `Ok(())` on success, an error otherwise.
+pub(crate) async fn build_inner(
+    config: &Config,
+    sourcemap_override: Option<bool>,
+) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
     let root = cwd.join(&config.project.root);
-    let out_dir = cwd.join(&config.build.out);
+    let out_dir = config.out_dir_path();
+    if let Ok(meta) = std::fs::symlink_metadata(&out_dir) {
+        if meta.file_type().is_symlink() {
+            anyhow::bail!(
+                "build.out `{}` is a symlink; refuse to delete through it. \
+                 Remove the symlink and run `zero build` again.",
+                out_dir.display()
+            );
+        }
+        std::fs::remove_dir_all(&out_dir)?;
+    }
     let assets_dir = out_dir.join("assets");
     std::fs::create_dir_all(&assets_dir)?;
 
     let emit_sourcemap = sourcemap_override.unwrap_or(config.build.sourcemap);
 
     // 1. Bundle JS.
-    let bundle_out = bundle(&config, emit_sourcemap)?;
+    let bundle_out = bundle(config, emit_sourcemap)?;
     let bundle_src = bundle_out.code;
     let hash = &format!("{:x}", Sha256::digest(bundle_src.as_bytes()))[..8];
     let bundle_filename = format!("app.{hash}.js");
@@ -254,5 +281,57 @@ mod tests {
             out.join("Geist-VariableFont_wght.woff2").is_file(),
             "font not copied to dist/.zero/fonts/"
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn errors_when_out_dir_is_symlink() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _g = CwdGuard::enter(tmp.path());
+        write_minimal_project(tmp.path());
+        let real = tmp.path().join("other_dist");
+        std::fs::create_dir_all(&real).unwrap();
+        let link = tmp.path().join("dist");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let err = super::run(None).await.expect_err("should fail");
+        let msg = format!("{err}");
+        assert!(msg.contains("symlink"), "msg: {msg}");
+    }
+
+    #[tokio::test]
+    async fn clears_stale_sourcemap_on_disabled_rebuild() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _g = CwdGuard::enter(tmp.path());
+        write_minimal_project(tmp.path());
+        super::run(Some(true)).await.unwrap();
+        super::run(Some(false)).await.unwrap();
+        let assets = tmp.path().join("dist").join("assets");
+        for e in std::fs::read_dir(&assets).unwrap() {
+            let p = e.unwrap().path();
+            assert_ne!(
+                p.extension().and_then(|s| s.to_str()),
+                Some("map"),
+                "stale .map survived rebuild: {}",
+                p.display()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn clears_out_dir_before_writing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _g = CwdGuard::enter(tmp.path());
+        write_minimal_project(tmp.path());
+        let assets = tmp.path().join("dist").join("assets");
+        std::fs::create_dir_all(&assets).unwrap();
+        std::fs::write(assets.join("junk.txt"), b"stale").unwrap();
+        super::run(None).await.unwrap();
+        assert!(
+            !assets.join("junk.txt").exists(),
+            "stale file should be removed"
+        );
+        let dist = tmp.path().join("dist");
+        assert!(dist.join("index.html").is_file());
+        assert!(dist.join("manifest.json").is_file());
     }
 }

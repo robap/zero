@@ -34,11 +34,11 @@ Open questions from the spec are resolved as follows; no external blockers:
 
 ## Steps
 
-- [ ] **Step 1: Refactor `cmd::build::run` to delegate to `build_inner(&Config, Option<bool>)`**
-- [ ] **Step 2: Clear `out_dir` at the start of `build_inner`, with symlink safety**
-- [ ] **Step 3: Add `zero-dev::preview` module with `serve_preview` + router**
-- [ ] **Step 4: Add `cmd::preview` subcommand wiring auto-build → serve**
-- [ ] **Step 5: Update docs to describe the auto-build behavior**
+- [x] **Step 1: Refactor `cmd::build::run` to delegate to `build_inner(&Config, Option<bool>)`**
+- [x] **Step 2: Clear `out_dir` at the start of `build_inner`, with symlink safety**
+- [x] **Step 3: Add `zero-dev::preview` module with `serve_preview` + router**
+- [x] **Step 4: Add `cmd::preview` subcommand wiring auto-build → serve**
+- [x] **Step 5: Update docs to describe the auto-build behavior**
 
 ---
 

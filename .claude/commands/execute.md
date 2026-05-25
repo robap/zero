@@ -104,7 +104,7 @@ After all steps are complete, run one final check:
 ```
 cargo fmt
 cargo clippy
-cargo test
+cargo test --workspace -- --include-ignored
 ```
 
 Report a brief summary: steps completed, files created or modified, and anything

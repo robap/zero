@@ -4,6 +4,7 @@ pub mod files;
 pub mod headers;
 pub mod inject;
 pub mod local;
+pub mod preview;
 pub mod proxy;
 pub mod sass;
 pub mod server;

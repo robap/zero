@@ -102,3 +102,8 @@ SPA fallback semantics as `zero dev` (unknown paths return
 `index.html`), but using the compiled bundle. It's how you sanity-
 check that the build outputs work end-to-end before pushing to
 prod.
+
+`zero preview` first runs `zero build`, then serves the result.
+Because the build clears the output directory before writing,
+`dist/` only ever contains the most recent build's artifacts — no
+stragglers from prior runs.

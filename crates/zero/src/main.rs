@@ -27,6 +27,8 @@ enum Commands {
     },
     /// Run the development server
     Dev,
+    /// Build, then serve the production output locally
+    Preview,
     /// Produce a production build
     Build {
         /// Emit an external source map alongside the bundle.
@@ -96,6 +98,7 @@ async fn main() {
     let result = match cli.command {
         Commands::Init { yes } => cmd::init::run(yes).await,
         Commands::Dev => cmd::dev::run().await,
+        Commands::Preview => cmd::preview::run().await,
         Commands::Build {
             sourcemap,
             no_sourcemap,

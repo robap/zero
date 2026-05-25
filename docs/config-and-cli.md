@@ -250,7 +250,7 @@ zero gen route /users/:id        # → src/routes/users/[id].ts
 
 ### `zero preview`
 
-Serves the production build locally. See
+Builds, then serves the production output locally. See
 [Building and Deploying § zero preview](./building-and-deploying.html#zero-preview).
 
 ### `zero upgrade`

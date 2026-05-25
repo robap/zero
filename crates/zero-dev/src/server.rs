@@ -130,7 +130,7 @@ fn write_type_decls(dot_zero: &std::path::Path) {
 
 /// Bind a TCP listener on `127.0.0.1:<port>`, with a friendly message if the
 /// port is already in use.
-async fn bind_listener(port: u16) -> anyhow::Result<tokio::net::TcpListener> {
+pub(crate) async fn bind_listener(port: u16) -> anyhow::Result<tokio::net::TcpListener> {
     let addr = format!("127.0.0.1:{port}");
     match tokio::net::TcpListener::bind(&addr).await {
         Ok(l) => Ok(l),
