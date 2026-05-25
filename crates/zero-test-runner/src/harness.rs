@@ -180,6 +180,7 @@ fn run_with_loader_inner(
         Err(f) => return load_error_outcome(rel_path, f),
     };
     install_console(&mut context);
+    install_workspace_file_reader(&mut context, project_root);
     if let Err(f) = eval_dom_shim(&mut context) {
         return load_error_outcome(rel_path, f);
     }
@@ -872,6 +873,52 @@ fn install_console(ctx: &mut Context) {
     ctx.global_object()
         .set(boa_engine::js_string!("console"), console, false, ctx)
         .expect("failed to install console");
+}
+
+/// Install `__readWorkspaceFile__(relPath) -> string` on `globalThis`.
+///
+/// Framework-internal helper used only by the matcher-drift self-test; it is
+/// NOT part of the public `zero/test` surface. Reads are scoped to the
+/// workspace root: the joined path is canonicalised and must stay inside the
+/// canonicalised root, so `..` escapes and symlink traversal are rejected.
+fn install_workspace_file_reader(ctx: &mut Context, root: &Path) {
+    use boa_engine::{JsNativeError, NativeFunction};
+
+    let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+
+    // SAFETY: the captured `PathBuf` holds no GC-traceable types, so it cannot
+    // create a dangling trace pointer — the invariant `from_closure` requires.
+    let reader = unsafe {
+        NativeFunction::from_closure(move |_, args, _ctx| {
+            let rel = args
+                .first()
+                .and_then(boa_engine::JsValue::as_string)
+                .ok_or_else(|| {
+                    JsNativeError::typ()
+                        .with_message("__readWorkspaceFile__: expected a string path")
+                })?
+                .to_std_string_escaped();
+            let canonical = canonical_root.join(&rel).canonicalize().map_err(|e| {
+                JsNativeError::error()
+                    .with_message(format!("__readWorkspaceFile__: cannot resolve {rel}: {e}"))
+            })?;
+            if !canonical.starts_with(&canonical_root) {
+                return Err(JsNativeError::error()
+                    .with_message(format!(
+                        "__readWorkspaceFile__: {rel} escapes workspace root"
+                    ))
+                    .into());
+            }
+            let contents = std::fs::read_to_string(&canonical).map_err(|e| {
+                JsNativeError::error()
+                    .with_message(format!("__readWorkspaceFile__: read failed for {rel}: {e}"))
+            })?;
+            Ok(JsValue::from(boa_engine::js_string!(contents)))
+        })
+    };
+
+    ctx.register_global_callable(boa_engine::js_string!("__readWorkspaceFile__"), 1, reader)
+        .expect("failed to install __readWorkspaceFile__");
 }
 
 #[cfg(test)]
@@ -1614,5 +1661,59 @@ describe("g", () => {
         for o in &result.outcomes {
             assert!(matches!(o.status, Status::Passed));
         }
+    }
+
+    #[test]
+    fn read_workspace_file_returns_contents() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("known-file.txt"), "hello-from-workspace").unwrap();
+        let test_path = root.join("read.test.js");
+        std::fs::write(
+            &test_path,
+            r#"import { describe, it, expect } from "zero/test";
+describe("g", () => {
+  it("reads workspace file", () => {
+    const s = globalThis.__readWorkspaceFile__("known-file.txt");
+    expect(s).toContain("hello-from-workspace");
+  });
+});
+"#,
+        )
+        .unwrap();
+        let result = run_file(root, &test_path);
+        assert!(
+            result.load_error.is_none(),
+            "load_error: {:?}",
+            result.load_error
+        );
+        assert_eq!(result.outcomes.len(), 1);
+        assert_eq!(result.outcomes[0].status, Status::Passed);
+    }
+
+    #[test]
+    fn read_workspace_file_rejects_escaping_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let test_path = root.join("escape.test.js");
+        std::fs::write(
+            &test_path,
+            r#"import { describe, it, expect } from "zero/test";
+describe("g", () => {
+  it("rejects escape", () => {
+    expect(() => globalThis.__readWorkspaceFile__("../outside")).toThrow();
+  });
+});
+"#,
+        )
+        .unwrap();
+        let result = run_file(root, &test_path);
+        assert!(
+            result.load_error.is_none(),
+            "load_error: {:?}",
+            result.load_error
+        );
+        assert_eq!(result.outcomes.len(), 1);
+        assert_eq!(result.outcomes[0].status, Status::Passed);
     }
 }

@@ -357,6 +357,11 @@ In `runtime/zero-test.d.ts`:
   `.not.toThrow` takes the same `message?: string` as positive
   `toThrow`). Strict typing of negation results is not required.
 
+`toBeUndefined()` and `toBeDefined()` were declared in the `Matcher` /
+`NegatedMatcher` interfaces but were never implemented in `_buildPositive` /
+`_buildNegative`; they were filled in by the follow-up
+`issues/test-matcher-drift/` slice.
+
 #### 3.4 Self-tests
 
 In `runtime/test.test.js`, add coverage for each new matcher:

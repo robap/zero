@@ -4,7 +4,22 @@
 //! These tests are marked `#[ignore]` so they don't gate CI for this slice,
 //! but they can be run manually with `cargo test -- --ignored`.
 
+use std::path::PathBuf;
+
 use assert_cmd::Command;
+
+/// Resolve a repo-root-relative path. Cargo runs test binaries with the CWD set
+/// to the package directory (`crates/zero`), so plain relative paths to
+/// `runtime/*` don't resolve; anchor them to the workspace root via
+/// `CARGO_MANIFEST_DIR` instead.
+fn repo_path(rel: &str) -> PathBuf {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir
+        .ancestors()
+        .nth(2)
+        .expect("crates/<pkg> has a workspace root two levels up");
+    workspace_root.join(rel)
+}
 
 /// Scaffold a temp project and copy a runtime test file into it, rewriting
 /// bare-module imports to use `"zero"` instead of the relative runtime paths.
@@ -72,7 +87,7 @@ fn scaffold_with_runtime_test(content: &str) -> tempfile::TempDir {
 #[test]
 #[ignore]
 fn reactivity_test_smoke_passes_under_boa() {
-    let content = std::fs::read_to_string("runtime/reactivity.test.js").unwrap();
+    let content = std::fs::read_to_string(repo_path("runtime/reactivity.test.js")).unwrap();
     let tmp = scaffold_with_runtime_test(&content);
     let output = Command::cargo_bin("zero")
         .unwrap()
@@ -92,7 +107,7 @@ fn reactivity_test_smoke_passes_under_boa() {
 #[test]
 #[ignore]
 fn template_test_smoke_passes_under_boa() {
-    let content = std::fs::read_to_string("runtime/template.test.js").unwrap();
+    let content = std::fs::read_to_string(repo_path("runtime/template.test.js")).unwrap();
     let tmp = scaffold_with_runtime_test(&content);
     let output = Command::cargo_bin("zero")
         .unwrap()

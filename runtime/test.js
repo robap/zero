@@ -474,6 +474,16 @@ function _buildPositive(actual) {
     toBeNull() {
       if (actual !== null) _fail(`expect(${_pretty(actual)}).toBeNull(): value is not null`);
     },
+    toBeUndefined() {
+      if (actual !== undefined) {
+        _fail(`expect(${_pretty(actual)}).toBeUndefined(): value is not undefined`);
+      }
+    },
+    toBeDefined() {
+      if (actual === undefined) {
+        _fail(`expect(${_pretty(actual)}).toBeDefined(): value is undefined`);
+      }
+    },
     toContain(item) {
       if (typeof actual === "string") {
         if (!actual.includes(item)) {
@@ -612,6 +622,16 @@ function _buildNegative(actual, positive) {
       const f = _captureUserFrame();
       _negate(() => positive.toBeNull(),
         `expect(${_pretty(actual)}).not.toBeNull(): value is null`, f);
+    },
+    toBeUndefined() {
+      const f = _captureUserFrame();
+      _negate(() => positive.toBeUndefined(),
+        `expect(${_pretty(actual)}).not.toBeUndefined(): value is undefined`, f);
+    },
+    toBeDefined() {
+      const f = _captureUserFrame();
+      _negate(() => positive.toBeDefined(),
+        `expect(${_pretty(actual)}).not.toBeDefined(): value is defined`, f);
     },
     toContain(item) {
       const f = _captureUserFrame();

@@ -82,6 +82,44 @@ describe("expect matchers", () => {
     expect(caught).toBeTruthy();
     expect(caught.message).toContain("snapshot testing is not in this slice yet");
   });
+
+  it("toBeUndefined passes when actual is undefined", () => {
+    expect(undefined).toBeUndefined();
+  });
+
+  it("toBeUndefined throws when actual is null", () => {
+    let caught;
+    try { expect(null).toBeUndefined(); } catch (e) { caught = e; }
+    expect(caught).toBeTruthy();
+    expect(caught.message).toContain("toBeUndefined");
+    expect(caught.message).toContain("is not undefined");
+  });
+
+  it("toBeUndefined throws for 0, '', false", () => {
+    for (const v of [0, "", false]) {
+      let caught;
+      try { expect(v).toBeUndefined(); } catch (e) { caught = e; }
+      expect(caught).toBeTruthy();
+      expect(caught.message).toContain("is not undefined");
+    }
+  });
+
+  it("toBeDefined passes for null, 0, '', false, object, number", () => {
+    expect(null).toBeDefined();
+    expect(0).toBeDefined();
+    expect("").toBeDefined();
+    expect(false).toBeDefined();
+    expect({}).toBeDefined();
+    expect(1).toBeDefined();
+  });
+
+  it("toBeDefined throws when actual is undefined", () => {
+    let caught;
+    try { expect(undefined).toBeDefined(); } catch (e) { caught = e; }
+    expect(caught).toBeTruthy();
+    expect(caught.message).toContain("toBeDefined");
+    expect(caught.message).toContain("is undefined");
+  });
 });
 
 describe(".not chain", () => {
@@ -207,6 +245,28 @@ describe(".not chain", () => {
     s(1);
     s(2);
     expect(s).not.toHaveBeenLastCalledWith(1);
+  });
+
+  it(".not.toBeUndefined passes for a non-undefined value", () => {
+    expect(null).not.toBeUndefined();
+  });
+
+  it(".not.toBeUndefined throws when value is undefined", () => {
+    let caught;
+    try { expect(undefined).not.toBeUndefined(); } catch (e) { caught = e; }
+    expect(caught).toBeTruthy();
+    expect(caught.message).toContain("is undefined");
+  });
+
+  it(".not.toBeDefined passes for undefined", () => {
+    expect(undefined).not.toBeDefined();
+  });
+
+  it(".not.toBeDefined throws for a defined value", () => {
+    let caught;
+    try { expect(0).not.toBeDefined(); } catch (e) { caught = e; }
+    expect(caught).toBeTruthy();
+    expect(caught.message).toContain("is defined");
   });
 
   it("negation failure error has the same _userFrame shape as positive matchers", () => {
@@ -704,5 +764,82 @@ describe("spy matchers", () => {
     expect(c3.message).toContain("value is not a spy");
     let c4; try { expect(42).toHaveBeenLastCalledWith(); } catch (e) { c4 = e; }
     expect(c4.message).toContain("value is not a spy");
+  });
+});
+
+describe("matcher .d.ts ↔ runtime parity", () => {
+  // The harness project root is `runtime/`, so the .d.ts is read by its
+  // basename. The .d.ts is contract-formatted: one method signature per line
+  // with no nested braces inside interface bodies. This parser depends on that
+  // shape — reformatting to multi-line signatures would break it.
+  const dts = globalThis.__readWorkspaceFile__("zero-test.d.ts");
+
+  function interfaceBody(name) {
+    const opener = `interface ${name} {`;
+    const start = dts.indexOf(opener);
+    if (start < 0) throw new Error(`interface ${name} not found in zero-test.d.ts`);
+    const bodyStart = start + opener.length;
+    const end = dts.indexOf("}", bodyStart);
+    if (end < 0) throw new Error(`closing brace for interface ${name} not found`);
+    return dts.slice(bodyStart, end);
+  }
+
+  function matcherNames(body) {
+    const names = new Set();
+    const re = /^\s*(\w+)\s*\(/gm;
+    let m;
+    while ((m = re.exec(body)) !== null) names.add(m[1]);
+    return names;
+  }
+
+  const declaredPositive = matcherNames(interfaceBody("Matcher"));
+  const declaredNegated = matcherNames(interfaceBody("NegatedMatcher"));
+
+  it("every matcher declared on Matcher is implemented on expect()", () => {
+    const m = expect(0);
+    const missing = [];
+    for (const name of declaredPositive) {
+      if (typeof m[name] !== "function") missing.push(name);
+    }
+    if (missing.length > 0) {
+      throw new Error(`matcher(s) declared on Matcher but not implemented: ${missing.join(", ")}`);
+    }
+  });
+
+  it("every matcher declared on NegatedMatcher is implemented on expect().not", () => {
+    expect(typeof expect(0).not).toBe("object");
+    const n = expect(0).not;
+    const missing = [];
+    for (const name of declaredNegated) {
+      if (typeof n[name] !== "function") missing.push(name);
+    }
+    if (missing.length > 0) {
+      throw new Error(`matcher(s) declared on NegatedMatcher but not implemented: ${missing.join(", ")}`);
+    }
+  });
+
+  it("every matcher implemented on expect() is declared in Matcher", () => {
+    const m = expect(0);
+    const undeclared = [];
+    for (const key of Object.keys(m)) {
+      if (key === "not") continue;
+      if (typeof m[key] !== "function") continue;
+      if (!declaredPositive.has(key)) undeclared.push(key);
+    }
+    if (undeclared.length > 0) {
+      throw new Error(`matcher(s) implemented on expect() but not declared in Matcher: ${undeclared.join(", ")}`);
+    }
+  });
+
+  it("every matcher implemented on expect().not is declared in NegatedMatcher", () => {
+    const n = expect(0).not;
+    const undeclared = [];
+    for (const key of Object.keys(n)) {
+      if (typeof n[key] !== "function") continue;
+      if (!declaredNegated.has(key)) undeclared.push(key);
+    }
+    if (undeclared.length > 0) {
+      throw new Error(`matcher(s) implemented on expect().not but not declared in NegatedMatcher: ${undeclared.join(", ")}`);
+    }
   });
 });
