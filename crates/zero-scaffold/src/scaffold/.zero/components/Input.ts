@@ -1,5 +1,6 @@
 import { html } from "zero";
 import type { Signal, TemplateResult } from "zero";
+import { debounce } from "./_internal.ts";
 
 export type InputType =
   | "text"
@@ -18,6 +19,11 @@ export type InputProps = {
   placeholder?: string;
   disabled?: boolean;
   label?: string;
+  /**
+   * Optional debounce window in milliseconds for the `value` signal
+   * write. `0` or omitted means synchronous (current behaviour).
+   */
+  debounceMs?: number;
 };
 
 /**
@@ -36,8 +42,9 @@ export default function Input(props: InputProps): TemplateResult {
     const target = e.target as HTMLInputElement;
     props.value.set(target.value);
   };
+  const handler = debounce(onInput, props.debounceMs ?? 0);
   const labelNode: TemplateResult | null = props.label
     ? html`<label class="input-label">${props.label}</label>`
     : null;
-  return html`${labelNode}<input class=${cls} type=${type} value=${() => props.value.val} placeholder=${props.placeholder ?? ""} disabled=${props.disabled ?? false} @input=${onInput}>`;
+  return html`${labelNode}<input class=${cls} type=${type} value=${() => props.value.val} placeholder=${props.placeholder ?? ""} disabled=${props.disabled ?? false} @input=${handler}>`;
 }

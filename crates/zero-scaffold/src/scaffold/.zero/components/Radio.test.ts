@@ -23,4 +23,18 @@ describe("Radio", () => {
     fire(inputs[1]!, "change");
     expect(selected.val).toBe("b");
   });
+
+  it("honours debounceMs", async () => {
+    const selected = signal("a");
+    const group = html`<div>
+      ${Radio({ selected, name: "g", value: "a", label: "A" })}
+      ${Radio({ selected, name: "g", value: "b", label: "B", debounceMs: 50 })}
+    </div>`;
+    const el = render(group);
+    const inputs = findAll(el, "input[type=radio]");
+    fire(inputs[1]!, "change");
+    expect(selected.val).toBe("a");
+    await new Promise((r) => setTimeout(r, 80));
+    expect(selected.val).toBe("b");
+  });
 });

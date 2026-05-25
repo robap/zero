@@ -34,3 +34,31 @@ export function isReactive<T>(p: Reactive<T> | T): p is Reactive<T> {
 export function read<T>(p: Reactive<T> | T): T {
   return isReactive(p) ? p.val : p;
 }
+
+/**
+ * Wrap `fn` so that successive invocations within `ms` reset a
+ * trailing-edge timer. Same shape as the framework's
+ * `@event.debounce:<ms>` template modifier, lifted into a
+ * components-only helper so component implementations can apply
+ * it from JS when the modifier route isn't available.
+ *
+ * Returns the wrapped function unchanged when `ms <= 0` so a
+ * caller can pass `props.debounceMs ?? 0` without branching.
+ *
+ * @template T
+ * @param fn Handler to wrap.
+ * @param ms Trailing-edge debounce window in milliseconds; `<= 0` is a no-op.
+ * @returns The wrapped handler, or `fn` itself when `ms <= 0`.
+ * @internal
+ */
+export function debounce<T extends (...args: any[]) => void>(
+  fn: T,
+  ms: number,
+): T {
+  if (!(ms > 0)) return fn;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  return ((...args: Parameters<T>) => {
+    if (timer != null) clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), ms);
+  }) as T;
+}

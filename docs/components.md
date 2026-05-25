@@ -155,19 +155,19 @@ once you redefine the public tokens.
 | `Badge`    | optional `variant`, `size`, `children`                                     | `Badge({ variant: "success", children: "New" })`                                 |
 | `Button`   | optional `variant`, `size`, `disabled`, `loading`, `onClick`, `children`   | `Button({ variant: "primary", onClick: save, children: "Save" })`                |
 | `Card`     | optional `variant`, `title`, `children`                                    | `Card({ title: "Profile", children: html\`<p>…</p>\` })`                         |
-| `Checkbox` | `checked: Signal<boolean>`; optional `label`, `disabled`                   | `Checkbox({ checked: agreed, label: "I agree" })`                                |
+| `Checkbox` | `checked: Signal<boolean>`; optional `label`, `disabled`, `debounceMs`     | `Checkbox({ checked: agreed, label: "I agree" })`                                |
 | `Combobox` | `value: Signal<string>`, `loadOptions: (q) => Promise<ComboboxOption[]>`; optional `initialLabel`, `size`, `placeholder`, `label`, `disabled`, `debounceMs`, `minQueryLength`, `noResultsLabel`, `loadingLabel`, `onChange` | `Combobox({ value, loadOptions: loadUsers })` |
 | `Dialog`   | `open: Signal<boolean>`; optional `size`, `title`, `children`, `onClose`   | `Dialog({ open, title: "Confirm", children: html\`…\` })`                        |
-| `Input`    | `value: Signal<string>`; optional `type`, `size`, `placeholder`, `label`   | `Input({ value: name, label: "Name", type: "text" })`                            |
+| `Input`    | `value: Signal<string>`; optional `type`, `size`, `placeholder`, `label`, `debounceMs` | `Input({ value: name, label: "Name", type: "text" })`                            |
 | `Pagination` | `page: Signal<number>`, `totalPages: Signal<number> \| Computed<number> \| number`; optional `size`, `siblingCount`, `boundaryCount`, `disabled`, `onChange`, `summary` | `Pagination({ page, totalPages: 10 })`                                          |
-| `Radio`    | `selected: Signal<string>`, `name`, `value`; optional `label`              | `Radio({ selected: choice, name: "size", value: "lg", label: "Large" })`         |
-| `Select`   | `value: Signal<string>`, `options: SelectOption[]`; optional `label`       | `Select({ value: country, options: [{ value: "us", label: "USA" }] })`           |
+| `Radio`    | `selected: Signal<string>`, `name`, `value`; optional `label`, `debounceMs` | `Radio({ selected: choice, name: "size", value: "lg", label: "Large" })`         |
+| `Select`   | `value: Signal<string>`, `options: SelectOption[]`; optional `label`, `debounceMs` | `Select({ value: country, options: [{ value: "us", label: "USA" }] })`           |
 | `Spinner`  | optional `variant`, `size`, `label`                                        | `Spinner({ size: "lg", label: "Loading" })`                                      |
 | `Tabs`     | `active: Signal<string>`, `tabs`, `panels`                                 | `Tabs({ active, tabs: [...], panels: { ... } })`                                 |
 | `Table`    | `columns`, `rows: Signal<T[]>`, `rowKey`; optional `density`, `loading`, `sort`, `onSortChange` | `Table({ columns, rows, rowKey: r => r.id })`                                    |
-| `TextArea` | `value: Signal<string>`; optional `rows`, `placeholder`, `label`           | `TextArea({ value: notes, rows: 5, label: "Notes" })`                            |
+| `TextArea` | `value: Signal<string>`; optional `rows`, `placeholder`, `label`, `debounceMs` | `TextArea({ value: notes, rows: 5, label: "Notes" })`                            |
 | `Toast`    | `open: Signal<boolean>`, `message`; optional `variant`, `duration`         | `Toast({ open, message: "Saved", variant: "success" })`                          |
-| `Toggle`   | `checked: Signal<boolean>`; optional `label`, `disabled`                   | `Toggle({ checked: darkMode, label: "Dark mode" })`                              |
+| `Toggle`   | `checked: Signal<boolean>`; optional `label`, `disabled`, `debounceMs`     | `Toggle({ checked: darkMode, label: "Dark mode" })`                              |
 
 The convention across the library:
 
@@ -189,6 +189,24 @@ The convention across the library:
 - **Children are templates.** Where a component accepts children,
   it accepts `TemplateResult` or a `string`. Pass `html\`…\``
   for arbitrary markup.
+
+Signal-writing components (`Input`, `TextArea`, `Checkbox`, `Toggle`,
+`Radio`, `Select`) accept `debounceMs?: number` to delay the signal
+write by N milliseconds on the trailing edge, mirroring the
+`@event.debounce:<ms>` template modifier for cases where the inner
+control's event slot isn't reachable through the component API.
+Defaults to `0` (synchronous). For `Input`/`TextArea` the DOM shows
+the typed text immediately while the signal still holds the previous
+value during the window; an external write to the signal in that
+window still re-renders immediately, exactly as it does without
+`debounceMs` — not a new footgun. For the click-driven components
+(`Checkbox`/`Toggle`/`Radio`/`Select`) the control toggles in the DOM
+immediately and only the signal write is delayed, so the visible state
+and the signal diverge during the window — usually you want to debounce
+the downstream effect, not the signal write. Note that
+`Combobox.debounceMs` means something different (the gap before
+`loadOptions` runs after the last keystroke), so the same prop name
+carries a different meaning on that component.
 
 Props typed `Signal<T> | T` accept a `Computed<T>` too where noted:
 `Pagination.totalPages`, `Pagination.disabled`, and

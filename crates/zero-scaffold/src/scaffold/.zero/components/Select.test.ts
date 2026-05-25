@@ -34,4 +34,22 @@ describe("Select", () => {
     fire(find(el, "select")!, "change", { target: { value: "b" } });
     expect(value.val).toBe("b");
   });
+
+  it("honours debounceMs", async () => {
+    const value = signal("a");
+    const el = render(
+      Select({
+        value,
+        debounceMs: 50,
+        options: [
+          { value: "a", label: "A" },
+          { value: "b", label: "B" },
+        ],
+      }),
+    );
+    fire(find(el, "select")!, "change", { target: { value: "b" } });
+    expect(value.val).toBe("a");
+    await new Promise((r) => setTimeout(r, 80));
+    expect(value.val).toBe("b");
+  });
 });

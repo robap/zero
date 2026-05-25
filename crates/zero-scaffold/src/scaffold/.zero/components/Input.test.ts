@@ -18,4 +18,31 @@ describe("Input", () => {
     fire(find(el, "input")!, "input", { target: { value: "hello" } });
     expect(value.val).toBe("hello");
   });
+
+  it("writes synchronously with debounceMs: 0", () => {
+    const value = signal("");
+    const el = render(Input({ value, debounceMs: 0 }));
+    fire(find(el, "input")!, "input", { target: { value: "hello" } });
+    expect(value.val).toBe("hello");
+  });
+
+  it("honours debounceMs", async () => {
+    const value = signal("");
+    const el = render(Input({ value, debounceMs: 50 }));
+    fire(find(el, "input")!, "input", { target: { value: "hello" } });
+    expect(value.val).toBe("");
+    await new Promise((r) => setTimeout(r, 80));
+    expect(value.val).toBe("hello");
+  });
+
+  it("collapses successive events within the window to one write", async () => {
+    const value = signal("");
+    const el = render(Input({ value, debounceMs: 50 }));
+    const input = find(el, "input")!;
+    fire(input, "input", { target: { value: "a" } });
+    fire(input, "input", { target: { value: "ab" } });
+    fire(input, "input", { target: { value: "abc" } });
+    await new Promise((r) => setTimeout(r, 80));
+    expect(value.val).toBe("abc");
+  });
 });

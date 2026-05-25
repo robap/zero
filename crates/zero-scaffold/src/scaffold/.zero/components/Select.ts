@@ -1,5 +1,6 @@
 import { html } from "zero";
 import type { Signal, TemplateResult } from "zero";
+import { debounce } from "./_internal.ts";
 
 export type SelectSize = "sm" | "md" | "lg";
 
@@ -14,6 +15,11 @@ export type SelectProps = {
   size?: SelectSize;
   disabled?: boolean;
   label?: string;
+  /**
+   * Optional debounce window in milliseconds for the `value` signal
+   * write. `0` or omitted means synchronous (current behaviour).
+   */
+  debounceMs?: number;
 };
 
 /**
@@ -30,6 +36,7 @@ export default function Select(props: SelectProps): TemplateResult {
     const target = e.target as HTMLSelectElement;
     props.value.set(target.value);
   };
+  const handler = debounce(onChange, props.debounceMs ?? 0);
   const labelNode: TemplateResult | null = props.label
     ? html`<label class="select-label">${props.label}</label>`
     : null;
@@ -37,5 +44,5 @@ export default function Select(props: SelectProps): TemplateResult {
     (o) =>
       html`<option value=${o.value} selected=${() => props.value.val === o.value}>${o.label}</option>`,
   );
-  return html`${labelNode}<select class=${cls} disabled=${props.disabled ?? false} @change=${onChange}>${options}</select>`;
+  return html`${labelNode}<select class=${cls} disabled=${props.disabled ?? false} @change=${handler}>${options}</select>`;
 }

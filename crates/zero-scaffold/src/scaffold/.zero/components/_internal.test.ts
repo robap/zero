@@ -1,6 +1,6 @@
 import { describe, it, expect } from "zero/test";
 import { signal, computed } from "zero";
-import { isReactive, read } from "./_internal.ts";
+import { isReactive, read, debounce } from "./_internal.ts";
 
 describe("_internal", () => {
   describe("isReactive", () => {
@@ -38,6 +38,34 @@ describe("_internal", () => {
     });
     it("returns computed.val", () => {
       expect(read(computed(() => 7))).toBe(7);
+    });
+  });
+  describe("debounce", () => {
+    it("returns the same function reference when ms is 0", () => {
+      const fn = () => {};
+      expect(debounce(fn, 0)).toBe(fn);
+    });
+    it("returns the same function reference when ms is negative", () => {
+      const fn = () => {};
+      expect(debounce(fn, -5)).toBe(fn);
+    });
+    it("delays the call until the window elapses", async () => {
+      let calls: unknown[][] = [];
+      const wrapped = debounce((...args: unknown[]) => calls.push(args), 50);
+      wrapped("x");
+      expect(calls.length).toBe(0);
+      await new Promise((r) => setTimeout(r, 80));
+      expect(calls.length).toBe(1);
+    });
+    it("collapses calls within the window to one trailing call with the last args", async () => {
+      let calls: unknown[][] = [];
+      const wrapped = debounce((...args: unknown[]) => calls.push(args), 50);
+      wrapped("a");
+      wrapped("b");
+      wrapped("c");
+      await new Promise((r) => setTimeout(r, 80));
+      expect(calls.length).toBe(1);
+      expect(calls[0]).toEqual(["c"]);
     });
   });
 });

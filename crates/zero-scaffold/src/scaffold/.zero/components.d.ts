@@ -46,6 +46,7 @@ declare module "zero/components" {
     checked: Signal<boolean>;
     label?: string;
     disabled?: boolean;
+    debounceMs?: number;
   };
   export function Checkbox(props: CheckboxProps): TemplateResult;
 
@@ -93,6 +94,7 @@ declare module "zero/components" {
     placeholder?: string;
     disabled?: boolean;
     label?: string;
+    debounceMs?: number;
   };
   export function Input(props: InputProps): TemplateResult;
 
@@ -117,6 +119,7 @@ declare module "zero/components" {
     value: string;
     label?: string;
     disabled?: boolean;
+    debounceMs?: number;
   };
   export function Radio(props: RadioProps): TemplateResult;
 
@@ -128,6 +131,7 @@ declare module "zero/components" {
     size?: SelectSize;
     disabled?: boolean;
     label?: string;
+    debounceMs?: number;
   };
   export function Select(props: SelectProps): TemplateResult;
 
@@ -174,6 +178,7 @@ declare module "zero/components" {
     placeholder?: string;
     disabled?: boolean;
     label?: string;
+    debounceMs?: number;
   };
   export function TextArea(props: TextAreaProps): TemplateResult;
 
@@ -191,6 +196,7 @@ declare module "zero/components" {
     checked: Signal<boolean>;
     label?: string;
     disabled?: boolean;
+    debounceMs?: number;
   };
   export function Toggle(props: ToggleProps): TemplateResult;
 }

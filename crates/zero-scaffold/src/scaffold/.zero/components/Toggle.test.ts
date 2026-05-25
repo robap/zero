@@ -18,4 +18,13 @@ describe("Toggle", () => {
     fire(find(el, "input")!, "change");
     expect(checked.val).toBe(true);
   });
+
+  it("honours debounceMs", async () => {
+    const checked = signal(false);
+    const el = render(Toggle({ checked, label: "Wifi", debounceMs: 50 }));
+    fire(find(el, "input")!, "change");
+    expect(checked.val).toBe(false);
+    await new Promise((r) => setTimeout(r, 80));
+    expect(checked.val).toBe(true);
+  });
 });

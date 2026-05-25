@@ -18,4 +18,13 @@ describe("TextArea", () => {
     fire(find(el, "textarea")!, "input", { target: { value: "hi there" } });
     expect(value.val).toBe("hi there");
   });
+
+  it("honours debounceMs", async () => {
+    const value = signal("");
+    const el = render(TextArea({ value, debounceMs: 50 }));
+    fire(find(el, "textarea")!, "input", { target: { value: "hi there" } });
+    expect(value.val).toBe("");
+    await new Promise((r) => setTimeout(r, 80));
+    expect(value.val).toBe("hi there");
+  });
 });
