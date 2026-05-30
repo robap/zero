@@ -1147,9 +1147,9 @@ function _blurElement(el) {
   _dispatchEvent(el, _makeEvent("blur", {}));
 }
 
-const _documentElement = createElement("html");
-const _head = createElement("head");
-const _body = createElement("body");
+let _documentElement = createElement("html");
+let _head = createElement("head");
+let _body = createElement("body");
 _appendChild(_documentElement, _head);
 _appendChild(_documentElement, _body);
 
@@ -1181,8 +1181,11 @@ export const document = Object.assign(
     _activeElement: null,
     _title: "",
     get documentElement() { return _documentElement; },
+    set documentElement(v) { _documentElement = v; },
     get head() { return _head; },
+    set head(v) { _head = v; },
     get body() { return _body; },
+    set body(v) { _body = v; },
     get activeElement() { return this._activeElement; },
     get title() { return this._title; },
     set title(v) { this._title = v == null ? "" : String(v); },

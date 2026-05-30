@@ -231,8 +231,22 @@ fn run_with_loader_inner(
         None
     };
     let loaded = loader.loaded_paths();
-    drop(context);
-    boa_engine::gc::force_collect();
+    // Leak the Boa context instead of dropping it. Dropping (or
+    // `gc::force_collect()`-ing) runs Boa 0.21.1's `MapLock::finalize`
+    // (boa_engine/.../map/ordered_map.rs), which `downcast_mut`s the backing
+    // map during GC finalization and panics with `Object already borrowed:
+    // BorrowMutError` whenever a `Map` is still locked at collection time. That
+    // first panic then trips a *second* panic in a destructor during unwind,
+    // producing a non-unwinding abort that bypasses the `catch_unwind` net in
+    // `run_with_loader` and kills the whole process — so a single test file
+    // using `Map` can abort the entire suite (see FRAMEWORK_NOTES #63).
+    //
+    // We never need this file's heap again: each file gets a fresh context, the
+    // process is short-lived, and coverage was already serialized above. Leaking
+    // skips the buggy finalizers entirely. The cost is per-file memory growth
+    // (~12 MB/file); bounded by suite size and acceptable for a test run. The
+    // real fix lives upstream (Boa's own `TODO: try_downcast_mut`).
+    std::mem::forget(context);
     RunOutcome {
         result: FileResult {
             path: rel_path,
@@ -1182,6 +1196,66 @@ describe("g", () => {
                 o.name_chain.join(" > ")
             );
         }
+    }
+
+    #[test]
+    fn document_root_props_are_writable_for_isolation() {
+        // Regression: `document.documentElement` / `head` / `body` were
+        // getter-only, so a `beforeEach` that swaps them for isolation threw
+        // "cannot set non-writable property" and the test was silently
+        // reported as Skipped. They now have setters, so the swap succeeds and
+        // the test runs to a real Pass/Fail. Mirrors the demo's Layout.test.ts
+        // theme-isolation pattern (swap the root, assert a setAttribute write,
+        // restore in afterEach).
+        let f = write_temp_js(
+            r#"import { describe, it, beforeEach, afterEach, expect } from "zero/test";
+function fakeRoot() {
+  const attrs = new Map();
+  return {
+    setAttribute: (k, v) => void attrs.set(k, v),
+    getAttribute: (k) => (attrs.has(k) ? attrs.get(k) : null),
+  };
+}
+describe("root isolation", () => {
+  let savedEl, savedHead, savedBody;
+  beforeEach(() => {
+    savedEl = document.documentElement;
+    savedHead = document.head;
+    savedBody = document.body;
+    document.documentElement = fakeRoot();
+    document.head = fakeRoot();
+    document.body = fakeRoot();
+  });
+  afterEach(() => {
+    document.documentElement = savedEl;
+    document.head = savedHead;
+    document.body = savedBody;
+  });
+  it("captures writes on the swapped root", () => {
+    document.documentElement.setAttribute("data-theme", "dark");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+  });
+  it("swaps head and body too", () => {
+    document.head.setAttribute("x", "1");
+    document.body.setAttribute("y", "2");
+    expect(document.head.getAttribute("x")).toBe("1");
+    expect(document.body.getAttribute("y")).toBe("2");
+  });
+});
+"#,
+        );
+        let root = f.path().parent().unwrap();
+        let result = run_file(root, f.path());
+        assert!(result.load_error.is_none(), "unexpected load error");
+        for o in &result.outcomes {
+            assert!(
+                matches!(o.status, Status::Passed),
+                "expected Passed, got {:?} for {}",
+                o.status,
+                o.name_chain.join(" > ")
+            );
+        }
+        assert_eq!(result.outcomes.len(), 2, "expected both its to run");
     }
 
     #[test]
