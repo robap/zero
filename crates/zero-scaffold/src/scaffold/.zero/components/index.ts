@@ -4,7 +4,7 @@ export type { AvatarProps, AvatarSize } from "./Avatar.ts";
 export { default as Badge } from "./Badge.ts";
 export type { BadgeProps, BadgeSize, BadgeVariant } from "./Badge.ts";
 export { default as Button } from "./Button.ts";
-export type { ButtonProps, ButtonSize, ButtonVariant } from "./Button.ts";
+export type { ButtonProps, ButtonSize, ButtonType, ButtonVariant } from "./Button.ts";
 export { default as Card } from "./Card.ts";
 export type { CardProps, CardVariant } from "./Card.ts";
 export { default as Checkbox } from "./Checkbox.ts";

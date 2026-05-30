@@ -153,7 +153,7 @@ once you redefine the public tokens.
 |------------|----------------------------------------------------------------------------|----------------------------------------------------------------------------------|
 | `Avatar`   | `alt`; optional `src`, `initials`, `size`                                  | `Avatar({ alt: "Ada", initials: "A", size: "md" })`                              |
 | `Badge`    | optional `variant`, `size`, `children`                                     | `Badge({ variant: "success", children: "New" })`                                 |
-| `Button`   | optional `variant`, `size`, `disabled`, `loading`, `onClick`, `children`   | `Button({ variant: "primary", onClick: save, children: "Save" })`                |
+| `Button`   | optional `variant`, `size`, `type`, `form`, `name`, `value`, `disabled`, `loading`, `onClick`, `children` | `Button({ variant: "primary", onClick: save, children: "Save" })`                |
 | `Card`     | optional `variant`, `title`, `children`                                    | `Card({ title: "Profile", children: html\`<p>…</p>\` })`                         |
 | `Checkbox` | `checked: Signal<boolean>`; optional `label`, `disabled`, `debounceMs`     | `Checkbox({ checked: agreed, label: "I agree" })`                                |
 | `Combobox` | `value: Signal<string>`, `loadOptions: (q) => Promise<ComboboxOption[]>`; optional `initialLabel`, `size`, `placeholder`, `label`, `disabled`, `debounceMs`, `minQueryLength`, `noResultsLabel`, `loadingLabel`, `onChange` | `Combobox({ value, loadOptions: loadUsers })` |
@@ -224,6 +224,36 @@ init` / `zero update`.
 For component patterns in larger apps — when to reach for the
 shipped components vs. raw HTML, how to compose them, when to
 build your own — see [Best Practices §7](./best-practices.html#7-component-usage).
+
+## Button
+
+Beyond `variant` / `size`, `Button` exposes the native submit-button
+surface so it can drive real forms:
+
+- **`type`** — `"button" | "submit" | "reset"`. Defaults to
+  `"button"`, so a `Button` **never** accidentally submits an enclosing
+  `<form>`. Pass `type: "submit"` explicitly for a submit button. (This
+  is the design-system convention; a bare `<button>` in a form defaults
+  to `submit`, but `Button` does not.)
+- **`form`** — the `id` of the `<form>` this button submits. Lets you
+  render the submit button *outside* its form — e.g. a form in a
+  drawer's `body` slot with its Save/Cancel buttons in the `controls`
+  slot:
+
+  ```ts
+  html`
+    <form id="edit-form">${/* fields */}</form>
+    ${Button({ type: "submit", form: "edit-form", children: "Save" })}
+  `
+  ```
+- **`name` / `value`** — the button's form-control name and value, so a
+  multi-button form's submit handler can tell which button fired.
+
+`form`, `name`, and `value` are emitted only when provided; an omitted
+prop renders no attribute. `loading` renders the leading spinner **and**
+makes the button non-interactive — it sets the native `disabled`
+attribute and short-circuits `onClick` — so a "Saving…" button can't
+double-submit or re-fire while busy.
 
 ## Drawer
 

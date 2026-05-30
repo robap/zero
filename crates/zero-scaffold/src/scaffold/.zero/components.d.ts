@@ -24,9 +24,14 @@ declare module "zero/components" {
 
   export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
   export type ButtonSize = "sm" | "md" | "lg";
+  export type ButtonType = "button" | "submit" | "reset";
   export type ButtonProps = {
     variant?: ButtonVariant;
     size?: ButtonSize;
+    type?: ButtonType;
+    form?: string;
+    name?: string;
+    value?: string;
     disabled?: boolean;
     loading?: boolean;
     onClick?: (event: Event) => void;

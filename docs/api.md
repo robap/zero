@@ -139,7 +139,7 @@ Source of truth:
 | `Toggle`   | `Toggle(props: ToggleProps): TemplateResult`                             | [Components § Component library reference](./components.html#component-library-reference) |
 
 Each component's `Props` type and any associated literal-type
-aliases (`ButtonVariant`, `InputType`, `BadgeSize`, `SelectOption`,
+aliases (`ButtonVariant`, `ButtonType`, `InputType`, `BadgeSize`, `SelectOption`,
 `TableColumn<T>`, `TabsTab`, etc.) live in
 `.zero/components.d.ts` — that file is the canonical, typed
 reference.
