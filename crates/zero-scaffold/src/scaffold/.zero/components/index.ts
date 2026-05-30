@@ -13,6 +13,8 @@ export { default as Combobox } from "./Combobox.ts";
 export type { ComboboxOption, ComboboxProps, ComboboxSize } from "./Combobox.ts";
 export { default as Dialog } from "./Dialog.ts";
 export type { DialogProps, DialogSize } from "./Dialog.ts";
+export { default as Drawer } from "./Drawer.ts";
+export type { DrawerProps, DrawerMode, DrawerSide, DrawerSize } from "./Drawer.ts";
 export { default as Input } from "./Input.ts";
 export type { InputProps, InputSize, InputType } from "./Input.ts";
 export { default as Pagination } from "./Pagination.ts";

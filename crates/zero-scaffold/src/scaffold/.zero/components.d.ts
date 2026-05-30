@@ -78,6 +78,26 @@ declare module "zero/components" {
   };
   export function Dialog(props: DialogProps): TemplateResult;
 
+  export type DrawerSide = "left" | "right" | "top" | "bottom";
+  export type DrawerMode = "overlay" | "push";
+  export type DrawerSize = "sm" | "md" | "lg";
+  export type DrawerSlot =
+    | TemplateResult
+    | string
+    | null
+    | undefined
+    | (() => TemplateResult | string | null);
+  export type DrawerProps = {
+    open: Signal<boolean>;
+    side: DrawerSide;
+    mode?: DrawerMode;
+    size?: DrawerSize;
+    title?: DrawerSlot;
+    body?: DrawerSlot;
+    controls?: DrawerSlot;
+  };
+  export function Drawer(props: DrawerProps): TemplateResult;
+
   export type InputType =
     | "text"
     | "email"

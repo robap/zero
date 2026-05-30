@@ -144,7 +144,7 @@ a common mistake when porting from React. See
 
 ## Component library reference
 
-zero ships seventeen production-ready components under the bare
+zero ships eighteen production-ready components under the bare
 specifier `"zero/components"`. They use the design system tokens
 covered in [Theming](./theming.html), so they take on your brand
 once you redefine the public tokens.
@@ -158,6 +158,7 @@ once you redefine the public tokens.
 | `Checkbox` | `checked: Signal<boolean>`; optional `label`, `disabled`, `debounceMs`     | `Checkbox({ checked: agreed, label: "I agree" })`                                |
 | `Combobox` | `value: Signal<string>`, `loadOptions: (q) => Promise<ComboboxOption[]>`; optional `initialLabel`, `size`, `placeholder`, `label`, `disabled`, `debounceMs`, `minQueryLength`, `noResultsLabel`, `loadingLabel`, `onChange` | `Combobox({ value, loadOptions: loadUsers })` |
 | `Dialog`   | `open: Signal<boolean>`; optional `size`, `title`, `children`, `onClose`   | `Dialog({ open, title: "Confirm", children: html\`…\` })`                        |
+| `Drawer`   | `open: Signal<boolean>`, `side`; optional `mode`, `size`, `title`, `body`, `controls` | `Drawer({ open, side: "right", mode: "push", title: "Edit user", body: form })`  |
 | `Input`    | `value: Signal<string>`; optional `type`, `size`, `placeholder`, `label`, `debounceMs` | `Input({ value: name, label: "Name", type: "text" })`                            |
 | `Pagination` | `page: Signal<number>`, `totalPages: Signal<number> \| Computed<number> \| number`; optional `size`, `siblingCount`, `boundaryCount`, `disabled`, `onChange`, `summary` | `Pagination({ page, totalPages: 10 })`                                          |
 | `Radio`    | `selected: Signal<string>`, `name`, `value`; optional `label`, `debounceMs` | `Radio({ selected: choice, name: "size", value: "lg", label: "Large" })`         |
@@ -223,6 +224,63 @@ init` / `zero update`.
 For component patterns in larger apps — when to reach for the
 shipped components vs. raw HTML, how to compose them, when to
 build your own — see [Best Practices §7](./best-practices.html#7-component-usage).
+
+## Drawer
+
+`Drawer` is an edge-anchored side panel. It is a pure visual container:
+three caller-owned slots (`title`, `body`, `controls`), no built-in close
+affordances, no focus trap, no scroll lock. The only stateful prop is
+`open`; the parent owns close. The DOM is always mounted so CSS animates
+both the open and the close. `mode` is `"overlay"` (fixed over content,
+with a non-interactive backdrop) or `"push"` (an in-flow flex sibling
+whose side-axis size animates from `0`, so the parent layout reflows).
+
+The intended shape is **one drawer per side, mounted once in the root
+layout, used as a singleton context surface**: the panel stays put while
+the caller swaps its contents reactively. `open` is typically a `computed`
+over context signals, and each slot is a `() => …` function that switches
+on which context is active.
+
+```ts
+// Shape A — context-driven forms. Several actions open the same drawer.
+const editingUser = signal<User | null>(null);
+const addingProduct = signal(false);
+const open = computed(() => editingUser.val !== null || addingProduct.val);
+
+Drawer({
+  open,
+  side: "right",
+  mode: "push",
+  title: () => (editingUser.val ? "Edit user" : addingProduct.val ? "Add product" : null),
+  body: () => {
+    const u = editingUser.val;
+    if (u) return EditUserForm({ user: u });
+    return addingProduct.val ? AddProductForm() : null;
+  },
+  controls: () => html`${Button({ variant: "ghost", children: "Cancel", onClick: clear })}`,
+});
+```
+
+```ts
+// Shape B — inspector over a table. Push mode is load-bearing here.
+const selectedRow = signal<Row | null>(null);
+const open = computed(() => selectedRow.val !== null);
+
+Table({ columns, rows, rowKey: r => r.id, onRowClick: r => selectedRow.set(r) });
+Drawer({ open, side: "right", mode: "push", /* title/body read selectedRow */ });
+```
+
+Push mode renders **no backdrop**, ever — the underlying content stays
+fully interactive. That is what lets the inspector pattern work: with the
+drawer open you can click a different table row, and the body swaps to the
+new record without the drawer closing first. An overlay backdrop would
+intercept those clicks.
+
+Push mode only reflows when the drawer is a flex/grid child along the
+relevant axis — mount it as a sibling of your content inside a `cluster`
+(for `left`/`right`) or `stack` (for `top`/`bottom`). This is a usage
+requirement, documented but not enforced at runtime: dropped outside such
+a parent, a push drawer simply sits in normal flow and pushes nothing.
 
 ## Table sort
 

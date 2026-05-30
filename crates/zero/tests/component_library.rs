@@ -41,6 +41,7 @@ fn showcase_test_runs_all_component_tests() {
         "Checkbox",
         "Combobox",
         "Dialog",
+        "Drawer",
         "Input",
         "Pagination",
         "Radio",

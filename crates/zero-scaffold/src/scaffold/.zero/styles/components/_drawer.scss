@@ -1,0 +1,136 @@
+// Drawer — edge-anchored side panel. Overlay mode pins to a viewport edge
+// via `position: fixed` and slides in with `transform`; push mode lives in
+// normal flow as a flex sibling and animates its side-axis size from 0.
+// Size variants set a per-axis custom property (`--drawer-inline` /
+// `--drawer-block`) that the side rules consume. The panel surface,
+// section layout, and the non-interactive overlay backdrop live here.
+@layer components {
+  .drawer-backdrop {
+    position: fixed;
+    inset: 0;
+    background: var(--color-overlay);
+    backdrop-filter: blur(4px);
+    z-index: 999;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--duration-normal) var(--ease-out);
+  }
+  .drawer-backdrop-open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .drawer {
+    background: var(--color-bg);
+    color: var(--color-text);
+    border: var(--border-thin) solid var(--color-border);
+    box-shadow: var(--shadow-lg);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transition:
+      inline-size var(--duration-normal) var(--ease-out),
+      block-size var(--duration-normal) var(--ease-out),
+      transform var(--duration-normal) var(--ease-out);
+  }
+
+  // Size variants set a per-axis custom property; side rules consume it.
+  .drawer-left.drawer-sm,
+  .drawer-right.drawer-sm {
+    --drawer-inline: 16rem;
+  }
+  .drawer-left.drawer-md,
+  .drawer-right.drawer-md {
+    --drawer-inline: 24rem;
+  }
+  .drawer-left.drawer-lg,
+  .drawer-right.drawer-lg {
+    --drawer-inline: 32rem;
+  }
+  .drawer-top.drawer-sm,
+  .drawer-bottom.drawer-sm {
+    --drawer-block: 12rem;
+  }
+  .drawer-top.drawer-md,
+  .drawer-bottom.drawer-md {
+    --drawer-block: 18rem;
+  }
+  .drawer-top.drawer-lg,
+  .drawer-bottom.drawer-lg {
+    --drawer-block: 24rem;
+  }
+
+  // Overlay mode — fixed, sized on the side-axis, off-screen via transform.
+  .drawer-overlay {
+    position: fixed;
+    z-index: 1000;
+  }
+  .drawer-overlay.drawer-left {
+    inset-block: 0;
+    inset-inline-start: 0;
+    inline-size: var(--drawer-inline);
+    transform: translateX(-100%);
+  }
+  .drawer-overlay.drawer-right {
+    inset-block: 0;
+    inset-inline-end: 0;
+    inline-size: var(--drawer-inline);
+    transform: translateX(100%);
+  }
+  .drawer-overlay.drawer-top {
+    inset-inline: 0;
+    inset-block-start: 0;
+    block-size: var(--drawer-block);
+    transform: translateY(-100%);
+  }
+  .drawer-overlay.drawer-bottom {
+    inset-inline: 0;
+    inset-block-end: 0;
+    block-size: var(--drawer-block);
+    transform: translateY(100%);
+  }
+  .drawer-overlay.drawer-open {
+    transform: none;
+  }
+
+  // Push mode — in-flow; collapses to 0 on the side-axis, animates open.
+  .drawer-push.drawer-left,
+  .drawer-push.drawer-right {
+    inline-size: 0;
+  }
+  .drawer-push.drawer-top,
+  .drawer-push.drawer-bottom {
+    block-size: 0;
+  }
+  .drawer-push.drawer-open.drawer-left,
+  .drawer-push.drawer-open.drawer-right {
+    inline-size: var(--drawer-inline);
+  }
+  .drawer-push.drawer-open.drawer-top,
+  .drawer-push.drawer-open.drawer-bottom {
+    block-size: var(--drawer-block);
+  }
+
+  // Section layout inside the panel.
+  .drawer-title {
+    flex: 0 0 auto;
+    padding-block: var(--space-md);
+    padding-inline: var(--space-lg);
+    border-block-end: var(--border-thin) solid var(--color-border);
+  }
+  .drawer-body {
+    flex: 1 1 auto;
+    min-block-size: 0;
+    overflow: auto;
+    padding: var(--space-lg);
+  }
+  .drawer-controls {
+    flex: 0 0 auto;
+    padding-block: var(--space-md);
+    padding-inline: var(--space-lg);
+    border-block-start: var(--border-thin) solid var(--color-border);
+    display: flex;
+    gap: var(--space-sm);
+    justify-content: flex-end;
+  }
+}

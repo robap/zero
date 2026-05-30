@@ -56,6 +56,9 @@ const TPL_COMBOBOX_SCSS: &str = include_str!("scaffold/.zero/styles/components/_
 const TPL_DIALOG_TS: &str = include_str!("scaffold/.zero/components/Dialog.ts");
 const TPL_DIALOG_TEST_TS: &str = include_str!("scaffold/.zero/components/Dialog.test.ts");
 const TPL_DIALOG_SCSS: &str = include_str!("scaffold/.zero/styles/components/_dialog.scss");
+const TPL_DRAWER_TS: &str = include_str!("scaffold/.zero/components/Drawer.ts");
+const TPL_DRAWER_TEST_TS: &str = include_str!("scaffold/.zero/components/Drawer.test.ts");
+const TPL_DRAWER_SCSS: &str = include_str!("scaffold/.zero/styles/components/_drawer.scss");
 const TPL_INPUT_TS: &str = include_str!("scaffold/.zero/components/Input.ts");
 const TPL_INPUT_TEST_TS: &str = include_str!("scaffold/.zero/components/Input.test.ts");
 const TPL_INPUT_SCSS: &str = include_str!("scaffold/.zero/styles/components/_input.scss");
@@ -167,6 +170,9 @@ pub fn framework_manifest() -> Vec<(&'static str, &'static str)> {
         (".zero/components/Dialog.ts", TPL_DIALOG_TS),
         (".zero/components/Dialog.test.ts", TPL_DIALOG_TEST_TS),
         (".zero/styles/components/_dialog.scss", TPL_DIALOG_SCSS),
+        (".zero/components/Drawer.ts", TPL_DRAWER_TS),
+        (".zero/components/Drawer.test.ts", TPL_DRAWER_TEST_TS),
+        (".zero/styles/components/_drawer.scss", TPL_DRAWER_SCSS),
         (".zero/components/Input.ts", TPL_INPUT_TS),
         (".zero/components/Input.test.ts", TPL_INPUT_TEST_TS),
         (".zero/styles/components/_input.scss", TPL_INPUT_SCSS),
@@ -326,6 +332,7 @@ mod tests {
         "Checkbox",
         "Combobox",
         "Dialog",
+        "Drawer",
         "Input",
         "Pagination",
         "Radio",
@@ -1008,7 +1015,7 @@ mod tests {
             ".zero/styles/_typography.scss",
             ".zero/styles/_components.scss",
             ".zero/styles/zero.scss",
-            // 17 components × (source, test, scss partial) = 51 entries.
+            // 18 components × (source, test, scss partial) = 54 entries.
             ".zero/components/Avatar.ts",
             ".zero/components/Avatar.test.ts",
             ".zero/styles/components/_avatar.scss",
@@ -1030,6 +1037,9 @@ mod tests {
             ".zero/components/Dialog.ts",
             ".zero/components/Dialog.test.ts",
             ".zero/styles/components/_dialog.scss",
+            ".zero/components/Drawer.ts",
+            ".zero/components/Drawer.test.ts",
+            ".zero/styles/components/_drawer.scss",
             ".zero/components/Input.ts",
             ".zero/components/Input.test.ts",
             ".zero/styles/components/_input.scss",
