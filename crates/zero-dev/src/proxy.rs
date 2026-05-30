@@ -357,11 +357,21 @@ fn http_response_builder(status: StatusCode, headers: HeaderMap) -> HtmlResponse
     }
 }
 
+/// Overlay the incoming request's path and query onto the proxy base URL.
+///
+/// `path_and_query` is the raw, already-percent-encoded value from the
+/// incoming request URI (e.g. `/api/parts?status=out&sort=asc`). Path and
+/// query are applied to separate URL components: `set_path` alone would
+/// percent-encode the `?` and fold the whole query into the path, so a
+/// query-bearing `/api/*` request would never match the backend's route.
 fn build_upstream_url(base: &url::Url, path_and_query: &str) -> anyhow::Result<url::Url> {
     let mut u = base.clone();
-    let pq = path_and_query.trim_start_matches('/');
-    u.set_path(path_and_query);
-    let _ = pq;
+    let (path, query) = match path_and_query.split_once('?') {
+        Some((path, query)) => (path, Some(query)),
+        None => (path_and_query, None),
+    };
+    u.set_path(path);
+    u.set_query(query);
     Ok(u)
 }
 
@@ -511,6 +521,27 @@ mod tests {
         assert!(s.is_ok());
     }
 
+    #[test]
+    fn build_upstream_url_preserves_path_and_query() {
+        let base = url::Url::parse("http://localhost:5080").unwrap();
+        let u = build_upstream_url(&base, "/api/parts?status=needs-reorder&sort=status&dir=asc")
+            .unwrap();
+        assert_eq!(u.path(), "/api/parts");
+        assert_eq!(u.query(), Some("status=needs-reorder&sort=status&dir=asc"));
+        assert_eq!(
+            u.as_str(),
+            "http://localhost:5080/api/parts?status=needs-reorder&sort=status&dir=asc"
+        );
+    }
+
+    #[test]
+    fn build_upstream_url_without_query_has_no_query() {
+        let base = url::Url::parse("http://localhost:5080").unwrap();
+        let u = build_upstream_url(&base, "/api/parts").unwrap();
+        assert_eq!(u.path(), "/api/parts");
+        assert_eq!(u.query(), None);
+    }
+
     #[tokio::test]
     async fn websocket_upgrade_returns_501() {
         let client = build_client().unwrap();
@@ -571,6 +602,38 @@ mod tests {
         // Content-Length should reflect the injected body length.
         let cl = headers.get("content-length").unwrap();
         assert_eq!(cl.to_str().unwrap().parse::<usize>().unwrap(), body.len());
+    }
+
+    #[tokio::test]
+    async fn proxy_forwards_query_string_to_backend() {
+        use axum::extract::RawQuery;
+        let (addr, _h) = start_backend(|| {
+            Router::new().route(
+                "/api/parts",
+                get(|RawQuery(q): RawQuery| async move {
+                    (
+                        StatusCode::OK,
+                        [("content-type", "application/json")],
+                        format!(r#"{{"query":"{}"}}"#, q.unwrap_or_default()),
+                    )
+                        .into_response()
+                }),
+            )
+        })
+        .await;
+        let client = build_client().unwrap();
+        let base = url::Url::parse(&format!("http://{addr}")).unwrap();
+        let req = Request::builder()
+            .uri("/api/parts?status=needs-reorder&sort=status&dir=asc")
+            .body(Body::empty())
+            .unwrap();
+        let resp = proxy_request(&base, &client, req, "/src/app.js").await;
+        let (status, _, body) = read_body(resp).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body,
+            r#"{"query":"status=needs-reorder&sort=status&dir=asc"}"#
+        );
     }
 
     #[tokio::test]
