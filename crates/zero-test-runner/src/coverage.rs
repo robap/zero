@@ -317,11 +317,8 @@ impl InstrumenterVisitor {
             let s = self.fn_counter_stmt(name);
             prefix.push(s);
         }
-        if let Some(first) = body.stmts.first() {
-            let line = self.line_of(first);
-            prefix.push(self.line_counter_stmt(line));
-        }
-        // Recurse into existing statements first.
+        // Per-statement line counters (including the first body statement) are
+        // injected by `visit_mut_stmts` during the recursive visit below.
         body.visit_mut_children_with(self);
 
         // Inject the counter prologue at the front.
@@ -390,11 +387,9 @@ impl VisitMut for InstrumenterVisitor {
         // can inject. For expression bodies, we still record the fn but cannot
         // count entries from inside; the surrounding line counter suffices.
         if let swc_core::ecma::ast::BlockStmtOrExpr::BlockStmt(block) = &mut *e.body {
-            let mut prefix: Vec<Stmt> = vec![self.fn_counter_inline(&name)];
-            if let Some(first) = block.stmts.first() {
-                let line = self.line_of(first);
-                prefix.push(self.line_counter_stmt(line));
-            }
+            // Per-statement line counters come from `visit_mut_stmts` below; we
+            // only prepend the function-entry counter here.
+            let prefix: Vec<Stmt> = vec![self.fn_counter_inline(&name)];
             block.visit_mut_children_with(self);
             let mut new_stmts = prefix;
             new_stmts.extend(std::mem::take(&mut block.stmts));
@@ -421,12 +416,9 @@ impl VisitMut for InstrumenterVisitor {
     fn visit_mut_constructor(&mut self, c: &mut swc_core::ecma::ast::Constructor) {
         let name = "constructor".to_string();
         if let Some(body) = &mut c.body {
-            // record fn entry + first-stmt line counter
-            let mut prefix: Vec<Stmt> = vec![self.fn_counter_inline(&name)];
-            if let Some(first) = body.stmts.first() {
-                let line = self.line_of(first);
-                prefix.push(self.line_counter_stmt(line));
-            }
+            // Record the constructor's fn entry; per-statement line counters
+            // come from `visit_mut_stmts` during the recursive visit.
+            let prefix: Vec<Stmt> = vec![self.fn_counter_inline(&name)];
             body.visit_mut_children_with(self);
             let mut new_stmts = prefix;
             new_stmts.extend(std::mem::take(&mut body.stmts));
@@ -435,10 +427,31 @@ impl VisitMut for InstrumenterVisitor {
     }
 
     fn visit_mut_block_stmt(&mut self, block: &mut BlockStmt) {
-        // Default behavior: inject a line counter for the first statement.
-        // Skipped on function bodies — `instrument_body` (driven by
-        // visit_mut_function) already inserts both fn+line counters.
+        // Statement-level counters are injected by `visit_mut_stmts` when the
+        // block's `stmts` vec is visited; here we only recurse.
         block.visit_mut_children_with(self);
+    }
+
+    fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
+        // Instrument nested statements first so inner blocks are counted.
+        stmts.visit_mut_children_with(self);
+        // Prepend a line counter before each statement. Dedupe by source line
+        // within this Vec so multiple statements sharing a physical line add at
+        // most one counter (keeps instrumentation density — and the GC-teardown
+        // surface — minimal). Every `Vec<Stmt>` context flows through here:
+        // function/block bodies, if/else/try/catch/for/while blocks, and switch
+        // `case` statement lists. Top-level `Vec<ModuleItem>` is not a
+        // `Vec<Stmt>`, so `visit_mut_module`'s per-item counters do not collide.
+        let mut out: Vec<Stmt> = Vec::with_capacity(stmts.len() * 2);
+        let mut seen: BTreeSet<u32> = BTreeSet::new();
+        for stmt in std::mem::take(stmts) {
+            let line = self.line_of(&stmt);
+            if seen.insert(line) {
+                out.push(self.line_counter_stmt(line));
+            }
+            out.push(stmt);
+        }
+        *stmts = out;
     }
 }
 
@@ -939,6 +952,63 @@ mod tests {
         // anon@<line of arrow start> — line 1.
         let cnt = lookup_fns(&mut ctx, "/abs/foo.ts", "anon@1");
         assert_eq!(cnt, 1, "anon@1 should fire once\ncode:\n{}", out.code);
+    }
+
+    #[test]
+    fn instruments_every_statement_in_a_body() {
+        let src =
+            "export function f(go) {\n  const a = 1;\n  if (go) { return a; }\n  return 0;\n}\n";
+        let out = instrument(src, &opts("/abs/foo.ts")).expect("instrument");
+        // The trailing `return 0;` is on line 4 — below the function's first
+        // body statement (line 2). Under coarse instrumentation only line 2
+        // was counted; per-statement instrumentation must record line 4.
+        assert!(
+            out.map.lines.contains(&4),
+            "line 4 (trailing return) should carry a counter, got {:?}",
+            out.map.lines
+        );
+        // Every statement line is present: `const a` (2), the `if` and its
+        // inner `return a` (3), and the trailing `return 0` (4).
+        for ln in [2u32, 3, 4] {
+            assert!(
+                out.map.lines.contains(&ln),
+                "line {ln} should carry a counter, got {:?}",
+                out.map.lines
+            );
+        }
+        // Counters fire at runtime: f(true) takes the inner return (line 3),
+        // f(false) takes the trailing return (line 4).
+        let exec = format!("{}\nf(true);\nf(false);\n", out.code.replace("export ", ""));
+        let mut ctx = run_in_boa(&exec);
+        assert!(
+            lookup_lines_n(&mut ctx, "/abs/foo.ts", 3) >= 1,
+            "line 3 should fire when go is true\ncode:\n{exec}"
+        );
+        assert!(
+            lookup_lines_n(&mut ctx, "/abs/foo.ts", 4) >= 1,
+            "line 4 should fire when go is false\ncode:\n{exec}"
+        );
+    }
+
+    #[test]
+    fn multiple_statements_one_line_count_once() {
+        // Two statements share line 2 inside the body. `visit_mut_stmts`
+        // dedupes by line, so line 2 gets exactly one counter — after one
+        // call it reads 1, not 2.
+        let src = "function f() {\n  const a = 1; const b = 2;\n  return a + b;\n}\nf();\n";
+        let out = instrument(src, &opts("/abs/foo.ts")).expect("instrument");
+        assert!(
+            out.map.lines.contains(&2),
+            "line 2 should carry a counter, got {:?}",
+            out.map.lines
+        );
+        let mut ctx = run_in_boa(&out.code);
+        assert_eq!(
+            lookup_lines_n(&mut ctx, "/abs/foo.ts", 2),
+            1,
+            "two statements on line 2 should dedupe to a single counter\ncode:\n{}",
+            out.code
+        );
     }
 
     #[test]

@@ -777,6 +777,12 @@ struct MutateVisitor<'a> {
     /// visits never reach these positions because they were dropped from
     /// `sites` at collect time.
     static_equivalence: StaticEquivalence,
+    /// Start line of the innermost enclosing statement / module item.
+    /// Reachability is judged on this line (which carries a coverage counter)
+    /// rather than the site's own line, so a mutable token on a continuation
+    /// line of a multi-line statement is reached whenever the statement
+    /// executed. 0 until the first statement/item is entered.
+    reach_line: u32,
     sites: Vec<MutationSite>,
     counts: [usize; 8],
     skipped_unreachable: usize,
@@ -801,6 +807,7 @@ impl<'a> MutateVisitor<'a> {
             operators_filter: Some(operators_filter),
             covered_lines,
             static_equivalence,
+            reach_line: 0,
             sites: Vec::new(),
             counts: [0; 8],
             skipped_unreachable: 0,
@@ -828,6 +835,7 @@ impl<'a> MutateVisitor<'a> {
             operators_filter: None,
             covered_lines: None,
             static_equivalence,
+            reach_line: 0,
             sites: Vec::new(),
             counts: [0; 8],
             skipped_unreachable: 0,
@@ -877,12 +885,23 @@ impl<'a> MutateVisitor<'a> {
                     self.equivalent_static_per_op[idx] += 1;
                     return false;
                 }
-                if let Some(cov) = self.covered_lines
-                    && !cov.contains(&line)
-                {
-                    self.skipped_unreachable += 1;
-                    self.unreachable_per_op[idx] += 1;
-                    return false;
+                // Judge reachability on the enclosing statement / module item
+                // line (which carries a coverage counter), not the site's own
+                // line — so a token on a continuation line of a multi-line
+                // statement is reached whenever that statement executed. Fall
+                // back to `line` only if no statement was entered (sentinel 0,
+                // which cannot happen for a real site).
+                if let Some(cov) = self.covered_lines {
+                    let reach = if self.reach_line != 0 {
+                        self.reach_line
+                    } else {
+                        line
+                    };
+                    if !cov.contains(&reach) {
+                        self.skipped_unreachable += 1;
+                        self.unreachable_per_op[idx] += 1;
+                        return false;
+                    }
                 }
                 self.counts[idx] += 1;
                 self.sites.push(MutationSite {
@@ -916,6 +935,25 @@ impl<'a> MutateVisitor<'a> {
 }
 
 impl<'a> VisitMut for MutateVisitor<'a> {
+    fn visit_mut_module_item(&mut self, item: &mut ModuleItem) {
+        // Track the enclosing module item's start line so a site on a
+        // continuation line of a multi-line top-level initializer is judged
+        // reachable by the item's (counted) start line.
+        let prev = self.reach_line;
+        self.reach_line = self.line_col(item).0;
+        item.visit_mut_children_with(self);
+        self.reach_line = prev;
+    }
+
+    fn visit_mut_stmt(&mut self, stmt: &mut Stmt) {
+        // Track the innermost enclosing statement's start line; nested
+        // statements override and restore it on the way back up.
+        let prev = self.reach_line;
+        self.reach_line = self.line_col(stmt).0;
+        stmt.visit_mut_children_with(self);
+        self.reach_line = prev;
+    }
+
     fn visit_mut_bin_expr(&mut self, b: &mut BinExpr) {
         // Walk inner expressions first so nested sites are enumerated before
         // the outer site.
@@ -1454,6 +1492,106 @@ mod tests {
         assert_eq!(arith.matched, 2);
         assert_eq!(arith.unreachable, 1);
         assert_eq!(r.sites.len(), 1);
+    }
+
+    #[test]
+    fn reach_attributes_continuation_line_site_to_statement_start() {
+        // The string literals sit on continuation lines (3, 4) of a `return`
+        // statement that starts on line 2. With only line 2 covered, R3's
+        // enclosing-statement attribution must still reach both sites.
+        let src = "function f(cond) {\n  return cond\n    ? \"a\"\n    : \"b\";\n}\n";
+        let mut covered: HashSet<u32> = HashSet::new();
+        covered.insert(2);
+        let r = generate(
+            src,
+            &PathBuf::from("/abs/a.ts"),
+            &GenerateOptions {
+                operators: &[Operator::LitStr],
+                max_mutants: None,
+                covered_lines: Some(&covered),
+            },
+        )
+        .expect("g");
+        assert_eq!(
+            r.sites.len(),
+            2,
+            "both ternary arms should be reachable via the return line, got {:?}",
+            r.sites
+        );
+        assert_eq!(r.skipped_unreachable, 0);
+    }
+
+    #[test]
+    fn reach_top_level_multiline_initializer() {
+        // `page: 1` sits on line 3, a continuation line of the `export const Q`
+        // module item that starts on line 1. With only line 1 covered, the
+        // enclosing-module-item attribution must reach the `1` site.
+        let src = "export const Q = {\n  type: null,\n  page: 1,\n};\n";
+        let mut covered: HashSet<u32> = HashSet::new();
+        covered.insert(1);
+        let r = generate(
+            src,
+            &PathBuf::from("/abs/a.ts"),
+            &GenerateOptions {
+                operators: &[Operator::LitNum],
+                max_mutants: None,
+                covered_lines: Some(&covered),
+            },
+        )
+        .expect("g");
+        assert_eq!(
+            r.sites.len(),
+            1,
+            "the `1` site should be reachable via the export const line, got {:?}",
+            r.sites
+        );
+        assert_eq!(r.skipped_unreachable, 0);
+    }
+
+    #[test]
+    fn reach_unreached_statement_still_skipped() {
+        // Two statements; only the first line is covered. The site in the
+        // second statement is genuinely unreached and must stay skipped — the
+        // unreachable bucket must not collapse.
+        let src = "const a = 1 + 2;\nconst b = 3 + 4;\n";
+        let mut covered: HashSet<u32> = HashSet::new();
+        covered.insert(1);
+        let r = generate(
+            src,
+            &PathBuf::from("/abs/a.ts"),
+            &GenerateOptions {
+                operators: &[Operator::Arith],
+                max_mutants: None,
+                covered_lines: Some(&covered),
+            },
+        )
+        .expect("g");
+        assert_eq!(r.sites.len(), 1, "only the covered statement is reachable");
+        assert_eq!(r.sites[0].line, 1);
+        assert_eq!(r.skipped_unreachable, 1);
+    }
+
+    #[test]
+    fn reach_covered_site_on_own_line_unaffected() {
+        // The common case: a single-line statement whose site is on its own
+        // (and the statement's) line. Monotonic non-regression — still
+        // produced when that line is covered.
+        let src = "const a = 1 + 2;\n";
+        let mut covered: HashSet<u32> = HashSet::new();
+        covered.insert(1);
+        let r = generate(
+            src,
+            &PathBuf::from("/abs/a.ts"),
+            &GenerateOptions {
+                operators: &[Operator::Arith],
+                max_mutants: None,
+                covered_lines: Some(&covered),
+            },
+        )
+        .expect("g");
+        assert_eq!(r.sites.len(), 1);
+        assert_eq!(r.sites[0].line, 1);
+        assert_eq!(r.skipped_unreachable, 0);
     }
 
     #[test]

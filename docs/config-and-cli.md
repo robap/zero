@@ -159,6 +159,11 @@ Runs the test suite. See [Testing](./testing.html) for the API.
 `pattern` matches test paths and `describe` / `it` names. Exit
 code is non-zero on any failure.
 
+The `--coverage` line metric is **per executable statement**: each
+statement carries its own counter, so the reported line count reflects
+which statements actually ran rather than only function entries and
+top-level declarations.
+
 ### `zero mutate [pattern]`
 
 Mutation testing. Runs the baseline test suite, then iterates
@@ -181,8 +186,12 @@ Operator ids accepted by `--operators`: `arith`, `cmp`, `bool`,
 
 - **No matches in `src/`.** The operator is implemented, but no AST
   node in the codebase matched its swap rules.
-- **All matches on uncovered lines.** Sites were found but no
-  baseline test exercises those lines; the coverage filter drops them.
+- **All matches unreachable.** Sites were found, but no baseline test
+  executed the *enclosing statement*, so the coverage filter drops them.
+  Reachability is judged on the site's enclosing statement (each
+  statement carries a coverage counter), not on the site's own line — so
+  fully-tested code is never misfiled here. A non-empty `unreachable`
+  count means real code that no baseline test runs.
 - **All matches byte-equivalent.** Sites were found and reached, but
   the mutated JS was byte-identical to the baseline (rare).
 - **All matches statically-equivalent.** The visitor proved every
@@ -192,8 +201,8 @@ The per-operator breakdown printed under the headline distinguishes
 the four. A row like
 `arith: matched 12, executed 0 (...), unreachable 12, equivalent-byte 0,
 equivalent-static 0`
-says "12 arith sites exist, every one is on a line no test reaches" —
-write a test that calls into that code.
+says "12 arith sites exist, every one inside a statement no test
+executes" — write a test that calls into that code.
 
 #### Reading `equivalent-static`
 
@@ -214,7 +223,8 @@ results, including a per-operator breakdown under `operators` (each
 operator object has `equivalent_byte` and `equivalent_static` fields)
 and split totals (`skipped_unreachable`, `skipped_equivalent_byte`,
 `skipped_equivalent_static`). Exit code is non-zero if any mutant
-survived or errored.
+survived or errored. The per-statement coverage change does not alter
+this format — `mutation.json` is still `schema_version: 2`.
 
 ### Type-checking
 

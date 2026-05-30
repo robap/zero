@@ -1495,6 +1495,272 @@ export function getK() { return s.val.k; }
         );
     }
 
+    /// The #61 `transactionsQueryString` shape: a multi-statement exported
+    /// function whose mutable tokens live on lines *below* its first body
+    /// statement, exercised by a strong sibling test across several inputs.
+    const QUERY_SRC: &str = r#"export function q(p: { type: string | null; page: number }): string {
+  const parts: string[] = [];
+  if (p.type) parts.push("type=" + p.type);
+  if (p.page !== 1) parts.push("page=" + String(p.page));
+  return parts.length ? "?" + parts.join("&") : "";
+}
+"#;
+
+    #[test]
+    fn mutate_reaches_sites_below_function_first_line() {
+        let dir = make_project(
+            QUERY_SRC,
+            r#"import { describe, it, expect } from "zero/test";
+import { q } from "./src/foo.ts";
+describe("q", () => {
+  it("default", () => expect(q({ type: null, page: 1 })).toBe(""));
+  it("type only", () => expect(q({ type: "a", page: 1 })).toBe("?type=a"));
+  it("page only", () => expect(q({ type: null, page: 2 })).toBe("?page=2"));
+  it("both", () => expect(q({ type: "a", page: 2 })).toBe("?type=a&page=2"));
+});
+"#,
+        );
+        let root = dir.path();
+        let out = root.join("dist");
+        let mut sink: Vec<u8> = Vec::new();
+        let summary = run_inner(
+            root,
+            &out,
+            root,
+            None,
+            Operator::ALL,
+            None,
+            true,
+            Isolation::InProcess,
+            1,
+            &mut sink,
+        )
+        .expect("ok");
+
+        assert!(summary.baseline_passed, "baseline failed: {summary:?}");
+        // Mutants actually executed — not all filed unreachable (the bug).
+        let executed = summary.killed + summary.survived + summary.errored;
+        assert!(
+            executed > 0,
+            "expected executed mutants, got none (vacuous run): {summary:?}"
+        );
+        // The lit_str / lit_num / cmp sites live on lines 3–5, below the
+        // function's first body line — exactly the sites the bug dropped.
+        for op in [Operator::LitStr, Operator::LitNum, Operator::Cmp] {
+            assert!(
+                summary.per_operator.executed(op) > 0,
+                "expected executed {} mutants below line 1: {summary:?}",
+                op.id()
+            );
+        }
+        // Non-vacuous: a strong test kills, and the score is killed-driven
+        // rather than the vacuous 100% from zero execution.
+        assert!(
+            summary.killed > 0,
+            "score should be killed-driven: {summary:?}"
+        );
+        assert_eq!(
+            summary.survived, 0,
+            "strong test should kill all: {summary:?}"
+        );
+    }
+
+    #[test]
+    fn mutate_weak_test_surfaces_survivor() {
+        // Same source, but the sibling test calls `q(...)` without asserting
+        // anything meaningful. Before the fix every site read `unreachable`
+        // and the tool hid the vacuous test behind a perfect score; now the
+        // mutants execute and survive, surfacing the gap.
+        let dir = make_project(
+            QUERY_SRC,
+            r#"import { describe, it, expect } from "zero/test";
+import { q } from "./src/foo.ts";
+describe("q", () => {
+  it("calls", () => {
+    q({ type: "a", page: 2 });
+    q({ type: null, page: 1 });
+    expect(1).toBe(1);
+  });
+});
+"#,
+        );
+        let root = dir.path();
+        let out = root.join("dist");
+        let mut sink: Vec<u8> = Vec::new();
+        let summary = run_inner(
+            root,
+            &out,
+            root,
+            None,
+            Operator::ALL,
+            None,
+            true,
+            Isolation::InProcess,
+            1,
+            &mut sink,
+        )
+        .expect("ok");
+
+        assert!(summary.baseline_passed, "baseline failed: {summary:?}");
+        assert!(
+            summary.survived > 0,
+            "weak test should surface survivors, got none: {summary:?}"
+        );
+    }
+
+    /// Scaffold the #64 `StatCard` shape: `src/widget.ts` (multi-line return
+    /// with a continuation-line ternary, *no* sibling test), `src/page.ts`
+    /// that calls it in both branches, and `page.test.ts` exercising `page`.
+    fn make_transitive_project() -> TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write_zero_toml(root);
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src/widget.ts"),
+            r#"export function widget(props: { label: string; sub: string | null }): string {
+  return `<div>` +
+    `<b>${props.label}</b>` +
+    (props.sub ? `<i>${props.sub}</i>` : "") +
+    `</div>`;
+}
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("src/page.ts"),
+            r#"import { widget } from "./widget.ts";
+export function render(): string {
+  return widget({ label: "X", sub: "y" }) + widget({ label: "Z", sub: null });
+}
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("page.test.ts"),
+            r#"import { describe, it, expect } from "zero/test";
+import { render } from "./src/page.ts";
+describe("page", () => {
+  it("renders both branches", () => {
+    const out = render();
+    expect(out.includes("<i>y</i>")).toBe(true);
+    expect(out.includes("Z")).toBe(true);
+  });
+});
+"#,
+        )
+        .unwrap();
+        dir
+    }
+
+    #[test]
+    fn mutate_reaches_transitively_tested_no_sibling() {
+        let dir = make_transitive_project();
+        let root = dir.path();
+        let out = root.join("dist");
+
+        // Transitive coverage is honored: `widget.ts` is credited via
+        // `page.test.ts` even though it has no sibling test. Guards against a
+        // future "sibling-only linkage" regression.
+        let scope = CoverageScope::new(root.to_path_buf(), out.clone());
+        let test_files = discover(DiscoveryOpts {
+            root,
+            out_dir: &out,
+            target: None,
+        })
+        .expect("discover")
+        .files;
+        let baseline = run_baseline(root, &scope, &test_files);
+        let widget_covered = baseline
+            .covered
+            .iter()
+            .find(|(p, _)| p.to_string_lossy().ends_with("widget.ts"));
+        assert!(
+            widget_covered.is_some_and(|(_, lines)| !lines.is_empty()),
+            "widget.ts should be covered transitively: {:?}",
+            baseline.covered.keys().collect::<Vec<_>>()
+        );
+        let widget_tests = baseline
+            .src_to_tests
+            .iter()
+            .find(|(p, _)| p.to_string_lossy().ends_with("widget.ts"));
+        assert!(
+            widget_tests.is_some_and(|(_, tests)| tests
+                .iter()
+                .any(|t| t.to_string_lossy().ends_with("page.test.ts"))),
+            "widget.ts should be linked to page.test.ts: {:?}",
+            baseline.src_to_tests
+        );
+
+        // Targeting widget.ts, the continuation-line cond_neg site executes.
+        let mut sink: Vec<u8> = Vec::new();
+        let summary = run_inner(
+            root,
+            &out,
+            root,
+            Some("src/widget.ts"),
+            Operator::ALL,
+            None,
+            true,
+            Isolation::InProcess,
+            1,
+            &mut sink,
+        )
+        .expect("ok");
+        assert!(summary.baseline_passed, "baseline failed: {summary:?}");
+        assert!(
+            summary.per_operator.executed(Operator::CondNeg) > 0,
+            "the continuation-line cond_neg site should execute, not be filed unreachable: {summary:?}"
+        );
+        let executed = summary.killed + summary.survived + summary.errored;
+        assert!(executed > 0, "score should be non-vacuous: {summary:?}");
+    }
+
+    #[test]
+    fn mutate_genuinely_unreached_still_unreachable() {
+        // `unused` is imported (so the module loads) but never called, so its
+        // body line never executes. After the fix the unreachable bucket must
+        // not collapse: the arith site stays skipped, never executed.
+        let dir = make_project(
+            "export function unused(a: number, b: number) {\n  return a + b;\n}\n",
+            r#"import { describe, it, expect } from "zero/test";
+import { unused } from "./src/foo.ts";
+describe("g", () => { it("noop", () => expect(typeof unused).toBe("function")); });
+"#,
+        );
+        let root = dir.path();
+        let out = root.join("dist");
+        let mut sink: Vec<u8> = Vec::new();
+        let summary = run_inner(
+            root,
+            &out,
+            root,
+            None,
+            &[Operator::Arith],
+            None,
+            true,
+            Isolation::InProcess,
+            1,
+            &mut sink,
+        )
+        .expect("ok");
+        assert!(summary.baseline_passed, "baseline failed: {summary:?}");
+        let arith = Operator::Arith.index();
+        assert!(
+            summary.per_operator.matched[arith] >= 1,
+            "the arith site should be matched: {summary:?}"
+        );
+        assert_eq!(
+            summary.per_operator.executed(Operator::Arith),
+            0,
+            "an uncalled function's sites must not execute: {summary:?}"
+        );
+        assert!(
+            summary.skipped_unreachable > 0,
+            "the unreachable bucket must not collapse to zero: {summary:?}"
+        );
+    }
+
     #[test]
     fn mutate_reclassifies_static_equivalents_end_to_end() {
         // Mirrors the demo's `src/stores/parts.ts`: an `as const` array used
