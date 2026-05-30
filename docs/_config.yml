@@ -1,13 +1,14 @@
 title: zero
 description: A zero-dependency frontend framework with a Rust CLI.
-remote_theme: just-the-docs/just-the-docs
-color_scheme: dark
-search_enabled: true
-heading_anchors: true
-nav_external_links: []
-aux_links:
-  "GitHub":
-    - "https://github.com/robap/zero"
+theme: jekyll-theme-primer
+plugins:
+  - jekyll-seo-tag
+# apply the nav-wrapped layout (extends Primer's `default`) to every doc page
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: doc
 # exclude README and the issues tree from the Jekyll build
 exclude:
   - README.md

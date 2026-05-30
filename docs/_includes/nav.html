@@ -1,0 +1,13 @@
+<nav class="doc-nav mb-4 pb-3 border-bottom">
+  {% assign nav_pages = site.html_pages | sort: "nav_order" %}
+  {% for p in nav_pages %}
+    {% if p.nav_order and p.title %}
+      {% unless forloop.first %}<span class="text-gray-light"> · </span>{% endunless %}
+      {% if p.url == page.url %}
+        <strong>{{ p.title }}</strong>
+      {% else %}
+        <a href="{{ p.url | relative_url }}">{{ p.title }}</a>
+      {% endif %}
+    {% endif %}
+  {% endfor %}
+</nav>
