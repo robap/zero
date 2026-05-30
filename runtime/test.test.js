@@ -569,13 +569,9 @@ describe("selector grammar", () => {
     expect(box.getAttribute("class")).toContain("outer");
   });
 
-  it("malformed: leading whitespace throws with position", () => {
+  it("tolerates leading/trailing whitespace around a single compound", () => {
     const el = render(html`<div><span></span></div>`);
-    let caught;
-    try { find(el, " a"); } catch (e) { caught = e; }
-    expect(caught).toBeTruthy();
-    expect(caught.message).toContain(" a");
-    expect(caught.message).toContain("position");
+    expect(find(el, " span ")).toBe(find(el, "span"));
   });
 
   it("malformed: unclosed bracket throws", () => {

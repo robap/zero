@@ -102,6 +102,13 @@ fire(input, "input", { target: { value: "ada" } }); // synthesised event data
 cleanup();                      // tear down mounted templates
 ```
 
+`find` / `findAll` / `text` accept the descendant (`"ul li"`), child
+(`"ul > li"`), and comma-list (`"th, td"`) combinators in addition to single
+compound selectors (`tag`, `#id`, `.class`, `[attr]`, `[attr=value]`, and
+combinations). Ancestor matching is scoped to the queried element. Sibling
+combinators (`+`, `~`), pseudo-classes (`:first-child`, `:not()`, …), and the
+universal selector (`*`) are not supported.
+
 Wire `cleanup()` into `afterEach` so per-test mounts don't leak:
 
 ```ts

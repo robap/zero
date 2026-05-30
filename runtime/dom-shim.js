@@ -4,18 +4,28 @@ const COMMENT_NODE = 8;
 const DOCUMENT_FRAGMENT_NODE = 11;
 
 /**
- * Parse a compound selector string into a descriptor object.
- * @param {string} selector
+ * Memo of parsed complex selectors, keyed on the raw selector string.
+ * @type {Map<string, Array<Array<{ combinator: string, compound: object }>>>}
+ */
+const _selectorCache = new Map();
+
+/**
+ * Parse a compound selector string into a descriptor object. When called as
+ * part of a complex-selector split, `offset` and `fullSelector` make the
+ * reported error position index into the original full string.
+ * @param {string} selector the compound text to tokenize
+ * @param {number} [offset] index of `selector` within `fullSelector`
+ * @param {string} [fullSelector] original full selector string for error text
  * @returns {{ tag: string|null, id: string|null, classes: string[], attrs: Array<{name: string, value: string|null}> }}
  */
-function _parseSelector(selector) {
+function _parseSelector(selector, offset = 0, fullSelector = selector) {
   if (selector === "") throw new Error("dom-shim: empty selector");
   const result = { tag: null, id: null, classes: [], attrs: [] };
   let i = 0;
 
   /** @param {number} pos @param {string} reason */
   function malformed(pos, reason) {
-    throw new Error(`dom-shim: malformed selector "${selector}" at position ${pos} (${reason})`);
+    throw new Error(`dom-shim: malformed selector "${fullSelector}" at position ${pos + offset} (${reason})`);
   }
 
   if (i < selector.length && /[a-zA-Z]/.test(selector[i])) {
@@ -93,12 +103,116 @@ function _parseSelector(selector) {
 }
 
 /**
- * @param {object} node
+ * Scan a complex selector into a list of branches, each branch an array of
+ * step descriptors `{ combinator, start, end }` bounding the compound text
+ * within `selector`. `combinator` is `"none"` for the first step of a branch,
+ * else `"descendant"` or `"child"`. Throws `dom-shim: malformed selector …`
+ * on dangling/leading combinators and empty list branches.
  * @param {string} selector
+ * @returns {Array<Array<{ combinator: string, start: number, end: number }>>}
+ */
+function _splitSelector(selector) {
+  /** @param {number} pos @param {string} reason */
+  function malformed(pos, reason) {
+    throw new Error(`dom-shim: malformed selector "${selector}" at position ${pos} (${reason})`);
+  }
+
+  /** @type {Array<Array<{ combinator: string, start: number, end: number }>>} */
+  const branches = [];
+  /** @type {Array<{ combinator: string, start: number, end: number }>} */
+  let branch = [];
+  let pendingCombinator = "none";
+  let compoundStart = -1;
+  let bracketDepth = 0;
+  let quote = "";
+
+  /** @param {number} end */
+  function closeCompound(end) {
+    branch.push({ combinator: pendingCombinator, start: compoundStart, end });
+    compoundStart = -1;
+    pendingCombinator = "none";
+  }
+
+  /** @param {number} pos */
+  function closeBranch(pos) {
+    if (compoundStart !== -1) closeCompound(pos);
+    if (pendingCombinator === "child") malformed(pos, "expected selector after >");
+    if (branch.length === 0) malformed(pos, "empty selector in list");
+    branches.push(branch);
+    branch = [];
+    pendingCombinator = "none";
+  }
+
+  for (let i = 0; i < selector.length; i++) {
+    const ch = selector[i];
+    if (quote) {
+      if (ch === quote) quote = "";
+      continue;
+    }
+    if (bracketDepth > 0) {
+      if (ch === '"' || ch === "'") quote = ch;
+      else if (ch === "]") bracketDepth--;
+      continue;
+    }
+    if (ch === "[") {
+      bracketDepth++;
+      if (compoundStart === -1) compoundStart = i;
+      continue;
+    }
+    if (ch === ",") {
+      closeBranch(i);
+      continue;
+    }
+    if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r" || ch === "\f") {
+      if (compoundStart !== -1) {
+        closeCompound(i);
+        pendingCombinator = "descendant";
+      }
+      continue;
+    }
+    if (ch === ">") {
+      if (compoundStart !== -1) closeCompound(i);
+      if (branch.length === 0) malformed(i, "expected selector before >");
+      if (pendingCombinator === "child") malformed(i, "expected selector after >");
+      pendingCombinator = "child";
+      continue;
+    }
+    if (compoundStart === -1) compoundStart = i;
+  }
+  closeBranch(selector.length);
+
+  return branches;
+}
+
+/**
+ * Parse a complex selector (comma list of combinator-joined compounds) into a
+ * list of branches, each branch an array of `{ combinator, compound }` steps.
+ * Memoized on the raw selector string.
+ * @param {string} selector
+ * @returns {Array<Array<{ combinator: string, compound: object }>>}
+ */
+function _parseComplexSelector(selector) {
+  if (selector.trim() === "") throw new Error("dom-shim: empty selector");
+  const cached = _selectorCache.get(selector);
+  if (cached) return cached;
+  const branches = _splitSelector(selector);
+  const parsed = branches.map(branch =>
+    branch.map(({ combinator, start, end }) => ({
+      combinator,
+      compound: _parseSelector(selector.slice(start, end), start, selector),
+    })),
+  );
+  _selectorCache.set(selector, parsed);
+  return parsed;
+}
+
+/**
+ * Test a node against a single parsed compound descriptor.
+ * @param {object} node
+ * @param {{ tag: string|null, id: string|null, classes: string[], attrs: Array<{name: string, value: string|null}> }} parsed
  * @returns {boolean}
  */
-function _matchSelector(node, selector) {
-  const parsed = _parseSelector(selector);
+function _matchCompound(node, parsed) {
   if (node.nodeType !== ELEMENT_NODE) return false;
   if (parsed.tag != null) {
     if (node.tagName == null || node.tagName.toLowerCase() !== parsed.tag) return false;
@@ -117,6 +231,58 @@ function _matchSelector(node, selector) {
     if (value != null && node.getAttribute(name) !== value) return false;
   }
   return true;
+}
+
+/**
+ * Recurse leftward through a branch's steps, matching the ancestor chain of
+ * `node`. `steps[i]` is the step whose compound `node` already satisfies; the
+ * combinator on `steps[i]` links `steps[i-1]` (an ancestor) to `node`.
+ * Ancestor walking is bounded by `root` (inclusive); a null/undefined `root`
+ * walks to the top of the tree.
+ * @param {object} node
+ * @param {Array<{ combinator: string, compound: object }>} steps
+ * @param {number} i
+ * @param {object|null|undefined} root
+ * @returns {boolean}
+ */
+function _matchFrom(node, steps, i, root) {
+  if (i === 0) return true;
+  const { combinator, compound } = steps[i];
+  const left = steps[i - 1].compound;
+  if (combinator === "child") {
+    if (node === root) return false; // parent would be outside the root bound
+    const p = node.parentNode;
+    if (!p) return false;
+    if (_matchCompound(p, left) && _matchFrom(p, steps, i - 1, root)) return true;
+    return false;
+  }
+  // descendant
+  let anc = node === root ? null : node.parentNode;
+  while (anc) {
+    if (_matchCompound(anc, left) && _matchFrom(anc, steps, i - 1, root)) return true;
+    if (anc === root) break;
+    anc = anc.parentNode;
+  }
+  return false;
+}
+
+/**
+ * Test a node against a parsed complex selector (list of branches). A node
+ * matches if it matches any branch: its rightmost compound matches the node
+ * and the preceding compounds match an ancestor chain (right-to-left), bounded
+ * by `root` (inclusive; null/undefined ⇒ unbounded).
+ * @param {object} node
+ * @param {Array<Array<{ combinator: string, compound: object }>>} parsedList
+ * @param {object|null|undefined} root
+ * @returns {boolean}
+ */
+function _matchComplexSelector(node, parsedList, root) {
+  for (const steps of parsedList) {
+    const last = steps.length - 1;
+    if (!_matchCompound(node, steps[last].compound)) continue;
+    if (_matchFrom(node, steps, last, root)) return true;
+  }
+  return false;
 }
 
 function _walkDescendants(root, fn) {
@@ -909,23 +1075,26 @@ function createElement(tagName) {
     },
 
     querySelector(selector) {
+      const parsed = _parseComplexSelector(selector);
       let found = null;
       _walkDescendants(this, node => {
-        if (!found && node.nodeType === ELEMENT_NODE && _matchSelector(node, selector)) found = node;
+        if (!found && node.nodeType === ELEMENT_NODE && _matchComplexSelector(node, parsed, this)) found = node;
       });
       return found;
     },
     querySelectorAll(selector) {
+      const parsed = _parseComplexSelector(selector);
       const results = [];
       _walkDescendants(this, node => {
-        if (node.nodeType === ELEMENT_NODE && _matchSelector(node, selector)) results.push(node);
+        if (node.nodeType === ELEMENT_NODE && _matchComplexSelector(node, parsed, this)) results.push(node);
       });
       return results;
     },
     closest(selector) {
+      const parsed = _parseComplexSelector(selector);
       let node = this;
       while (node && node.nodeType === ELEMENT_NODE) {
-        if (_matchSelector(node, selector)) return node;
+        if (_matchComplexSelector(node, parsed, null)) return node;
         node = node.parentNode;
       }
       return null;
@@ -1192,16 +1361,18 @@ export const document = Object.assign(
     getElementById(id) { return _getElementById(String(id)); },
     appendChild(child) { return _appendChild(this, child); },
     querySelector(selector) {
+      const parsed = _parseComplexSelector(selector);
       let found = null;
       _walkDescendants(this, node => {
-        if (!found && node.nodeType === ELEMENT_NODE && _matchSelector(node, selector)) found = node;
+        if (!found && node.nodeType === ELEMENT_NODE && _matchComplexSelector(node, parsed, this)) found = node;
       });
       return found;
     },
     querySelectorAll(selector) {
+      const parsed = _parseComplexSelector(selector);
       const results = [];
       _walkDescendants(this, node => {
-        if (node.nodeType === ELEMENT_NODE && _matchSelector(node, selector)) results.push(node);
+        if (node.nodeType === ELEMENT_NODE && _matchComplexSelector(node, parsed, this)) results.push(node);
       });
       return results;
     },

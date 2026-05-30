@@ -7,6 +7,8 @@ import {
   cleanup,
   render,
   find,
+  findAll,
+  text,
   fire,
   spy,
 } from 'zero/test';
@@ -214,5 +216,137 @@ describe('input selection APIs', () => {
     const el = document.createElement('input');
     expect(el.selectionStart).toBe(0);
     expect(el.selectionEnd).toBe(0);
+  });
+});
+
+describe('selector engine', () => {
+  afterEach(cleanup);
+
+  it('descendant matches nested elements at any depth', () => {
+    const root = render(html`
+      <div>
+        <ul><li class="a">x</li><li class="b"><span><em>deep</em></span></li></ul>
+        <p><em>not-in-ul</em></p>
+      </div>
+    `);
+    const items = findAll(root, 'ul li');
+    expect(items.length).toBe(2);
+  });
+
+  it('child matches only direct children, excluding nested grandchildren', () => {
+    const root = render(html`
+      <ul id="outer">
+        <li class="direct">a</li>
+        <li class="direct">b<ul><li class="nested">c</li></ul></li>
+      </ul>
+    `);
+    const direct = findAll(root, 'ul#outer > li');
+    expect(direct.length).toBe(2);
+    expect(findAll(root, 'ul li').length).toBe(3);
+  });
+
+  it('selector list returns all branches in document order', () => {
+    const root = render(html`
+      <table><thead><tr><th>H</th></tr></thead>
+      <tbody><tr><td>D1</td><td>D2</td></tr></tbody></table>
+    `);
+    const cells = findAll(root, 'th, td');
+    expect(cells.length).toBe(3);
+    expect(text(cells[0])).toBe('H');
+    expect(text(cells[1])).toBe('D1');
+    expect(text(cells[2])).toBe('D2');
+  });
+
+  it('selector list yields each node at most once', () => {
+    const root = render(html`<div class="x" id="dup">hi</div>`);
+    const matches = findAll(root, 'div, .x, #dup');
+    expect(matches.length).toBe(1);
+  });
+
+  it('mixed descendant and child combinators in one branch', () => {
+    const root = render(html`
+      <table><tbody><tr><td><span class="hit">A</span></td></tr></tbody></table>
+    `);
+    const hits = findAll(root, 'table tbody > tr td span');
+    expect(hits.length).toBe(1);
+    expect(text(hits[0])).toBe('A');
+  });
+
+  it('left-hand compound outside the query root does not match', () => {
+    const container = render(html`
+      <div class="outer"><section><span>x</span></section></div>
+    `);
+    const section = find(container, 'section');
+    expect(findAll(section, '.outer span').length).toBe(0);
+    expect(findAll(section, 'span').length).toBe(1);
+  });
+
+  it('closest resolves self-or-ancestor, including list and combinator forms', () => {
+    const container = render(html`
+      <div class="card"><section><span class="leaf">x</span></section></div>
+    `);
+    const span = find(container, 'span');
+    expect(span.closest('div')).toBe(find(container, 'div'));
+    expect(span.closest('span')).toBe(span);
+    expect(span.closest('article, .card')).toBe(find(container, 'div'));
+    expect(span.closest('div span')).toBe(span);
+    expect(span.closest('table td')).toBeNull();
+  });
+
+  it('tolerates surrounding and collapsed whitespace around combinators', () => {
+    const root = render(html`
+      <table><tbody><tr><td>c</td></tr></tbody></table>
+      <ul><li>x</li></ul>
+    `);
+    expect(findAll(root, ' tbody tr ').length).toBe(1);
+    expect(findAll(root, 'ul  >  li').length).toBe(1);
+    expect(findAll(root, 'tr , li').length).toBe(2);
+  });
+
+  it('whitespace and combinator chars inside attribute values do not split', () => {
+    const root = render(html`
+      <div data-label="a b">one</div>
+      <div data-expr="x>y">two</div>
+    `);
+    expect(findAll(root, '[data-label="a b"]').length).toBe(1);
+    expect(findAll(root, '[data-expr="x>y"]').length).toBe(1);
+  });
+
+  it('preserves malformed-selector errors for bad combinators and lists', () => {
+    const root = render(html`<div></div>`);
+    for (const sel of ['a > > b', 'a >', '> a', 'a + b', 'a ~ b', 'a,', '']) {
+      expect(() => findAll(root, sel)).toThrow('dom-shim:');
+    }
+  });
+
+  it('reports malformed positions against the original full selector', () => {
+    const root = render(html`<div></div>`);
+    expect(() => findAll(root, '> a')).toThrow(
+      'dom-shim: malformed selector "> a" at position 0 (expected selector before >)',
+    );
+    expect(() => findAll(root, 'a > > b')).toThrow(
+      'dom-shim: malformed selector "a > > b" at position 4 (expected selector after >)',
+    );
+    expect(() => findAll(root, 'div, .#bad')).toThrow(
+      'dom-shim: malformed selector "div, .#bad" at position 5 (expected class name after .)',
+    );
+    expect(() => findAll(root, 'a + b')).toThrow(
+      "dom-shim: malformed selector \"a + b\" at position 2 (unexpected character '+')",
+    );
+  });
+
+  it('single-compound selectors behave exactly as before', () => {
+    const root = render(html`
+      <section id="sec" class="box panel" data-role="main">
+        <span class="box">s</span>
+      </section>
+    `);
+    expect(findAll(root, 'section').length).toBe(1);
+    expect(find(root, '#sec')).toBe(find(root, 'section'));
+    expect(findAll(root, '.box').length).toBe(2);
+    expect(findAll(root, '[data-role]').length).toBe(1);
+    expect(findAll(root, '[data-role=main]').length).toBe(1);
+    expect(findAll(root, 'span.box').length).toBe(1);
+    expect(() => findAll(root, '.#bad')).toThrow('dom-shim: malformed selector');
   });
 });
