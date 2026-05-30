@@ -157,19 +157,62 @@ async function _dispatch(req, middlewares, baseFetch) {
 async function _readResponse(response) {
   const contentType = response.headers.get("Content-Type") || "";
   const isJson = /\bjson\b/i.test(contentType);
+  const headerLess = contentType === "";
   if (!response.ok) {
-    let body;
-    if (isJson) {
-      try { body = await response.json(); } catch (_) { body = undefined; }
-    } else {
-      try { body = await response.text(); } catch (_) { body = undefined; }
-    }
-    throw new HttpError(response.status, response.statusText, body);
+    return _throwHttpError(response, isJson, headerLess);
   }
   if (isJson) {
     return response.json();
   }
+  if (headerLess) {
+    const { parsed, value } = await _readJsonOrText(response);
+    return parsed ? value : response;
+  }
   return response;
+}
+
+/**
+ * Build and throw the `HttpError` for a non-2xx response. An explicit
+ * content-type drives json-vs-text as before; a header-less body is
+ * parsed-then-fallback (parsed value, else the raw text string).
+ * @internal
+ * @param {Response} response
+ * @param {boolean} isJson
+ * @param {boolean} headerLess
+ * @returns {Promise<never>}
+ */
+async function _throwHttpError(response, isJson, headerLess) {
+  let body;
+  if (isJson) {
+    try { body = await response.json(); } catch (_) { body = undefined; }
+  } else if (headerLess) {
+    const { parsed, value, text } = await _readJsonOrText(response);
+    body = parsed ? value : text;
+  } else {
+    try { body = await response.text(); } catch (_) { body = undefined; }
+  }
+  throw new HttpError(response.status, response.statusText, body);
+}
+
+/**
+ * Read a response body as text exactly once and try to JSON-parse it.
+ * A single consume that is safe against a spec-compliant single-use body.
+ * @internal
+ * @param {Response} response
+ * @returns {Promise<{ parsed: boolean, value: unknown, text: string }>}
+ */
+async function _readJsonOrText(response) {
+  let text;
+  try {
+    text = await response.text();
+  } catch (_) {
+    return { parsed: false, value: undefined, text: "" };
+  }
+  try {
+    return { parsed: true, value: JSON.parse(text), text };
+  } catch (_) {
+    return { parsed: false, value: undefined, text };
+  }
 }
 
 /**

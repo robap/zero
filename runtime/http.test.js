@@ -172,6 +172,68 @@ describe('zero/http — createHttp', () => {
     expect(baseFetch.calls.length).toBe(0);
   });
 
+  it('header-less 2xx JSON body resolves parsed data', async () => {
+    const fetchStub = makeStubFetch((_req) =>
+      new Response(JSON.stringify({ value: 42 }), { status: 200 }),
+    );
+    const client = createHttp({ fetch: fetchStub });
+    const body = await client.get('http://api.test/data');
+    expect(body).toEqual({ value: 42 });
+  });
+
+  it('header-less 2xx non-JSON body falls back to the raw Response', async () => {
+    const fetchStub = makeStubFetch((_req) =>
+      new Response('not json at all', { status: 200 }),
+    );
+    const client = createHttp({ fetch: fetchStub });
+    const result = await client.get('http://api.test/data');
+    expect(result instanceof Response).toBeTruthy();
+    expect(await result.text()).toBe('not json at all');
+  });
+
+  it('header-less 2xx empty body falls back to the raw Response', async () => {
+    const fetchStub = makeStubFetch((_req) =>
+      new Response('', { status: 200 }),
+    );
+    const client = createHttp({ fetch: fetchStub });
+    const result = await client.get('http://api.test/data');
+    expect(result instanceof Response).toBeTruthy();
+  });
+
+  it('header-less non-2xx JSON error body surfaces as parsed HttpError.body', async () => {
+    const fetchStub = makeStubFetch((_req) =>
+      new Response(JSON.stringify({ message: 'nope' }), {
+        status: 404,
+        statusText: 'Not Found',
+      }),
+    );
+    const client = createHttp({ fetch: fetchStub });
+    let err;
+    try {
+      await client.get('http://api.test/missing');
+    } catch (e) {
+      err = e;
+    }
+    expect(err instanceof HttpError).toBeTruthy();
+    expect(err.status).toBe(404);
+    expect(err.body).toEqual({ message: 'nope' });
+  });
+
+  it('header-less non-2xx non-JSON error body surfaces as the raw text string', async () => {
+    const fetchStub = makeStubFetch((_req) =>
+      new Response('plain failure', { status: 500, statusText: 'Server Error' }),
+    );
+    const client = createHttp({ fetch: fetchStub });
+    let err;
+    try {
+      await client.get('http://api.test/boom');
+    } catch (e) {
+      err = e;
+    }
+    expect(err instanceof HttpError).toBeTruthy();
+    expect(err.body).toBe('plain failure');
+  });
+
   it('non-JSON 2xx response returns the raw Response object (escape hatch)', async () => {
     const fetchStub = makeStubFetch((_req) =>
       new Response('binary', {

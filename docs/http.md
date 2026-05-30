@@ -56,8 +56,11 @@ await api.post("/users", { name: "Ada" });
 ```
 
 Responses with a JSON `Content-Type` are parsed before the
-promise resolves; other responses return the raw `Response`
-object so you can stream binary, text, etc.
+promise resolves; responses with an explicit non-JSON
+`Content-Type` return the raw `Response` object so you can
+stream binary, text, etc. A response with **no `Content-Type`
+header** is parsed as JSON when the body parses, and otherwise
+falls back to the raw `Response`.
 
 ```ts
 const user = await api.get<User>("/users/42");
