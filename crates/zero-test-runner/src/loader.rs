@@ -183,6 +183,7 @@ impl ZeroModuleLoader {
             .as_ref()
             .filter(|c| c.scope.covers(&canonical))
             .cloned();
+        let t_start = crate::timing::start();
         let src = if let Some(cov) = instrument_cov {
             let opts = TranspileOptions {
                 filename: &logical,
@@ -219,6 +220,7 @@ impl ZeroModuleLoader {
         } else {
             raw
         };
+        crate::timing::record_since(crate::timing::Phase::Transpile, t_start);
 
         let module = Module::parse(
             Source::from_bytes(src.as_bytes()).with_path(&canonical),

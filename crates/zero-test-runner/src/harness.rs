@@ -13,6 +13,7 @@ use zero_transpile::{TranspileOptions, transpile_typescript};
 
 use crate::loader::{CoverageContext, ZeroModuleLoader};
 use crate::result::{Failure, FileResult, SourceLoc, Status, TestOutcome};
+use crate::timing;
 
 /// Combined return from [`run_file_with_coverage`]: the file's outcomes plus
 /// (when coverage is enabled) a JSON snapshot of `globalThis.__zero_coverage__`,
@@ -175,13 +176,19 @@ fn run_with_loader_inner(
     want_coverage: bool,
     rel_path: PathBuf,
 ) -> RunOutcome {
+    let ctx_start = timing::start();
     let mut context = match build_js_context(loader.clone()) {
         Ok(c) => c,
         Err(f) => return load_error_outcome(rel_path, f),
     };
     install_console(&mut context);
     install_workspace_file_reader(&mut context, project_root);
-    if let Err(f) = eval_dom_shim(&mut context) {
+    timing::record_since(timing::Phase::ContextBuild, ctx_start);
+
+    let shim_start = timing::start();
+    let shim_result = eval_dom_shim(&mut context);
+    timing::record_since(timing::Phase::DomShim, shim_start);
+    if let Err(f) = shim_result {
         return load_error_outcome(rel_path, f);
     }
     let raw = match read_test_source(file_abs) {
@@ -196,6 +203,7 @@ fn run_with_loader_inner(
         &file_abs.to_string_lossy(),
         file_abs.parent().unwrap_or(project_root),
     );
+    let eval_start = timing::start();
     let module = match parse_test_module(&src, file_abs, &mut context) {
         Ok(m) => m,
         Err(f) => return load_error_outcome(rel_path, f),
@@ -203,11 +211,13 @@ fn run_with_loader_inner(
     if let Err(f) = evaluate_module(&module, &mut context) {
         return load_error_outcome(rel_path, f);
     }
+    timing::record_since(timing::Phase::RuntimeEval, eval_start);
     let root = match get_test_tree_root(&loader, &mut context) {
         Ok(v) => v,
         Err(f) => return load_error_outcome(rel_path, f),
     };
     let mut outcomes = Vec::new();
+    let exec_start = timing::start();
     walk_describe(
         &root,
         &mut Vec::new(),
@@ -215,6 +225,7 @@ fn run_with_loader_inner(
         ts_source_map.as_ref(),
         &mut context,
     );
+    timing::record_since(timing::Phase::TestExec, exec_start);
 
     // Test-only injection point for the catch_unwind safety net: force a
     // panic *after* tests have run and outcomes are collected but before
@@ -399,6 +410,7 @@ fn prepare_source(
         return Ok((raw, None));
     }
     let logical = file_abs.to_string_lossy().into_owned();
+    let t_start = timing::start();
     let out = transpile_typescript(
         &raw,
         &TranspileOptions {
@@ -411,7 +423,9 @@ fn prepare_source(
         message: format!("transpile error: {e}"),
         stack: None,
         location: None,
-    })?;
+    });
+    timing::record_since(timing::Phase::Transpile, t_start);
+    let out = out?;
     let sm = out
         .source_map
         .as_deref()

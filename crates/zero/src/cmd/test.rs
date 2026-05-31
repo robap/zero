@@ -8,6 +8,7 @@ use zero_test_runner::discovery::{DiscoveryOpts, DiscoveryResult, discover};
 use zero_test_runner::harness::run_file_with_coverage;
 use zero_test_runner::loader::CoverageContext;
 use zero_test_runner::reporter::Reporter;
+use zero_test_runner::timing;
 
 /// Run `zero test [target] [--coverage]`.
 ///
@@ -29,6 +30,8 @@ pub async fn run(target: Option<String>, coverage: bool) -> anyhow::Result<()> {
         None => (cwd.clone(), cwd.join("dist"), vec![cwd.join("build")]),
     };
 
+    timing::reset();
+    let discovery_start = timing::start();
     let DiscoveryResult { files } = discover(DiscoveryOpts {
         root: &root,
         out_dir: &out,
@@ -36,6 +39,7 @@ pub async fn run(target: Option<String>, coverage: bool) -> anyhow::Result<()> {
         target: target.as_deref(),
         cwd: &cwd,
     })?;
+    timing::record_since(timing::Phase::Discovery, discovery_start);
 
     if files.is_empty() {
         println!("zero test — no test files found");
@@ -70,6 +74,8 @@ pub async fn run(target: Option<String>, coverage: bool) -> anyhow::Result<()> {
     }
     let totals = reporter.finish()?;
 
+    print_timing();
+
     if let Some(agg) = aggregator {
         let mut stdout = std::io::stdout().lock();
         agg.write_terminal(&mut stdout, &root)?;
@@ -80,6 +86,23 @@ pub async fn run(target: Option<String>, coverage: bool) -> anyhow::Result<()> {
         std::process::exit(1);
     }
     Ok(())
+}
+
+/// Print the per-phase timing breakdown to stderr when `ZERO_TEST_TIMING` is
+/// set. Diagnostic only — never touches the reporter's stdout output.
+fn print_timing() {
+    if !timing::enabled() {
+        return;
+    }
+    eprintln!("zero test — phase timing (ZERO_TEST_TIMING):");
+    for (phase, total, calls) in timing::snapshot() {
+        eprintln!(
+            "  {:<14} {:>8.1} ms  ({} calls)",
+            phase.label(),
+            total.as_secs_f64() * 1000.0,
+            calls,
+        );
+    }
 }
 
 #[cfg(test)]

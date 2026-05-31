@@ -171,6 +171,13 @@ statement carries its own counter, so the reported line count reflects
 which statements actually ran rather than only function entries and
 top-level declarations.
 
+Setting the `ZERO_TEST_TIMING` environment variable (to any non-empty
+value) prints a per-phase timing breakdown to **stderr** after the run —
+discovery, context build, DOM-shim eval, runtime eval, transpile, and test
+execution, with cumulative milliseconds and call counts. It is a diagnostic
+for investigating slow suites; it is off by default and does not change test
+output, results, or exit code.
+
 ### `zero mutate [pattern]`
 
 Mutation testing. Runs the baseline test suite, then iterates
