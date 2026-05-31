@@ -159,6 +159,13 @@ Runs the test suite. See [Testing](./testing.html) for the API.
 `pattern` matches test paths and `describe` / `it` names. Exit
 code is non-zero on any failure.
 
+`zero test` runs with or without a `zero.toml`: absent one, it
+discovers tests from the current directory (skipping `dist/` and
+`build/`). A file argument is resolved relative to your current
+directory first, then the project root — so `zero test web/src/app.test.ts`
+(the path as you see it) and `zero test src/app.test.ts` (project-root-relative)
+both work. See [Testing](./testing.html) for details.
+
 The `--coverage` line metric is **per executable statement**: each
 statement carries its own counter, so the reported line count reflects
 which statements actually ran rather than only function entries and

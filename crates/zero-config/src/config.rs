@@ -152,6 +152,24 @@ impl Config {
         Config::from_toml_str(&text)
     }
 
+    /// Like [`Config::load_from_cwd`] but returns `Ok(None)` when `zero.toml`
+    /// is absent, instead of erroring. A present-but-invalid file still
+    /// returns `Err`. Used by `zero test`, which falls back to built-in
+    /// defaults when no project config exists.
+    ///
+    /// # Returns
+    /// `Ok(Some(config))` when a valid `zero.toml` exists, `Ok(None)` when it
+    /// is absent, or `Err` when it is present but unreadable or invalid.
+    pub fn load_from_cwd_optional() -> anyhow::Result<Option<Config>> {
+        let cwd = std::env::current_dir()?;
+        let path = cwd.join("zero.toml");
+        match std::fs::read_to_string(&path) {
+            Ok(text) => Ok(Some(Config::from_toml_str(&text)?)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(anyhow::anyhow!("failed to read {}: {e}", path.display())),
+        }
+    }
+
     /// Path to the project root subdirectory (`[project] root` joined to CWD).
     ///
     /// # Returns
@@ -388,6 +406,51 @@ sourcemap = "yes"
         assert!(
             msg.to_lowercase().contains("bool") || msg.to_lowercase().contains("sourcemap"),
             "error should mention bool/sourcemap, got: {msg}"
+        );
+    }
+
+    /// Restores the previous CWD on drop so the change can't leak into other
+    /// tests in this crate.
+    struct CwdGuard {
+        prev: std::path::PathBuf,
+    }
+    impl CwdGuard {
+        fn enter(target: &std::path::Path) -> Self {
+            let prev = std::env::current_dir().unwrap();
+            std::env::set_current_dir(target).unwrap();
+            CwdGuard { prev }
+        }
+    }
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.prev);
+        }
+    }
+
+    #[test]
+    fn load_from_cwd_optional_covers_absent_valid_and_invalid() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _g = CwdGuard::enter(tmp.path());
+
+        // Absent zero.toml → Ok(None).
+        let absent = Config::load_from_cwd_optional().expect("absent should not error");
+        assert!(absent.is_none(), "absent zero.toml should yield None");
+
+        // Valid zero.toml → Ok(Some(cfg)) with expected project.root.
+        std::fs::write(tmp.path().join("zero.toml"), "[project]\nroot = \"web\"\n").unwrap();
+        let present = Config::load_from_cwd_optional().expect("valid should parse");
+        let cfg = present.expect("valid zero.toml should yield Some");
+        assert_eq!(cfg.project.root, "web");
+
+        // Present-but-invalid (unknown section) → Err.
+        std::fs::write(
+            tmp.path().join("zero.toml"),
+            "[project]\nroot = \"web\"\n\n[server]\nhost = \"0.0.0.0\"\n",
+        )
+        .unwrap();
+        assert!(
+            Config::load_from_cwd_optional().is_err(),
+            "present-but-invalid zero.toml should error"
         );
     }
 

@@ -26,9 +26,9 @@ refactor that *is* a tracked item follows the same ⏳ → ✅ lifecycle.
 
 | Item | Status | Notes |
 |------|--------|-------|
-| [test-no-config](issues/test-no-config/spec.md) | 🟡 | `zero test` runs with defaults when no `zero.toml` is present. Highest-value next item. |
 | [test-perf](issues/test-perf/spec.md) | 🟡 | Make `zero test` faster — measure first (runtime init / transpile / discovery), then fix. |
 | [examples-decision](issues/examples-decision/spec.md) | 🟡 | Decide keep/cut/slim for `examples/`; load-bearing for `examples_*` tests and three docs. Sequence with any `examples_*` test changes. |
+| [coverage-output](issues/coverage-output/spec.md) | 🟡 | Make `coverage.json` opt-in via `--coverage-output <path>`; `--coverage` becomes table-only. Breaking change to `--coverage` auto-write. |
 
 ## Core & reactivity
 
@@ -79,6 +79,7 @@ refactor that *is* a tracked item follows the same ⏳ → ✅ lifecycle.
 | Item | Status | Shipped |
 |------|--------|---------|
 | [test-runner](issues/test-runner/spec.md) | ✅ | 2026-05-14 |
+| [test-no-config](issues/test-no-config/spec.md) | ✅ | 2026-05-31 |
 | [test-helpers](issues/test-helpers/spec.md) | ✅ | 2026-05-15 |
 | [test-improvements](issues/test-improvements/spec.md) | ✅ | 2026-05-16 |
 | [test-correctness](issues/test-correctness/spec.md) | ✅ | 2026-05-23 |

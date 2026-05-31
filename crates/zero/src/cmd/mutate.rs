@@ -494,7 +494,9 @@ pub fn run_inner(
     let DiscoveryResult { files: test_files } = discover(DiscoveryOpts {
         root,
         out_dir,
+        extra_skip_dirs: &[],
         target: None,
+        cwd: root,
     })?;
 
     let mut summary = MutationSummary::default();
@@ -1666,7 +1668,9 @@ describe("page", () => {
         let test_files = discover(DiscoveryOpts {
             root,
             out_dir: &out,
+            extra_skip_dirs: &[],
             target: None,
+            cwd: root,
         })
         .expect("discover")
         .files;

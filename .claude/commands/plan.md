@@ -73,6 +73,9 @@ would require replanning.
 - Separate concerns: don't bundle data model changes with business logic changes
   in the same step unless they are inseparable.
 - Tests are not an afterthought — include them in the step they belong to.
+- If the spec carries a documentation requirement — or the change is user-facing
+  even when the spec is silent — include an explicit step that updates the
+  affected `docs/*.md` file(s). Docs are part of "done," not an afterthought.
 
 ---
 
@@ -80,3 +83,6 @@ would require replanning.
 
 After writing the file, tell the user the path and give a brief summary of the
 steps. Ask if they want any changes. Revise until they approve.
+
+Before presenting, sanity-check that every requirement in the spec maps to at
+least one step — including any documentation requirement.

@@ -65,6 +65,14 @@ Explicit exclusions — things that might seem related but are not part of this 
 Anything unresolved that the plan phase should address before execution begins.
 ```
 
+**Documentation.** If the item changes anything user-facing — CLI commands or
+flags, `zero.toml` config, the public API, scaffold output, or observable
+behavior a user could rely on — the **Requirements** section must include an
+explicit docs requirement naming the affected `docs/*.md` file(s) (the user
+reference lives there; see `docs/index.md`). If the change is purely internal
+with no user-facing effect, say so, so the plan phase knows docs were considered
+rather than forgotten.
+
 After writing the file, register the item in `ROADMAP.md`:
 
 - If it isn't already in the **Planned** table, add a row:

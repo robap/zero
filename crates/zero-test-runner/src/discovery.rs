@@ -4,9 +4,20 @@ use std::path::PathBuf;
 
 /// Options for the discovery pass.
 pub struct DiscoveryOpts<'a> {
+    /// Absolute path to the project root the walk descends from.
     pub root: &'a std::path::Path,
+    /// Build output directory; files inside it are skipped.
     pub out_dir: &'a std::path::Path,
+    /// Additional directories to skip during the walk, beyond `out_dir`
+    /// (e.g. `build/` in no-config mode). May be empty.
+    pub extra_skip_dirs: &'a [PathBuf],
+    /// Optional explicit file path or substring filter. An existing file is
+    /// run directly (see `cwd`); otherwise it filters the walk by substring.
     pub target: Option<&'a str>,
+    /// Base for cwd-first resolution of an explicit-file `target`. In an
+    /// in-project run this is the real CWD (distinct from `root`); in
+    /// no-config mode it equals `root`.
+    pub cwd: &'a std::path::Path,
 }
 
 /// Discovery output: sorted list of absolute paths.
@@ -15,33 +26,33 @@ pub struct DiscoveryResult {
     pub files: Vec<PathBuf>,
 }
 
-/// Discover test files under `opts.root`.
-///
-/// # Parameters
-/// - `opts.root`: absolute path to the project root.
-/// - `opts.out_dir`: build output directory (files inside are skipped).
-/// - `opts.target`: optional substring filter or explicit file path.
+/// Discover test files under the root, per [`DiscoveryOpts`].
 ///
 /// # Returns
 /// `Ok(DiscoveryResult)` with sorted absolute paths on success.
 pub fn discover(opts: DiscoveryOpts<'_>) -> anyhow::Result<DiscoveryResult> {
     let root = opts.root;
-    let out_dir = opts.out_dir;
 
     // If target resolves to an existing regular file, bypass discovery.
+    // Resolve cwd-first, then fall back to project-root-relative; the first
+    // base that names a regular file wins. When `cwd == root` the first base
+    // wins and the duplicate is harmless.
     if let Some(t) = opts.target {
-        let candidate = root.join(t);
-        if candidate.is_file() {
-            let abs = candidate
-                .canonicalize()
-                .unwrap_or_else(|_| candidate.clone());
-            return Ok(DiscoveryResult { files: vec![abs] });
+        for base in [opts.cwd, root] {
+            let candidate = base.join(t);
+            if candidate.is_file() {
+                let abs = candidate.canonicalize().unwrap_or(candidate);
+                return Ok(DiscoveryResult { files: vec![abs] });
+            }
         }
     }
 
-    // Walk root, collecting test files.
+    // Walk root, collecting test files. Skip the build out-dir plus any
+    // caller-supplied extra dirs (e.g. `build/` in no-config mode).
+    let mut skip_dirs: Vec<PathBuf> = vec![opts.out_dir.to_path_buf()];
+    skip_dirs.extend(opts.extra_skip_dirs.iter().cloned());
     let mut files: Vec<PathBuf> = Vec::new();
-    walk_dir(root, out_dir, &mut files)?;
+    walk_dir(root, &skip_dirs, &mut files)?;
     files.sort();
 
     // Detect TS/JS collisions before filtering. Bail with both paths in the
@@ -77,10 +88,11 @@ pub fn discover(opts: DiscoveryOpts<'_>) -> anyhow::Result<DiscoveryResult> {
     Ok(DiscoveryResult { files })
 }
 
-/// Recursively walk `dir`, appending matching files to `out`.
+/// Recursively walk `dir`, appending matching files to `out`. Any path under
+/// one of `skip_dirs` is skipped.
 fn walk_dir(
     dir: &std::path::Path,
-    out_dir: &std::path::Path,
+    skip_dirs: &[PathBuf],
     out: &mut Vec<PathBuf>,
 ) -> anyhow::Result<()> {
     let entries = match std::fs::read_dir(dir) {
@@ -98,7 +110,7 @@ fn walk_dir(
         // component tests get picked up by `zero test`.
         if name_str.starts_with('.') {
             if name_str == ".zero" && path.is_dir() {
-                walk_dot_zero(&path, out_dir, out)?;
+                walk_dot_zero(&path, skip_dirs, out)?;
             }
             continue;
         }
@@ -106,13 +118,13 @@ fn walk_dir(
         if name_str == "node_modules" {
             continue;
         }
-        // Skip the build output directory.
-        if path.starts_with(out_dir) {
+        // Skip the build output directory and any extra skip dirs.
+        if skip_dirs.iter().any(|d| path.starts_with(d)) {
             continue;
         }
 
         if path.is_dir() {
-            walk_dir(&path, out_dir, out)?;
+            walk_dir(&path, skip_dirs, out)?;
         } else if is_test_file(&name_str) {
             out.push(path);
         }
@@ -126,12 +138,12 @@ fn walk_dir(
 /// searched for tests.
 fn walk_dot_zero(
     dot_zero: &std::path::Path,
-    out_dir: &std::path::Path,
+    skip_dirs: &[PathBuf],
     out: &mut Vec<PathBuf>,
 ) -> anyhow::Result<()> {
     let components = dot_zero.join("components");
     if components.is_dir() {
-        walk_dir(&components, out_dir, out)?;
+        walk_dir(&components, skip_dirs, out)?;
     }
     Ok(())
 }
@@ -162,7 +174,9 @@ mod tests {
         DiscoveryOpts {
             root,
             out_dir,
+            extra_skip_dirs: &[],
             target,
+            cwd: root,
         }
     }
 
@@ -366,6 +380,109 @@ mod tests {
         let msg = format!("{err}");
         assert!(msg.contains("home.test.ts"), "msg missing ts path: {msg}");
         assert!(msg.contains("home.test.js"), "msg missing js path: {msg}");
+    }
+
+    #[test]
+    fn explicit_file_resolves_cwd_first() {
+        let cwd_dir = make_root();
+        let root_dir = make_root();
+        let cwd = cwd_dir.path();
+        let root = root_dir.path();
+        let out = root.join("dist");
+
+        fs::write(cwd.join("a.test.ts"), "").unwrap();
+        fs::write(root.join("a.test.ts"), "").unwrap();
+
+        let result = discover(DiscoveryOpts {
+            root,
+            out_dir: &out,
+            extra_skip_dirs: &[],
+            target: Some("a.test.ts"),
+            cwd,
+        })
+        .unwrap();
+        assert_eq!(result.files.len(), 1);
+        // The cwd copy wins over the root copy.
+        let resolved = result.files[0].canonicalize().unwrap();
+        let expected = cwd.join("a.test.ts").canonicalize().unwrap();
+        assert_eq!(resolved, expected);
+    }
+
+    #[test]
+    fn explicit_file_falls_back_to_root() {
+        let cwd_dir = make_root();
+        let root_dir = make_root();
+        let cwd = cwd_dir.path();
+        let root = root_dir.path();
+        let out = root.join("dist");
+
+        // File exists only under root; cwd copy absent.
+        fs::write(root.join("only.test.ts"), "").unwrap();
+
+        let result = discover(DiscoveryOpts {
+            root,
+            out_dir: &out,
+            extra_skip_dirs: &[],
+            target: Some("only.test.ts"),
+            cwd,
+        })
+        .unwrap();
+        assert_eq!(result.files.len(), 1);
+        let resolved = result.files[0].canonicalize().unwrap();
+        let expected = root.join("only.test.ts").canonicalize().unwrap();
+        assert_eq!(resolved, expected);
+    }
+
+    #[test]
+    fn non_file_target_still_applies_substring_filter() {
+        let cwd_dir = make_root();
+        let root_dir = make_root();
+        let cwd = cwd_dir.path();
+        let root = root_dir.path();
+        let out = root.join("dist");
+
+        fs::create_dir_all(root.join("routes")).unwrap();
+        fs::write(root.join("routes").join("home.test.js"), "").unwrap();
+        fs::write(root.join("app.test.js"), "").unwrap();
+
+        // "routes" names no file under cwd or root → substring filter applies.
+        let result = discover(DiscoveryOpts {
+            root,
+            out_dir: &out,
+            extra_skip_dirs: &[],
+            target: Some("routes"),
+            cwd,
+        })
+        .unwrap();
+        assert_eq!(result.files.len(), 1);
+        assert!(result.files[0].to_string_lossy().contains("routes"));
+    }
+
+    #[test]
+    fn extra_skip_dirs_are_skipped() {
+        let dir = make_root();
+        let root = dir.path();
+        let out = root.join("dist");
+        let build = root.join("build");
+
+        fs::create_dir_all(&build).unwrap();
+        fs::write(build.join("foo.test.ts"), "").unwrap();
+        fs::write(root.join("foo.test.ts"), "").unwrap();
+
+        let extra = vec![build.clone()];
+        let result = discover(DiscoveryOpts {
+            root,
+            out_dir: &out,
+            extra_skip_dirs: &extra,
+            target: None,
+            cwd: root,
+        })
+        .unwrap();
+        assert_eq!(result.files.len(), 1);
+        assert!(
+            !result.files[0].starts_with(&build),
+            "build/ should be skipped"
+        );
     }
 
     #[test]

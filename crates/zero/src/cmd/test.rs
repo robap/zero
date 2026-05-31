@@ -19,15 +19,22 @@ use zero_test_runner::reporter::Reporter;
 /// # Returns
 /// `Ok(())` on success (all tests pass); propagates config / I/O errors.
 pub async fn run(target: Option<String>, coverage: bool) -> anyhow::Result<()> {
-    let config = Config::load_from_cwd()?;
     let cwd = std::env::current_dir()?;
-    let root = cwd.join(&config.project.root);
-    let out = cwd.join(&config.build.out);
+    let (root, out, extra_skip_dirs) = match Config::load_from_cwd_optional()? {
+        Some(config) => (
+            cwd.join(&config.project.root),
+            cwd.join(&config.build.out),
+            Vec::new(),
+        ),
+        None => (cwd.clone(), cwd.join("dist"), vec![cwd.join("build")]),
+    };
 
     let DiscoveryResult { files } = discover(DiscoveryOpts {
         root: &root,
         out_dir: &out,
+        extra_skip_dirs: &extra_skip_dirs,
         target: target.as_deref(),
+        cwd: &cwd,
     })?;
 
     if files.is_empty() {
@@ -115,12 +122,53 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_zero_toml_returns_error() {
+    async fn missing_zero_toml_runs_with_defaults() {
         let tmp = tempfile::tempdir().unwrap();
         let _g = CwdGuard::enter(tmp.path());
-        let err = super::run(None, false).await.expect_err("should fail");
-        let msg = format!("{err}");
-        assert!(msg.contains("zero.toml"), "msg: {msg}");
+        // A passing test file at the bare root, no zero.toml.
+        std::fs::write(
+            tmp.path().join("a.test.js"),
+            "import { it, expect } from 'zero/test';\nit('ok', () => { expect(1 + 1).toBe(2); });\n",
+        )
+        .unwrap();
+        let res = super::run(None, false).await;
+        assert!(res.is_ok(), "no-config run should succeed: {res:?}");
+    }
+
+    #[tokio::test]
+    async fn no_config_explicit_file_by_cwd_relative_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _g = CwdGuard::enter(tmp.path());
+        std::fs::create_dir_all(tmp.path().join("sub")).unwrap();
+        std::fs::write(
+            tmp.path().join("sub").join("a.test.js"),
+            "import { it, expect } from 'zero/test';\nit('ok', () => { expect(1).toBe(1); });\n",
+        )
+        .unwrap();
+        // cwd-relative file arg resolves with root = cwd.
+        let res = super::run(Some("sub/a.test.js".into()), false).await;
+        assert!(res.is_ok(), "cwd-relative file arg should run: {res:?}");
+    }
+
+    #[tokio::test]
+    async fn no_config_skips_dist_and_build() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _g = CwdGuard::enter(tmp.path());
+        let pass =
+            "import { it, expect } from 'zero/test';\nit('ok', () => { expect(1).toBe(1); });\n";
+        std::fs::create_dir_all(tmp.path().join("dist")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("build")).unwrap();
+        // A test that would FAIL if discovered — proves dist/ and build/ are skipped.
+        let fail =
+            "import { it, expect } from 'zero/test';\nit('boom', () => { expect(1).toBe(2); });\n";
+        std::fs::write(tmp.path().join("dist").join("x.test.js"), fail).unwrap();
+        std::fs::write(tmp.path().join("build").join("y.test.js"), fail).unwrap();
+        std::fs::write(tmp.path().join("z.test.js"), pass).unwrap();
+        let res = super::run(None, false).await;
+        assert!(
+            res.is_ok(),
+            "only z.test.js should run; dist/build skipped: {res:?}"
+        );
     }
 
     #[tokio::test]

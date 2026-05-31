@@ -22,6 +22,26 @@ zero test --coverage            # write coverage to coverage/
 zero test --update-snapshots    # accept current output as new snapshots
 ```
 
+### Without a `zero.toml`
+
+`zero test` does not require a scaffolded project. Run it in a bare
+directory of `.test.{ts,js}` / `.spec.{ts,js}` files and it discovers
+from the current directory — skipping `dist/` and `build/` — so you can
+verify a standalone module or a reduced bug repro without writing a
+`zero.toml` first. Inside a real project (one with a `zero.toml`)
+behavior is unchanged: discovery still runs from `[project] root`.
+
+### File paths are resolved as you type them
+
+A file argument is resolved relative to your current directory first,
+then the project root. So from the repo root of a project with
+`root = "web"`, all of these run the same file:
+
+```sh
+zero test web/src/app.test.ts   # the path as your editor shows it
+zero test src/app.test.ts       # project-root-relative (still works)
+```
+
 `zero mutate` is a sibling command that runs the same suite under
 mutation testing — see [Config and CLI](./config-and-cli.html#zero-mutate).
 
