@@ -12,7 +12,7 @@ Read these files before producing anything:
 
 - `issues/$ARGUMENTS/spec.md` — the spec you are planning against
 - `CLAUDE.md` — architecture, domain model, conventions
-- All files under `src/` — understand what exists and what must be extended or created
+- All file names under `crates/` and `runtime/` — understand what exists and what must be extended or created
 
 Do not write the plan until you have read all of these.
 

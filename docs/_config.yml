@@ -12,8 +12,6 @@ defaults:
 # exclude README and the issues tree from the Jekyll build
 exclude:
   - README.md
-  - BEST_PRACTICES.md
-  - zero-framework-spec.md
   - issues/
   - examples/
   - runtime/

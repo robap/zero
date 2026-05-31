@@ -14,7 +14,7 @@ Read all of the following before forming any opinion:
 - `issues/$ARGUMENTS/spec.md` — the requirements the implementation must satisfy
 - `issues/$ARGUMENTS/plan.md` — the steps that were planned and should all be checked off
 - `CLAUDE.md` — architecture, domain model, and conventions
-- All files under `src/` — the full current state of the implementation
+- All file names under `crates/` and `runtime/` — the full current state of the implementation
 
 ---
 

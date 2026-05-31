@@ -14,7 +14,7 @@ Read these files before writing any code:
 - `issues/$ARGUMENTS/plan.md` — the plan you are executing
 - `issues/$ARGUMENTS/spec.md` — the requirements you are satisfying
 - `CLAUDE.md` — architecture, domain conventions, and commands
-- All files under `src/` — understand current state before touching anything
+- All file names under `crates/` and `runtime/` — understand current state before touching anything
 
 Do not write any code until you have read all of these.
 

@@ -270,6 +270,39 @@ anything not on this list is outside scope and throws a
   throw a `DataCloneError`-shaped error.
 - `queueMicrotask`, `Promise.withResolvers`.
 
+**Internationalization** — `Intl` is **en-US only**. The shim
+installs three constructors:
+
+- `Intl.DateTimeFormat` — `format(date?)` (accepts a `Date`, a
+  timestamp, or `undefined` → now). Component options `year`,
+  `month` (`numeric`/`2-digit`/`short`/`long`/`narrow`), `day`,
+  `hour`, `minute`, `second`, `weekday`
+  (`short`/`long`/`narrow`), and `hour12`; plus `dateStyle` and
+  `timeStyle` presets (`full`/`long`/`medium`/`short`).
+  `resolvedOptions()` reports `locale: "en-US"`.
+- `Intl.NumberFormat` — `style` `decimal` (default), `currency`
+  (`USD`→`$`, `EUR`→`€`, `GBP`→`£`, `JPY`→`¥`; `JPY` defaults to
+  0 fraction digits; the default `currencyDisplay: "symbol"`
+  case), `percent`; `minimumFractionDigits` /
+  `maximumFractionDigits`; `useGrouping` (default on).
+- `Intl.RelativeTimeFormat` — `format(value, unit)` for
+  `second`…`year` (plural unit names accepted), `numeric`
+  (`always` default / `auto`).
+
+**Known limitation — silent en-US.** A non-en-US `locales`
+argument is **accepted and silently formatted as en-US** rather
+than throwing. This is the one deliberate departure from the
+"clear error" discipline below, called out so it surprises no
+one.
+
+Documented partial cases: `DateTimeFormat` `timeStyle`
+`full`/`long` render as `medium` (no timezone name);
+`RelativeTimeFormat` `short`/`narrow` styles render as `long`;
+`formatToParts` / `formatRange*` are not implemented. Other
+`Intl` namespaces (`Collator`, `PluralRules`, `ListFormat`,
+`Segmenter`, `Locale`, `DisplayNames`, `supportedValuesOf`) are
+out of scope — reaching for them yields `undefined`.
+
 **The "clear error" discipline.** Any API the shim installs but
 does not implement throws an error of the form `"zero test:
 <API> is not implemented. <one-sentence action the user can

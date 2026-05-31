@@ -13,7 +13,7 @@ What to refactor: $ARGUMENTS
 Read these files before planning anything:
 
 - `CLAUDE.md` — architecture, domain model, conventions
-- All files under `src/` — understand the current structure in full
+- All file names under `crates/` and `runtime/` — understand the current structure in full
 
 If `$ARGUMENTS` matches an issue slug and `issues/$ARGUMENTS/review.md` exists,
 read it — it may contain specific structural findings that motivate this

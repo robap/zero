@@ -24,6 +24,7 @@ const WEB_PLATFORM_FILES: &[&str] = &[
     "encoding-shim.js",
     "binary-shim.js",
     "clone-shim.js",
+    "intl-shim.js",
 ];
 
 fn main() {

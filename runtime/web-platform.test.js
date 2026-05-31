@@ -91,4 +91,12 @@ describe('web platform surface', () => {
     resolve(42);
     expect(await promise).toBe(42);
   });
+
+  it('Intl.DateTimeFormat formats en-US dates', () => {
+    const d = new Date(2024, 0, 5, 15, 7, 9);
+    const out = new Intl.DateTimeFormat('en-US', {
+      month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+    }).format(d);
+    expect(out).toBe('Jan 5, 3:07 PM');
+  });
 });

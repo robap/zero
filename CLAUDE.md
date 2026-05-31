@@ -58,3 +58,6 @@ under-tested.
 - All JavaScript files must be fully JSDoc-annotated. Every exported function, class, and class method needs `@param`, `@returns`, and where applicable `@template`. Module-level variables need `@type`. Use `@internal` for exports that are not part of the public API. Use `@private` for private class methods.
 - Keep functions less than ~80 lines.
 - Use strong types. Avoid `any`
+
+## Documentation
+- Project's documentation is in `docs/*.md`.
