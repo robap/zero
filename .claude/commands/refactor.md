@@ -13,11 +13,24 @@ What to refactor: $ARGUMENTS
 Read these files before planning anything:
 
 - `CLAUDE.md` — architecture, domain model, conventions
+- `ROADMAP.md` — see whether this refactor corresponds to a tracked item
 - All file names under `crates/` and `runtime/` — understand the current structure in full
 
 If `$ARGUMENTS` matches an issue slug and `issues/$ARGUMENTS/review.md` exists,
 read it — it may contain specific structural findings that motivate this
 refactor.
+
+**Roadmap interaction:** a refactor changes structure, not behavior, so it does
+not ship or unship a feature.
+
+- If `$ARGUMENTS` matches a *feature* item tracked in `ROADMAP.md`, leave that
+  item's status untouched.
+- If the refactor is itself a tracked item in the **Planned** table (e.g. an
+  internal-quality cleanup), follow the normal lifecycle: set it to ⏳ when you
+  start executing (Step 4), and after Step 5's checks pass, move it to the
+  matching category table as ✅ with today's date.
+- Incidental cleanup that isn't tracked stays off the roadmap — don't add a row
+  for it.
 
 ---
 

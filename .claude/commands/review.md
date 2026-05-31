@@ -13,6 +13,7 @@ Read all of the following before forming any opinion:
 
 - `issues/$ARGUMENTS/spec.md` — the requirements the implementation must satisfy
 - `issues/$ARGUMENTS/plan.md` — the steps that were planned and should all be checked off
+- `ROADMAP.md` — the index; `execute` already marked the item ✅, so review only moves it back to ⏳ if it FAILs
 - `CLAUDE.md` — architecture, domain model, and conventions
 - All file names under `crates/` and `runtime/` — the full current state of the implementation
 
@@ -35,12 +36,6 @@ Read all of the following before forming any opinion:
    cargo clippy
    ```
    Note any warnings — these should have been resolved during execution.
-
-4. Run the example file:
-   ```
-   cargo run examples/honda_accord.json
-   ```
-   Note any errors.
 
 ---
 
@@ -116,3 +111,15 @@ Tell the user the review is complete and give them the summary status
 If there are issues, ask the user whether to fix them now or log them for a
 follow-up. If fixing now, work through the issues list and re-run the review
 cycle after each fix. Update the report when all issues are resolved.
+
+---
+
+## Step 7 — Update the roadmap
+
+Review is optional, so by the time you run it `execute` has already shipped the
+item — it should be ✅ in a category table. Reflect this review's outcome:
+
+- **PASS / PASS WITH NOTES** — leave it ✅; no change needed.
+- **FAIL** — move the row out of its category table back into the **Planned**
+  table as ⏳, with a brief note of what's outstanding. If you then fix the
+  issues in this session and reach PASS, move it back to ✅.

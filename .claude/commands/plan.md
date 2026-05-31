@@ -11,10 +11,14 @@ The issue slug to plan is: $ARGUMENTS
 Read these files before producing anything:
 
 - `issues/$ARGUMENTS/spec.md` — the spec you are planning against
+- `ROADMAP.md` — confirm the item is tracked, and see its current status and neighboring work
 - `CLAUDE.md` — architecture, domain model, conventions
 - All file names under `crates/` and `runtime/` — understand what exists and what must be extended or created
 
 Do not write the plan until you have read all of these.
+
+Planning does not change the item's roadmap status — it stays 🟡 in the
+**Planned** table until `execute` begins.
 
 ---
 

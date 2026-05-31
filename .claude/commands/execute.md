@@ -13,6 +13,7 @@ Read these files before writing any code:
 
 - `issues/$ARGUMENTS/plan.md` — the plan you are executing
 - `issues/$ARGUMENTS/spec.md` — the requirements you are satisfying
+- `ROADMAP.md` — confirm the item is tracked and see its current status
 - `CLAUDE.md` — architecture, domain conventions, and commands
 - All file names under `crates/` and `runtime/` — understand current state before touching anything
 
@@ -25,6 +26,9 @@ Do not write any code until you have read all of these.
 Review the Prerequisites section of the plan. If any unresolved open questions
 or blocking dependencies are listed, stop and report them to the user before
 proceeding. Do not work around prerequisites — surface them.
+
+Once prerequisites are clear and you're starting work, set this item's status to
+⏳ in the **Planned** table of `ROADMAP.md`.
 
 ---
 
@@ -109,3 +113,10 @@ cargo test --workspace -- --include-ignored
 
 Report a brief summary: steps completed, files created or modified, and anything
 that deviated from the plan with an explanation.
+
+Finally, if all steps completed and the final checks are green, mark the item
+shipped in `ROADMAP.md`: remove its row from the **Planned** table and add it to
+the best-fit category table as
+`| [<slug>](issues/<slug>/spec.md) | ✅ | <today's date> |` (create a new
+category heading only if none fits). Report that the item is now ✅ shipped. If
+the run did not finish cleanly, leave it ⏳ and say why.

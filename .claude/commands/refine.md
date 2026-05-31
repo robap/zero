@@ -10,6 +10,7 @@ The roadmap item to refine is: $ARGUMENTS
 
 Read these files before asking any questions:
 
+- `ROADMAP.md` — the index of all items and their status. Find where this item sits (it may already be a 🟡 row in the **Planned** table) or note that it's new.
 - `docs/index.md` — overview of every shipped capability and where the user-facing reference lives.
 - `issues/` — browse the spec/plan of any past or in-flight item adjacent to the new one.
 - Skim `crates/` (Rust workspace) and `runtime/` (JS runtime) to understand the shape of the code touched by the item.
@@ -64,4 +65,13 @@ Explicit exclusions — things that might seem related but are not part of this 
 Anything unresolved that the plan phase should address before execution begins.
 ```
 
-After writing the file, tell the user the path and ask them to review it. Make any changes they request.
+After writing the file, register the item in `ROADMAP.md`:
+
+- If it isn't already in the **Planned** table, add a row:
+  `| [<slug>](issues/<slug>/spec.md) | 🟡 | <one-line note> |`
+- If it's already listed, make sure its link points at the new spec and the note
+  still reads true.
+
+Then tell the user the spec path and ask them to review it. Make any changes
+they request — in both the spec and, if the title or scope shifted, the roadmap
+row.
