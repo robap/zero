@@ -1,4 +1,4 @@
-//! Boa-based test runner: discovery, harness, reporter.
+//! QuickJS-based test runner: discovery, harness, reporter.
 
 pub mod coverage;
 pub mod discovery;

@@ -26,7 +26,7 @@ refactor that *is* a tracked item follows the same ⏳ → ✅ lifecycle.
 
 | Item | Status | Notes |
 |------|--------|-------|
-| [test-parallel](issues/test-parallel/spec.md) | 🟡 | Speed up `zero test` via parallel file execution (thread-local Boa contexts, like `zero mutate --threads`). Successor to test-perf, whose measurement showed ~98% of the run is irreducible single-threaded per-file/per-test work. |
+| [test-parallel](issues/test-parallel/spec.md) | 🟡 | Speed up `zero test` via parallel file execution (thread-local QuickJS contexts, like `zero mutate --threads`). Successor to test-perf, whose measurement showed ~98% of the run is irreducible single-threaded per-file/per-test work. |
 | [examples-decision](issues/examples-decision/spec.md) | 🟡 | Decide keep/cut/slim for `examples/`; load-bearing for `examples_*` tests and three docs. Sequence with any `examples_*` test changes. |
 | [coverage-output](issues/coverage-output/spec.md) | 🟡 | Make `coverage.json` opt-in via `--coverage-output <path>`; `--coverage` becomes table-only. Breaking change to `--coverage` auto-write. |
 
@@ -80,6 +80,7 @@ refactor that *is* a tracked item follows the same ⏳ → ✅ lifecycle.
 |------|--------|---------|
 | [test-runner](issues/test-runner/spec.md) | ✅ | 2026-05-14 |
 | [test-perf](issues/test-perf/spec.md) | ✅ | 2026-05-31 |
+| [test-engine](issues/test-engine/spec.md) | ✅ | 2026-05-31 |
 | [test-no-config](issues/test-no-config/spec.md) | ✅ | 2026-05-31 |
 | [test-helpers](issues/test-helpers/spec.md) | ✅ | 2026-05-15 |
 | [test-improvements](issues/test-improvements/spec.md) | ✅ | 2026-05-16 |

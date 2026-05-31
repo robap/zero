@@ -22,4 +22,4 @@ test-internals = []
 
 [dev-dependencies]
 tempfile = { workspace = true }
-boa_engine = { workspace = true }
+rquickjs = { version = "0.12.0", features = ["loader", "macro"] }

@@ -7,7 +7,7 @@ nav_order: 9
 
 `zero test` is the framework's test runner — the same binary that
 runs framework internals. It runs `.test.ts` / `.test.js` /
-`.spec.{ts,js}` files in a Boa-powered JS environment with an
+`.spec.{ts,js}` files in a QuickJS-powered JS environment with an
 in-memory DOM and a curated set of web platform shims. No browser
 launch, no jsdom dependency, no Node.
 

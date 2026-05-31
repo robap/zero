@@ -1,4 +1,6 @@
-//! Custom Boa module loader that resolves `"zero"`, `"zero/test"`, and relative file paths.
+//! Module resolution for the `zero test` harness, and the QuickJS (rquickjs)
+//! resolver/loader pair that drives it. Resolves `"zero"`, `"zero/test"`,
+//! `"zero/http"`, `"zero/components"`, and relative file paths.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -6,8 +8,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use boa_engine::module::{ModuleLoader, Referrer};
-use boa_engine::{Context, JsError, JsNativeError, JsResult, JsString, Module, Source};
+use rquickjs::loader::{ImportAttributes, Loader, Resolver};
+use rquickjs::module::Declared;
+use rquickjs::{Ctx, Module};
 
 use zero_runtime::{http_module, runtime_module, test_module};
 use zero_transpile::{TranspileOptions, transpile_typescript};
@@ -41,6 +44,15 @@ impl CoverageContext {
     }
 }
 
+/// Result of resolving a module specifier: the module `name` (QuickJS cache key
+/// and child-import base), the JS `source` to declare, and the `canonical`
+/// path. Produced by [`ZeroModuleLoader::resolve_source`].
+pub struct ResolvedModule {
+    pub name: String,
+    pub source: String,
+    pub canonical: PathBuf,
+}
+
 /// Module loader for the `zero test` harness.
 ///
 /// Resolves `"zero"` and `"zero/test"` from in-memory strings, and relative
@@ -51,8 +63,6 @@ pub struct ZeroModuleLoader {
     runtime_src: String,
     test_src: String,
     http_src: String,
-    /// Cache: canonical path string → parsed Module (avoids double-parse within one context).
-    module_cache: RefCell<HashMap<String, Module>>,
     /// Side table: module path string → absolute PathBuf (used to resolve relative imports).
     path_map: RefCell<HashMap<String, PathBuf>>,
     /// Optional coverage instrumentation context.
@@ -74,7 +84,6 @@ impl ZeroModuleLoader {
             runtime_src: runtime_module(),
             test_src: test_module(),
             http_src: http_module(),
-            module_cache: RefCell::new(HashMap::new()),
             path_map: RefCell::new(HashMap::new()),
             coverage: None,
             overlay: HashMap::new(),
@@ -90,13 +99,19 @@ impl ZeroModuleLoader {
 
     /// Attach a per-file overlay (canonical path → pre-transpiled JS).
     ///
-    /// During `resolve_relative`, paths in `overlay` short-circuit the SWC
+    /// During relative resolution, paths in `overlay` short-circuit the SWC
     /// transpile and use the supplied JS as-is. Used by `zero mutate` to
     /// serve mutated source for one file while every other module is loaded
     /// normally.
     pub fn with_overlay(mut self, overlay: HashMap<PathBuf, String>) -> Self {
         self.overlay = overlay;
         self
+    }
+
+    /// The project root this loader is sandboxed to. Used by the QuickJS
+    /// resolver to anchor `zero/components` and fall back for path-less bases.
+    pub fn root(&self) -> &Path {
+        &self.root
     }
 
     /// Register an entry-point file path so the loader can resolve relative imports from it.
@@ -106,11 +121,6 @@ impl ZeroModuleLoader {
         self.path_map
             .borrow_mut()
             .insert(key.to_string(), path.to_path_buf());
-    }
-
-    /// Retrieve a cached module by cache key.
-    pub fn get_cached(&self, key: &str) -> Option<Module> {
-        self.module_cache.borrow().get(key).cloned()
     }
 
     /// Snapshot every distinct canonical path resolved by this loader, sorted.
@@ -123,60 +133,83 @@ impl ZeroModuleLoader {
         out
     }
 
-    /// Resolve a relative specifier against the referrer's directory.
+    /// Module resolution policy. Given a specifier and the referrer's directory,
+    /// return the source to evaluate plus the module name and canonical path.
+    /// Called by [`ZeroLoader`] (the QuickJS loader half).
     ///
-    /// Returns `Err` if the specifier escapes the project root or the file cannot be read.
-    fn resolve_relative(
+    /// Records resolved file paths into `path_map` (for [`loaded_paths`]) and
+    /// instruments in-scope files for coverage.
+    ///
+    /// [`loaded_paths`]: ZeroModuleLoader::loaded_paths
+    pub fn resolve_source(
         &self,
         spec: &str,
-        referrer: &Referrer,
-        context: &mut Context,
-    ) -> JsResult<Module> {
-        let base_dir = self.referrer_dir(referrer);
-        let candidate = base_dir.join(spec);
+        referrer_dir: &Path,
+    ) -> Result<ResolvedModule, String> {
+        match spec {
+            "zero" => Ok(ResolvedModule {
+                name: "zero".to_string(),
+                source: self.runtime_src.clone(),
+                canonical: PathBuf::from("zero"),
+            }),
+            "zero/test" => Ok(ResolvedModule {
+                name: "zero/test".to_string(),
+                source: self.test_src.clone(),
+                canonical: PathBuf::from("zero/test"),
+            }),
+            "zero/http" => Ok(ResolvedModule {
+                name: "zero/http".to_string(),
+                source: self.http_src.clone(),
+                canonical: PathBuf::from("zero/http"),
+            }),
+            "zero/components" => self.resolve_components_source(),
+            // The QuickJS resolver hands `resolve_source` already-canonicalized
+            // absolute paths (it resolves the path before loading); relative
+            // specifiers are also accepted. Both go through the file path —
+            // `referrer_dir.join(abs)` yields `abs`.
+            s if s.starts_with("./") || s.starts_with("../") || Path::new(s).is_absolute() => {
+                self.resolve_relative_source(s, referrer_dir)
+            }
+            _ => Err(format!("unsupported module specifier: \"{spec}\"")),
+        }
+    }
 
-        let canonical = candidate.canonicalize().map_err(|e| {
-            JsError::from_native(
-                JsNativeError::error().with_message(format!("cannot resolve \"{spec}\": {e}")),
-            )
-        })?;
+    /// Engine-agnostic resolution of a relative specifier against `referrer_dir`.
+    /// Canonicalizes, enforces the project-root sandbox, applies the mutate
+    /// overlay or transpile/instrument, and records the path for `loaded_paths`.
+    fn resolve_relative_source(
+        &self,
+        spec: &str,
+        referrer_dir: &Path,
+    ) -> Result<ResolvedModule, String> {
+        let candidate = referrer_dir.join(spec);
+        let canonical = candidate
+            .canonicalize()
+            .map_err(|e| format!("cannot resolve \"{spec}\": {e}"))?;
 
         if !canonical.starts_with(&self.root) {
-            return Err(JsError::from_native(JsNativeError::error().with_message(
-                format!("path escape: \"{spec}\" resolves outside the project root"),
-            )));
+            return Err(format!(
+                "path escape: \"{spec}\" resolves outside the project root"
+            ));
         }
 
         let key = canonical.to_string_lossy().into_owned();
 
-        // Return cached module if available.
-        if let Some(m) = self.module_cache.borrow().get(&key).cloned() {
-            return Ok(m);
-        }
-
-        // Overlay short-circuit: if this canonical path has pre-transpiled JS
-        // attached (e.g. from `zero mutate`), use it as-is.
+        // Overlay short-circuit: pre-transpiled JS (e.g. from `zero mutate`).
         if let Some(js) = self.overlay.get(&canonical) {
-            let module = Module::parse(
-                Source::from_bytes(js.as_bytes()).with_path(&canonical),
-                None,
-                context,
-            )?;
-            self.module_cache
+            self.path_map
                 .borrow_mut()
-                .insert(key.clone(), module.clone());
-            self.path_map.borrow_mut().insert(key, canonical);
-            return Ok(module);
+                .insert(key.clone(), canonical.clone());
+            return Ok(ResolvedModule {
+                name: key,
+                source: js.clone(),
+                canonical,
+            });
         }
 
-        let raw = fs::read_to_string(&canonical).map_err(|e| {
-            JsError::from_native(
-                JsNativeError::error()
-                    .with_message(format!("cannot read \"{}\": {e}", canonical.display())),
-            )
-        })?;
+        let raw = fs::read_to_string(&canonical)
+            .map_err(|e| format!("cannot read \"{}\": {e}", canonical.display()))?;
 
-        // Decide whether to instrument (coverage) or just transpile.
         let logical = canonical.to_string_lossy().into_owned();
         let instrument_cov = self
             .coverage
@@ -184,7 +217,7 @@ impl ZeroModuleLoader {
             .filter(|c| c.scope.covers(&canonical))
             .cloned();
         let t_start = crate::timing::start();
-        let src = if let Some(cov) = instrument_cov {
+        let source = if let Some(cov) = instrument_cov {
             let opts = TranspileOptions {
                 filename: &logical,
                 inline_source_map: false,
@@ -196,9 +229,10 @@ impl ZeroModuleLoader {
                     out.code
                 }
                 Err(e) => {
-                    return Err(JsError::from_native(JsNativeError::error().with_message(
-                        format!("coverage instrument error in {}: {e}", canonical.display()),
-                    )));
+                    return Err(format!(
+                        "coverage instrument error in {}: {e}",
+                        canonical.display()
+                    ));
                 }
             }
         } else if canonical.extension().and_then(|e| e.to_str()) == Some("ts") {
@@ -212,9 +246,7 @@ impl ZeroModuleLoader {
             ) {
                 Ok(out) => out.code,
                 Err(e) => {
-                    return Err(JsError::from_native(JsNativeError::error().with_message(
-                        format!("transpile error in {}: {e}", canonical.display()),
-                    )));
+                    return Err(format!("transpile error in {}: {e}", canonical.display()));
                 }
             }
         } else {
@@ -222,54 +254,38 @@ impl ZeroModuleLoader {
         };
         crate::timing::record_since(crate::timing::Phase::Transpile, t_start);
 
-        let module = Module::parse(
-            Source::from_bytes(src.as_bytes()).with_path(&canonical),
-            None,
-            context,
-        )?;
-
-        self.module_cache
+        self.path_map
             .borrow_mut()
-            .insert(key.clone(), module.clone());
-        self.path_map.borrow_mut().insert(key, canonical);
+            .insert(key.clone(), canonical.clone());
 
-        Ok(module)
+        Ok(ResolvedModule {
+            name: key,
+            source,
+            canonical,
+        })
     }
 
-    /// Resolve the bare specifier `"zero/components"` to the user-facing
-    /// component index at `<root>/.zero/components/index.ts`. The index file's
-    /// own relative imports (e.g. `./Button.ts`) are resolved by Boa against
-    /// the module's parsed path, so no synthetic referrer is needed.
-    fn resolve_components_index(&self, context: &mut Context) -> JsResult<Module> {
+    /// Engine-agnostic resolution of the `"zero/components"` index. The cache
+    /// `name` stays `"zero/components"` while `canonical` is the on-disk index
+    /// path (so its own `./Foo.ts` imports resolve relatively).
+    fn resolve_components_source(&self) -> Result<ResolvedModule, String> {
         let path = self.root.join(".zero").join("components").join("index.ts");
 
-        let canonical = path.canonicalize().map_err(|e| {
-            JsError::from_native(
-                JsNativeError::error()
-                    .with_message(format!("cannot resolve \"zero/components\": {e}")),
-            )
-        })?;
+        let canonical = path
+            .canonicalize()
+            .map_err(|e| format!("cannot resolve \"zero/components\": {e}"))?;
 
         if !canonical.starts_with(&self.root) {
-            return Err(JsError::from_native(JsNativeError::error().with_message(
+            return Err(
                 "path escape: \"zero/components\" resolves outside the project root".to_string(),
-            )));
+            );
         }
 
-        let key = "zero/components".to_string();
-        if let Some(m) = self.module_cache.borrow().get(&key).cloned() {
-            return Ok(m);
-        }
-
-        let raw = fs::read_to_string(&canonical).map_err(|e| {
-            JsError::from_native(
-                JsNativeError::error()
-                    .with_message(format!("cannot read \"{}\": {e}", canonical.display())),
-            )
-        })?;
+        let raw = fs::read_to_string(&canonical)
+            .map_err(|e| format!("cannot read \"{}\": {e}", canonical.display()))?;
 
         let logical = canonical.to_string_lossy().into_owned();
-        let src = match transpile_typescript(
+        let source = match transpile_typescript(
             &raw,
             &TranspileOptions {
                 filename: &logical,
@@ -279,111 +295,103 @@ impl ZeroModuleLoader {
         ) {
             Ok(out) => out.code,
             Err(e) => {
-                return Err(JsError::from_native(JsNativeError::error().with_message(
-                    format!("transpile error in {}: {e}", canonical.display()),
-                )));
+                return Err(format!("transpile error in {}: {e}", canonical.display()));
             }
         };
 
-        let module = Module::parse(
-            Source::from_bytes(src.as_bytes()).with_path(&canonical),
-            None,
-            context,
-        )?;
-
-        self.module_cache
+        self.path_map
             .borrow_mut()
-            .insert(key.clone(), module.clone());
-        self.path_map.borrow_mut().insert(key, canonical);
+            .insert("zero/components".to_string(), canonical.clone());
 
-        Ok(module)
+        Ok(ResolvedModule {
+            name: "zero/components".to_string(),
+            source,
+            canonical,
+        })
     }
+}
 
-    /// Return the directory of the referrer (for resolving relative specifiers).
-    fn referrer_dir(&self, referrer: &Referrer) -> PathBuf {
-        match referrer {
-            Referrer::Module(m) => {
-                // Look up the module path we registered for this module.
-                // Boa modules are GC objects; we match by path string stored in path_map
-                // by comparing the module's path() if available.
-                if let Some(path) = m.path()
-                    && let Some(parent) = path.parent()
-                {
-                    return parent.to_path_buf();
-                }
-                self.root.clone()
+/// Resolver half of the QuickJS loader: turns a `(base, specifier)` pair into a
+/// resolved module name (bare `zero*` pass through; `zero/components` and
+/// relative specifiers become canonical absolute paths).
+pub struct ZeroResolver {
+    loader: Rc<ZeroModuleLoader>,
+}
+
+impl ZeroResolver {
+    /// Create a resolver backed by the shared [`ZeroModuleLoader`].
+    pub fn new(loader: Rc<ZeroModuleLoader>) -> Self {
+        Self { loader }
+    }
+}
+
+/// Loader half of the QuickJS loader: reads + transpiles the resolved name via
+/// [`ZeroModuleLoader::resolve_source`] and declares the module.
+pub struct ZeroLoader {
+    loader: Rc<ZeroModuleLoader>,
+}
+
+impl ZeroLoader {
+    /// Create a loader backed by the shared [`ZeroModuleLoader`].
+    pub fn new(loader: Rc<ZeroModuleLoader>) -> Self {
+        Self { loader }
+    }
+}
+
+/// Canonicalize a path into a `String` module name.
+fn abs(p: &Path) -> rquickjs::Result<String> {
+    p.canonicalize()
+        .map(|c| c.to_string_lossy().into_owned())
+        .map_err(|e| rquickjs::Error::new_loading(format!("resolve {}: {e}", p.display())))
+}
+
+impl Resolver for ZeroResolver {
+    fn resolve<'js>(
+        &mut self,
+        _ctx: &Ctx<'js>,
+        base: &str,
+        name: &str,
+        _attrs: Option<ImportAttributes<'js>>,
+    ) -> rquickjs::Result<String> {
+        match name {
+            "zero" | "zero/test" | "zero/http" => Ok(name.to_string()),
+            // The component index lives on disk; resolve to its absolute path so
+            // its own `./Foo.ts` imports resolve relative to the index's dir.
+            "zero/components" => abs(&self
+                .loader
+                .root()
+                .join(".zero")
+                .join("components")
+                .join("index.ts")),
+            s if s.starts_with("./") || s.starts_with("../") => {
+                let base_dir = Path::new(base)
+                    .parent()
+                    .unwrap_or_else(|| self.loader.root());
+                abs(&base_dir.join(s))
             }
-            _ => self.root.clone(),
+            other => Err(rquickjs::Error::new_resolving(
+                base.to_string(),
+                format!("unsupported specifier: {other}"),
+            )),
         }
     }
 }
 
-impl ModuleLoader for ZeroModuleLoader {
-    fn load_imported_module(
-        self: std::rc::Rc<Self>,
-        referrer: Referrer,
-        specifier: JsString,
-        context: &std::cell::RefCell<&mut Context>,
-    ) -> impl std::future::Future<Output = JsResult<Module>> {
-        let spec = specifier.to_std_string_escaped();
-
-        let result: JsResult<Module> = (|| {
-            if let Some(m) = self.module_cache.borrow().get(&spec).cloned() {
-                return Ok(m);
-            }
-
-            match spec.as_str() {
-                "zero" => {
-                    let mut ctx = context.borrow_mut();
-                    let m = Module::parse(
-                        Source::from_bytes(self.runtime_src.as_bytes()),
-                        None,
-                        &mut ctx,
-                    )?;
-                    self.module_cache
-                        .borrow_mut()
-                        .insert("zero".to_string(), m.clone());
-                    Ok(m)
-                }
-                "zero/test" => {
-                    let mut ctx = context.borrow_mut();
-                    let m = Module::parse(
-                        Source::from_bytes(self.test_src.as_bytes()),
-                        None,
-                        &mut ctx,
-                    )?;
-                    self.module_cache
-                        .borrow_mut()
-                        .insert("zero/test".to_string(), m.clone());
-                    Ok(m)
-                }
-                "zero/http" => {
-                    let mut ctx = context.borrow_mut();
-                    let m = Module::parse(
-                        Source::from_bytes(self.http_src.as_bytes()),
-                        None,
-                        &mut ctx,
-                    )?;
-                    self.module_cache
-                        .borrow_mut()
-                        .insert("zero/http".to_string(), m.clone());
-                    Ok(m)
-                }
-                "zero/components" => {
-                    let mut ctx = context.borrow_mut();
-                    self.resolve_components_index(&mut ctx)
-                }
-                s if s.starts_with("./") || s.starts_with("../") => {
-                    let mut ctx = context.borrow_mut();
-                    self.resolve_relative(s, &referrer, &mut ctx)
-                }
-                _ => Err(JsError::from_native(JsNativeError::error().with_message(
-                    format!("unsupported module specifier: \"{spec}\""),
-                ))),
-            }
-        })();
-
-        async { result }
+impl Loader for ZeroLoader {
+    fn load<'js>(
+        &mut self,
+        ctx: &Ctx<'js>,
+        name: &str,
+        _attrs: Option<ImportAttributes<'js>>,
+    ) -> rquickjs::Result<Module<'js, Declared>> {
+        // `name` is already resolved: a bare `zero*` specifier or a canonical
+        // absolute path. For abs paths `referrer_dir` is irrelevant (join with
+        // an absolute path discards the base), so the root is a fine anchor.
+        let resolved = self
+            .loader
+            .resolve_source(name, self.loader.root())
+            .map_err(rquickjs::Error::new_loading)?;
+        Module::declare(ctx.clone(), name, resolved.source)
     }
 }
 
@@ -396,163 +404,108 @@ mod tests {
         tempfile::tempdir().unwrap()
     }
 
-    fn make_context_with_loader(
-        loader: ZeroModuleLoader,
-    ) -> (Context, std::rc::Rc<ZeroModuleLoader>) {
-        use std::rc::Rc;
-        let rc = Rc::new(loader);
-        let ctx = Context::builder()
-            .module_loader(rc.clone())
-            .build()
-            .expect("failed to build context");
-        (ctx, rc)
+    use rquickjs::promise::PromiseState;
+    use rquickjs::{Context, Runtime};
+
+    /// Evaluate `src` as an entry module (named after `entry_path`, so relative
+    /// imports resolve from its dir) through the qjs loader rooted at `dir`.
+    /// Returns Ok if the module resolves, Err on rejection.
+    fn run_entry(dir: &Path, entry_path: &Path, src: &str) -> Result<(), String> {
+        run_entry_with_loader(Rc::new(ZeroModuleLoader::new(dir)), entry_path, src)
+    }
+
+    /// Like [`run_entry`] but with a caller-supplied loader (e.g. with an overlay).
+    fn run_entry_with_loader(
+        loader: Rc<ZeroModuleLoader>,
+        entry_path: &Path,
+        src: &str,
+    ) -> Result<(), String> {
+        let rt = Runtime::new().map_err(|e| format!("runtime: {e}"))?;
+        rt.set_loader(
+            ZeroResolver::new(loader.clone()),
+            ZeroLoader::new(loader.clone()),
+        );
+        let ctx = Context::full(&rt).map_err(|e| format!("context: {e}"))?;
+        let name = entry_path.to_string_lossy().into_owned();
+        ctx.with(|ctx| {
+            let promise =
+                Module::evaluate(ctx.clone(), name, src).map_err(|e| format!("declare: {e}"))?;
+            while ctx.execute_pending_job() {}
+            match promise.state() {
+                PromiseState::Resolved => Ok(()),
+                PromiseState::Rejected => Err("module evaluation rejected".to_string()),
+                PromiseState::Pending => Err("module still pending after drain".to_string()),
+            }
+        })
+    }
+
+    #[test]
+    fn resolve_source_returns_zero_test_module() {
+        let dir = make_root();
+        let loader = ZeroModuleLoader::new(dir.path());
+        let resolved = loader
+            .resolve_source("zero/test", dir.path())
+            .expect("resolve zero/test");
+        assert_eq!(resolved.name, "zero/test");
+        assert!(
+            resolved.source.contains("function describe("),
+            "zero/test source should define describe"
+        );
     }
 
     #[test]
     fn resolves_zero_and_signal() {
         let dir = make_root();
-        let loader = ZeroModuleLoader::new(dir.path());
-        let (mut ctx, _loader) = make_context_with_loader(loader);
-
-        // Parse "zero" module — should not error
-        let m = Module::parse(
-            Source::from_bytes(b"import { signal } from 'zero'; export { signal };"),
-            None,
-            &mut ctx,
+        let entry = dir.path().join("entry.js");
+        run_entry(
+            dir.path(),
+            &entry,
+            "import { signal } from 'zero'; export { signal };",
         )
-        .expect("failed to parse module");
-
-        let promise = m.load_link_evaluate(&mut ctx);
-        let _ = ctx.run_jobs();
-
-        // Promise should be fulfilled (not rejected).
-        let state = promise.state();
-        assert!(
-            !matches!(
-                state,
-                boa_engine::builtins::promise::PromiseState::Rejected(_)
-            ),
-            "module evaluation rejected: {state:?}"
-        );
+        .expect("zero import");
     }
 
     #[test]
     fn resolves_zero_test_and_has_describe() {
         let dir = make_root();
-        let loader = ZeroModuleLoader::new(dir.path());
-        let (mut ctx, loader_rc) = make_context_with_loader(loader);
-
-        let m = Module::parse(
-            Source::from_bytes(b"import { describe } from 'zero/test';"),
-            None,
-            &mut ctx,
-        )
-        .expect("failed to parse");
-
-        let promise = m.load_link_evaluate(&mut ctx);
-        let _ = ctx.run_jobs();
-        let state = promise.state();
-        assert!(
-            !matches!(
-                state,
-                boa_engine::builtins::promise::PromiseState::Rejected(_)
-            ),
-            "zero/test rejected: {state:?}"
-        );
-
-        // The zero/test module should be cached.
-        assert!(
-            loader_rc.get_cached("zero/test").is_some(),
-            "zero/test not in cache after load"
-        );
+        let entry = dir.path().join("entry.js");
+        run_entry(dir.path(), &entry, "import { describe } from 'zero/test';")
+            .expect("zero/test import");
     }
 
     #[test]
     fn resolves_relative_file() {
         let dir = make_root();
-        let foo_path = dir.path().join("foo.js");
-        std::fs::write(&foo_path, b"export const x = 42;").unwrap();
-
-        let loader = ZeroModuleLoader::new(dir.path());
-        let (mut ctx, _) = make_context_with_loader(loader);
-
-        // Entry module lives in the same dir; uses a relative `./foo.js` import.
-        // We set the source path so the loader can resolve relative to this dir.
-        let entry_path = dir.path().join("entry.js");
-        let m = Module::parse(
-            Source::from_bytes(b"import { x } from './foo.js';").with_path(&entry_path),
-            None,
-            &mut ctx,
+        std::fs::write(dir.path().join("foo.js"), b"export const x = 42;").unwrap();
+        let entry = dir.path().join("entry.js");
+        run_entry(
+            dir.path(),
+            &entry,
+            "import { x } from './foo.js'; if (x !== 42) throw new Error('nope');",
         )
-        .expect("failed to parse entry");
-        let promise = m.load_link_evaluate(&mut ctx);
-        let _ = ctx.run_jobs();
-        let state = promise.state();
-        assert!(
-            !matches!(
-                state,
-                boa_engine::builtins::promise::PromiseState::Rejected(_)
-            ),
-            "relative import rejected: {state:?}"
-        );
+        .expect("relative import");
     }
 
     #[test]
     fn resolves_relative_ts_file() {
         let dir = make_root();
-        let foo_path = dir.path().join("foo.ts");
-        std::fs::write(&foo_path, b"export const x: number = 42;").unwrap();
-
-        let loader = ZeroModuleLoader::new(dir.path());
-        let (mut ctx, _) = make_context_with_loader(loader);
-
-        let entry_path = dir.path().join("entry.js");
-        let m = Module::parse(
-            Source::from_bytes(
-                b"import { x } from './foo.ts'; if (x !== 42) throw new Error('nope');",
-            )
-            .with_path(&entry_path),
-            None,
-            &mut ctx,
+        std::fs::write(dir.path().join("foo.ts"), b"export const x: number = 42;").unwrap();
+        let entry = dir.path().join("entry.js");
+        run_entry(
+            dir.path(),
+            &entry,
+            "import { x } from './foo.ts'; if (x !== 42) throw new Error('nope');",
         )
-        .expect("failed to parse entry");
-        let promise = m.load_link_evaluate(&mut ctx);
-        let _ = ctx.run_jobs();
-        let state = promise.state();
-        assert!(
-            !matches!(
-                state,
-                boa_engine::builtins::promise::PromiseState::Rejected(_)
-            ),
-            "ts relative import rejected: {state:?}"
-        );
+        .expect("ts relative import");
     }
 
     #[test]
     fn parse_error_in_ts_dependency_surfaces() {
         let dir = make_root();
-        let foo_path = dir.path().join("foo.ts");
-        std::fs::write(&foo_path, b"const x: = ;").unwrap();
-
-        let loader = ZeroModuleLoader::new(dir.path());
-        let (mut ctx, _) = make_context_with_loader(loader);
-        let entry_path = dir.path().join("entry.js");
-        let m = Module::parse(
-            Source::from_bytes(b"import { } from './foo.ts';").with_path(&entry_path),
-            None,
-            &mut ctx,
-        )
-        .expect("entry parse ok");
-        let promise = m.load_link_evaluate(&mut ctx);
-        let _ = ctx.run_jobs();
-        let state = promise.state();
-        assert!(
-            matches!(
-                state,
-                boa_engine::builtins::promise::PromiseState::Rejected(_)
-            ),
-            "expected rejection on bad TS, got: {state:?}"
-        );
+        std::fs::write(dir.path().join("foo.ts"), b"const x: = ;").unwrap();
+        let entry = dir.path().join("entry.js");
+        let res = run_entry(dir.path(), &entry, "import { } from './foo.ts';");
+        assert!(res.is_err(), "expected rejection on bad TS, got: {res:?}");
     }
 
     #[test]
@@ -565,61 +518,25 @@ mod tests {
             b"export const placeholder: number = 1;",
         )
         .unwrap();
-
-        let loader = ZeroModuleLoader::new(dir.path());
-        let (mut ctx, loader_rc) = make_context_with_loader(loader);
-
-        let m = Module::parse(
-            Source::from_bytes(b"import { placeholder } from 'zero/components';"),
-            None,
-            &mut ctx,
+        let entry = dir.path().join("entry.js");
+        run_entry(
+            dir.path(),
+            &entry,
+            "import { placeholder } from 'zero/components'; if (placeholder !== 1) throw new Error('nope');",
         )
-        .expect("failed to parse entry");
-
-        let promise = m.load_link_evaluate(&mut ctx);
-        let _ = ctx.run_jobs();
-        let state = promise.state();
-        assert!(
-            !matches!(
-                state,
-                boa_engine::builtins::promise::PromiseState::Rejected(_)
-            ),
-            "zero/components rejected: {state:?}"
-        );
-        assert!(
-            loader_rc.get_cached("zero/components").is_some(),
-            "zero/components not in cache after load"
-        );
+        .expect("zero/components import");
     }
 
     #[test]
     fn resolves_zero_http_module() {
         let dir = make_root();
-        let loader = ZeroModuleLoader::new(dir.path());
-        let (mut ctx, loader_rc) = make_context_with_loader(loader);
-
-        let m = Module::parse(
-            Source::from_bytes(b"import { createHttp } from 'zero/http';"),
-            None,
-            &mut ctx,
+        let entry = dir.path().join("entry.js");
+        run_entry(
+            dir.path(),
+            &entry,
+            "import { createHttp } from 'zero/http';",
         )
-        .expect("failed to parse");
-
-        let promise = m.load_link_evaluate(&mut ctx);
-        let _ = ctx.run_jobs();
-        let state = promise.state();
-        assert!(
-            !matches!(
-                state,
-                boa_engine::builtins::promise::PromiseState::Rejected(_)
-            ),
-            "zero/http rejected: {state:?}"
-        );
-
-        assert!(
-            loader_rc.get_cached("zero/http").is_some(),
-            "zero/http not in cache after load"
-        );
+        .expect("zero/http import");
     }
 
     #[test]
@@ -632,50 +549,23 @@ mod tests {
         let canonical = foo_path.canonicalize().unwrap();
 
         let mut overlay: HashMap<PathBuf, String> = HashMap::new();
-        overlay.insert(canonical.clone(), "export const x = 99;".to_string());
+        overlay.insert(canonical, "export const x = 99;".to_string());
 
-        let loader = ZeroModuleLoader::new(dir.path()).with_overlay(overlay);
-        let (mut ctx, _) = make_context_with_loader(loader);
-
-        let entry_path = dir.path().join("entry.js");
-        let m = Module::parse(
-            Source::from_bytes(
-                b"import { x } from './foo.js'; if (x !== 99) throw new Error('wanted 99, got ' + x);",
-            )
-            .with_path(&entry_path),
-            None,
-            &mut ctx,
+        let loader = Rc::new(ZeroModuleLoader::new(dir.path()).with_overlay(overlay));
+        let entry = dir.path().join("entry.js");
+        run_entry_with_loader(
+            loader,
+            &entry,
+            "import { x } from './foo.js'; if (x !== 99) throw new Error('wanted 99, got ' + x);",
         )
-        .expect("entry parse");
-        let promise = m.load_link_evaluate(&mut ctx);
-        let _ = ctx.run_jobs();
-        let state = promise.state();
-        assert!(
-            !matches!(
-                state,
-                boa_engine::builtins::promise::PromiseState::Rejected(_)
-            ),
-            "overlay did not override on-disk source: {state:?}"
-        );
+        .expect("overlay should override on-disk source");
     }
 
     #[test]
     fn rejects_bare_unknown_specifier() {
         let dir = make_root();
-        let loader = ZeroModuleLoader::new(dir.path());
-        let (mut ctx, _) = make_context_with_loader(loader);
-
-        let m = Module::parse(Source::from_bytes(b"import 'lodash';"), None, &mut ctx)
-            .expect("parsed ok");
-        let promise = m.load_link_evaluate(&mut ctx);
-        let _ = ctx.run_jobs();
-        let state = promise.state();
-        assert!(
-            matches!(
-                state,
-                boa_engine::builtins::promise::PromiseState::Rejected(_)
-            ),
-            "expected rejection for unknown specifier, got: {state:?}"
-        );
+        let entry = dir.path().join("entry.js");
+        let res = run_entry(dir.path(), &entry, "import 'lodash';");
+        assert!(res.is_err(), "expected rejection for unknown specifier");
     }
 }

@@ -853,7 +853,9 @@ const app = new App();
     }
 
     #[test]
-    fn bundle_evaluates_under_boa() {
+    fn bundle_evaluates_under_quickjs() {
+        use rquickjs::CatchResultExt;
+
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("web");
         std::fs::create_dir_all(root.join("src")).unwrap();
@@ -864,15 +866,16 @@ const app = new App();
         .unwrap();
         let out = with_cwd(dir.path(), || bundle(&write_minimal_config(&root), false))
             .expect("bundle ok");
-        let mut context = boa_engine::Context::default();
-        context
-            .eval(boa_engine::Source::from_bytes(out.code.as_bytes()))
-            .expect("bundle evaluates without error");
-        let v = context
-            .global_object()
-            .get(boa_engine::js_string!("result"), &mut context)
-            .expect("global `result` defined");
-        let n = v.to_i32(&mut context).expect("result is a number");
+        let rt = rquickjs::Runtime::new().expect("runtime");
+        let context = rquickjs::Context::full(&rt).expect("context");
+        let n: i32 = context.with(|ctx| {
+            ctx.eval::<(), _>(out.code.clone())
+                .catch(&ctx)
+                .expect("bundle evaluates without error");
+            ctx.globals()
+                .get::<_, i32>("result")
+                .expect("global `result` is a number")
+        });
         assert_eq!(n, 5, "expected result == 5");
     }
 

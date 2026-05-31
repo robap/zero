@@ -56,7 +56,7 @@ impl MutantStatus {
 /// How per-mutant test execution is isolated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Isolation {
-    /// Run each mutant in the calling process. Fast; a panic in Boa's GC
+    /// Run each mutant in the calling process. Fast; a panic in the JS engine
     /// kills the entire run. Used by tests and small projects.
     InProcess,
     /// Spawn a child `zero mutate-worker` per mutant. A child that aborts
@@ -793,8 +793,8 @@ fn dispatch_sequential(
 /// index into the work queue. Each worker pulls the next site, runs it in
 /// a subprocess, and sends the result back. Always uses subprocess
 /// isolation — the parallel path is the only one that benefits from
-/// concurrency and parallel in-process Boa runs would multiply the GC
-/// hazard we're isolating against.
+/// concurrency and parallel in-process engine runs would multiply the
+/// crash hazard we're isolating against.
 fn dispatch_parallel(
     root: PathBuf,
     queue: Vec<MutantWork>,
@@ -871,7 +871,7 @@ fn run_one_mutant_inproc(
 
 /// Run a single mutant's full test loop in a child `zero mutate-worker`
 /// process. Child exit codes encode the verdict; anything outside `0..=2`
-/// (e.g. a Boa-internal abort during Context teardown) is reported as
+/// (e.g. an engine-internal abort during context teardown) is reported as
 /// [`MutantStatus::Errored`].
 fn run_one_mutant_subprocess(
     root: &Path,

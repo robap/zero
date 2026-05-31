@@ -110,7 +110,7 @@ pub fn http_module() -> String {
 ///
 /// Importing from `"zero"` rather than re-embedding the runtime body ensures
 /// that `_currentApp` (and other mutable runtime state) is shared between
-/// `"zero"` and `"zero/test"` within the same Boa context. This is necessary
+/// `"zero"` and `"zero/test"` within the same JS context. This is necessary
 /// for `render()` / `inject()` to cooperate when test components import from
 /// `"zero"`.
 ///

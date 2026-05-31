@@ -1,5 +1,5 @@
 //! Smoke pass: run the framework's existing `runtime/*.test.js` files under
-//! the new Boa harness to surface incompatibilities early.
+//! the QuickJS harness to surface incompatibilities early.
 //!
 //! These tests are marked `#[ignore]` so they don't gate CI for this slice,
 //! but they can be run manually with `cargo test -- --ignored`.
@@ -47,7 +47,7 @@ fn scaffold_with_runtime_test(content: &str) -> tempfile::TempDir {
         .replace("from \"./app.js\"", "from \"zero\"")
         .replace("from \"./dom-shim.js\"", "from \"zero\"");
 
-    // Strip node:test / node:assert imports — these won't resolve under Boa.
+    // Strip node:test / node:assert imports — these won't resolve under QuickJS.
     // We replace with "zero/test" equivalents.
     let rewritten = rewritten
         .replace(
@@ -72,11 +72,11 @@ fn scaffold_with_runtime_test(content: &str) -> tempfile::TempDir {
         )
         .replace(
             "import assert from 'node:assert/strict';",
-            "// node:assert not available under Boa",
+            "// node:assert not available under QuickJS",
         )
         .replace(
             "import assert from \"node:assert/strict\";",
-            "// node:assert not available under Boa",
+            "// node:assert not available under QuickJS",
         );
 
     let test_path = tmp.path().join("web/src/smoke.test.js");
@@ -86,7 +86,7 @@ fn scaffold_with_runtime_test(content: &str) -> tempfile::TempDir {
 
 #[test]
 #[ignore]
-fn reactivity_test_smoke_passes_under_boa() {
+fn reactivity_test_smoke_passes_under_quickjs() {
     let content = std::fs::read_to_string(repo_path("runtime/reactivity.test.js")).unwrap();
     let tmp = scaffold_with_runtime_test(&content);
     let output = Command::cargo_bin("zero")
@@ -106,7 +106,7 @@ fn reactivity_test_smoke_passes_under_boa() {
 
 #[test]
 #[ignore]
-fn template_test_smoke_passes_under_boa() {
+fn template_test_smoke_passes_under_quickjs() {
     let content = std::fs::read_to_string(repo_path("runtime/template.test.js")).unwrap();
     let tmp = scaffold_with_runtime_test(&content);
     let output = Command::cargo_bin("zero")

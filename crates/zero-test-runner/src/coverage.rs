@@ -879,7 +879,7 @@ fn _silence_unused_imports() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use boa_engine::{Context, Source};
+    use rquickjs::{CatchResultExt, Context, Runtime, Value};
 
     fn opts(file: &str) -> TranspileOptions<'_> {
         TranspileOptions {
@@ -889,27 +889,43 @@ mod tests {
         }
     }
 
-    fn run_in_boa(code: &str) -> Context {
-        let mut ctx = Context::default();
-        ctx.eval(Source::from_bytes(code.as_bytes()))
-            .unwrap_or_else(|e| panic!("eval failed: {e:?}\ncode:\n{code}"));
-        ctx
+    /// Eval `code` as a script under QuickJS and return
+    /// `globalThis.__zero_coverage__` as a serde_json value.
+    fn run_coverage(code: &str) -> serde_json::Value {
+        let rt = Runtime::new().expect("runtime");
+        let ctx = Context::full(&rt).expect("context");
+        ctx.with(|ctx| {
+            ctx.eval::<(), _>(code)
+                .catch(&ctx)
+                .unwrap_or_else(|e| panic!("eval failed: {e}\ncode:\n{code}"));
+            let cov: Value = ctx
+                .globals()
+                .get("__zero_coverage__")
+                .expect("__zero_coverage__ present");
+            let json = ctx
+                .json_stringify(cov)
+                .expect("stringify")
+                .expect("coverage not undefined")
+                .to_string()
+                .expect("to_string");
+            serde_json::from_str(&json).expect("parse coverage json")
+        })
     }
 
-    fn lookup_lines_n(ctx: &mut Context, file: &str, n: u32) -> i64 {
-        let expr = format!("globalThis.__zero_coverage__[{:?}].lines[{}]", file, n);
-        let val = ctx
-            .eval(Source::from_bytes(expr.as_bytes()))
-            .expect("eval ok");
-        val.as_number().map(|v| v as i64).unwrap_or(-1)
+    fn lookup_lines_n(cov: &serde_json::Value, file: &str, n: u32) -> i64 {
+        cov.get(file)
+            .and_then(|f| f.get("lines"))
+            .and_then(|l| l.get(n.to_string()))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(-1)
     }
 
-    fn lookup_fns(ctx: &mut Context, file: &str, name: &str) -> i64 {
-        let expr = format!("globalThis.__zero_coverage__[{:?}].fns[{:?}]", file, name);
-        let val = ctx
-            .eval(Source::from_bytes(expr.as_bytes()))
-            .expect("eval ok");
-        val.as_number().map(|v| v as i64).unwrap_or(-1)
+    fn lookup_fns(cov: &serde_json::Value, file: &str, name: &str) -> i64 {
+        cov.get(file)
+            .and_then(|f| f.get("fns"))
+            .and_then(|m| m.get(name))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(-1)
     }
 
     #[test]
@@ -920,9 +936,9 @@ mod tests {
         // wrap it in a function we then immediately call to evaluate. Avoid
         // module semantics so we can eval as a script.
         let exec = out.code.replace("export ", "");
-        let mut ctx = run_in_boa(&exec);
+        let cov = run_coverage(&exec);
         assert_eq!(
-            lookup_lines_n(&mut ctx, "/abs/foo.ts", 1),
+            lookup_lines_n(&cov, "/abs/foo.ts", 1),
             1,
             "top-level line counter should be 1\ncode:\n{exec}"
         );
@@ -933,14 +949,14 @@ mod tests {
         let src = "export function f(){ return 1 }\nf();\n";
         let out = instrument(src, &opts("/abs/foo.ts")).expect("instrument");
         let exec = out.code.replace("export ", "");
-        let mut ctx = run_in_boa(&exec);
+        let cov = run_coverage(&exec);
         assert_eq!(
-            lookup_fns(&mut ctx, "/abs/foo.ts", "f"),
+            lookup_fns(&cov, "/abs/foo.ts", "f"),
             1,
             "fns.f should be 1 after one call\ncode:\n{exec}"
         );
         // The function body's first line is line 1 of the source (same line).
-        let lines = lookup_lines_n(&mut ctx, "/abs/foo.ts", 1);
+        let lines = lookup_lines_n(&cov, "/abs/foo.ts", 1);
         assert!(lines >= 1, "line 1 should fire at least once, got {lines}");
     }
 
@@ -948,9 +964,9 @@ mod tests {
     fn instruments_arrow_function() {
         let src = "const g = (x) => { return x + 1 };\ng(2);\n";
         let out = instrument(src, &opts("/abs/foo.ts")).expect("instrument");
-        let mut ctx = run_in_boa(&out.code);
+        let cov = run_coverage(&out.code);
         // anon@<line of arrow start> — line 1.
-        let cnt = lookup_fns(&mut ctx, "/abs/foo.ts", "anon@1");
+        let cnt = lookup_fns(&cov, "/abs/foo.ts", "anon@1");
         assert_eq!(cnt, 1, "anon@1 should fire once\ncode:\n{}", out.code);
     }
 
@@ -979,13 +995,13 @@ mod tests {
         // Counters fire at runtime: f(true) takes the inner return (line 3),
         // f(false) takes the trailing return (line 4).
         let exec = format!("{}\nf(true);\nf(false);\n", out.code.replace("export ", ""));
-        let mut ctx = run_in_boa(&exec);
+        let cov = run_coverage(&exec);
         assert!(
-            lookup_lines_n(&mut ctx, "/abs/foo.ts", 3) >= 1,
+            lookup_lines_n(&cov, "/abs/foo.ts", 3) >= 1,
             "line 3 should fire when go is true\ncode:\n{exec}"
         );
         assert!(
-            lookup_lines_n(&mut ctx, "/abs/foo.ts", 4) >= 1,
+            lookup_lines_n(&cov, "/abs/foo.ts", 4) >= 1,
             "line 4 should fire when go is false\ncode:\n{exec}"
         );
     }
@@ -1002,9 +1018,9 @@ mod tests {
             "line 2 should carry a counter, got {:?}",
             out.map.lines
         );
-        let mut ctx = run_in_boa(&out.code);
+        let cov = run_coverage(&out.code);
         assert_eq!(
-            lookup_lines_n(&mut ctx, "/abs/foo.ts", 2),
+            lookup_lines_n(&cov, "/abs/foo.ts", 2),
             1,
             "two statements on line 2 should dedupe to a single counter\ncode:\n{}",
             out.code
@@ -1019,18 +1035,18 @@ mod tests {
         // only the prologue (skip the rest) by parsing the JS up to its first
         // newline-terminated stmt... simpler: eval the whole instrumented code
         // and assert that every recorded key is in __zero_coverage__.
-        let mut ctx = run_in_boa(&out.code);
+        let cov = run_coverage(&out.code);
         // Lines and fns recorded in the map should exist as keys in the JS.
         for ln in &out.map.lines {
-            let cnt = lookup_lines_n(&mut ctx, "/abs/foo.ts", *ln);
+            let cnt = lookup_lines_n(&cov, "/abs/foo.ts", *ln);
             assert!(cnt >= 0, "line {ln} missing from __zero_coverage__");
         }
         for name in &out.map.fns {
-            let cnt = lookup_fns(&mut ctx, "/abs/foo.ts", name);
+            let cnt = lookup_fns(&cov, "/abs/foo.ts", name);
             assert!(cnt >= 0, "fn {name} missing from __zero_coverage__");
         }
         // h was never called.
-        assert_eq!(lookup_fns(&mut ctx, "/abs/foo.ts", "h"), 0);
+        assert_eq!(lookup_fns(&cov, "/abs/foo.ts", "h"), 0);
     }
 
     #[test]

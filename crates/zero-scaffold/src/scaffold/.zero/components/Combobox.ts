@@ -300,9 +300,8 @@ function onKeyTab(ctx: ComboboxCtx, e: KeyboardEvent): void {
 }
 
 /**
- * Top-level keydown dispatcher. Each key gets its own branch handler so
- * the parsed-but-unexecuted-branch pattern that triggers Boa's MapLock
- * finalizer panic in `runtime/*.js`-loaded code stays out of reach.
+ * Top-level keydown dispatcher. Each key gets its own branch handler,
+ * keeping the dispatcher small and every key path independently testable.
  *
  * @param ctx
  * @param e
@@ -432,9 +431,8 @@ function noop(): void {
 
 /**
  * Top-level dispatcher for the dropdown body: loading vs. empty vs.
- * populated. Each branch lives in its own function so the
- * parsed-but-unexecuted-branch pattern stays out of reach of Boa's GC
- * finalizer.
+ * populated. Each branch lives in its own function, keeping the dispatcher
+ * small and every branch independently testable.
  *
  * @param ctx
  * @param optionId

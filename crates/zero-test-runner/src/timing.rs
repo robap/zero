@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 pub enum Phase {
     /// Test-file discovery (walking the project tree).
     Discovery,
-    /// Building the Boa `Context` plus installing the console / workspace globals.
+    /// Building the QuickJS runtime/context plus installing console / workspace globals.
     ContextBuild,
     /// Evaluating the DOM/web-platform shim blob.
     DomShim,

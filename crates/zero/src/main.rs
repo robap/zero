@@ -78,7 +78,7 @@ enum Commands {
         quiet: bool,
     },
     /// Internal: run one mutant's tests in an isolated child process. Used
-    /// by `zero mutate` to keep Boa-internal aborts from killing the parent.
+    /// by `zero mutate` to keep engine-internal aborts from killing the parent.
     #[command(hide = true)]
     MutateWorker {
         #[arg(long)]
