@@ -415,9 +415,9 @@ fn rewrite_imports(src: &str) -> String {
         let start_adj = (start as i64 + offset_diff) as usize;
         let end_adj = (end as i64 + offset_diff) as usize;
         let replacement = if let Some(cap) = multi_single.captures(&matched) {
-            let names = cap[1].replace('\n', " ");
+            let names = named_to_destructure(&cap[1]);
             let spec = cap[2].to_string();
-            format!("const {{{}}} = __zero_require('{}');", names.trim(), spec)
+            format!("const {{{}}} = __zero_require('{}');", names, spec)
         } else {
             String::new()
         };
@@ -701,6 +701,35 @@ import Home, { load as loadHome } from "./routes/home.ts";
             imports.contains(&"./routes/home.ts".to_string()),
             "combined-import specifier missing: {imports:?}"
         );
+    }
+
+    #[test]
+    fn rewrite_aliases_named_import_bindings() {
+        // `import { a, b as c }` must become `const { a, b: c }` — the bare
+        // `as` is invalid inside a destructuring pattern, and the minifier
+        // rejects the bundle with `Expected(",", "as")` if it leaks through.
+        // Exercises both the single-line and multi-line import forms, since
+        // the multi-line regex pass consumes single-line imports too.
+        for src in [
+            r#"import { html, load as loadHome } from "./routes/home.ts";"#,
+            "import {\n  html,\n  load as loadHome,\n} from \"./routes/home.ts\";\n",
+        ] {
+            let result = rewrite_module(
+                src,
+                Path::new("/root"),
+                &ModuleId::User(PathBuf::from("./src/app.ts")),
+                &HashMap::new(),
+            )
+            .unwrap();
+            assert!(
+                result.contains("load: loadHome"),
+                "alias not destructured: {result}"
+            );
+            assert!(
+                !result.contains(" as "),
+                "`as` leaked into destructuring: {result}"
+            );
+        }
     }
 
     #[test]
