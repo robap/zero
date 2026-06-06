@@ -13,10 +13,10 @@ use swc_core::common::sync::Lrc;
 use swc_core::common::{FileName, GLOBALS, Globals, Mark, SourceMap as SwcSourceMap, Spanned};
 use swc_core::ecma::ast::{
     AssignExpr, AssignOp, AssignTarget, BlockStmt, Bool, ClassMember, ComputedPropName, EsVersion,
-    Expr, ExprStmt, Function, Ident, IdentName, KeyValueProp, Lit, MemberExpr, MemberProp, Module,
-    ModuleDecl, ModuleExportName, ModuleItem, Number, ObjectLit, Prop, PropName, PropOrSpread,
-    SimpleAssignTarget, Stmt, Str, UnaryExpr, UnaryOp, UpdateExpr, UpdateOp, VarDecl, VarDeclKind,
-    VarDeclarator,
+    Expr, ExprStmt, Function, Ident, IdentName, Invalid, KeyValueProp, Lit, MemberExpr,
+    MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, Number, ObjectLit, Prop,
+    PropName, PropOrSpread, SeqExpr, SimpleAssignTarget, Stmt, Str, UnaryExpr, UnaryOp,
+    UpdateExpr, UpdateOp, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::codegen::Emitter;
 use swc_core::ecma::codegen::text_writer::JsWriter;
@@ -276,36 +276,42 @@ impl InstrumenterVisitor {
 
     /// Build a `__c.fns["name"]++;` statement and record it.
     fn fn_counter_stmt(&mut self, name: &str) -> Stmt {
-        self.fns.push(name.to_string());
+        let expr = self.fn_counter_expr(name);
         Stmt::Expr(ExprStmt {
             span: Default::default(),
-            expr: Box::new(Expr::Update(UpdateExpr {
+            expr: Box::new(expr),
+        })
+    }
+
+    /// Build a bare `__c.fns["name"]++` update expression and record it.
+    fn fn_counter_expr(&mut self, name: &str) -> Expr {
+        self.fns.push(name.to_string());
+        Expr::Update(UpdateExpr {
+            span: Default::default(),
+            op: UpdateOp::PlusPlus,
+            prefix: false,
+            arg: Box::new(Expr::Member(MemberExpr {
                 span: Default::default(),
-                op: UpdateOp::PlusPlus,
-                prefix: false,
-                arg: Box::new(Expr::Member(MemberExpr {
+                obj: Box::new(Expr::Member(MemberExpr {
                     span: Default::default(),
-                    obj: Box::new(Expr::Member(MemberExpr {
+                    obj: Box::new(Expr::Ident(Ident::new(
+                        "__c".into(),
+                        Default::default(),
+                        Default::default(),
+                    ))),
+                    prop: MemberProp::Ident(IdentName {
                         span: Default::default(),
-                        obj: Box::new(Expr::Ident(Ident::new(
-                            "__c".into(),
-                            Default::default(),
-                            Default::default(),
-                        ))),
-                        prop: MemberProp::Ident(IdentName {
-                            span: Default::default(),
-                            sym: "fns".into(),
-                        }),
-                    })),
-                    prop: MemberProp::Computed(ComputedPropName {
-                        span: Default::default(),
-                        expr: Box::new(Expr::Lit(Lit::Str(Str {
-                            span: Default::default(),
-                            value: name.into(),
-                            raw: None,
-                        }))),
+                        sym: "fns".into(),
                     }),
                 })),
+                prop: MemberProp::Computed(ComputedPropName {
+                    span: Default::default(),
+                    expr: Box::new(Expr::Lit(Lit::Str(Str {
+                        span: Default::default(),
+                        value: name.into(),
+                        raw: None,
+                    }))),
+                }),
             })),
         })
     }
@@ -382,20 +388,36 @@ impl VisitMut for InstrumenterVisitor {
 
     fn visit_mut_arrow_expr(&mut self, e: &mut swc_core::ecma::ast::ArrowExpr) {
         let name = format!("anon@{}", self.line_of(e));
-        self.fns.push(name.clone());
-        // Arrow body can be expression or block; only block has stmts where we
-        // can inject. For expression bodies, we still record the fn but cannot
-        // count entries from inside; the surrounding line counter suffices.
         if let swc_core::ecma::ast::BlockStmtOrExpr::BlockStmt(block) = &mut *e.body {
             // Per-statement line counters come from `visit_mut_stmts` below; we
             // only prepend the function-entry counter here.
-            let prefix: Vec<Stmt> = vec![self.fn_counter_inline(&name)];
+            let prefix: Vec<Stmt> = vec![self.fn_counter_stmt(&name)];
             block.visit_mut_children_with(self);
             let mut new_stmts = prefix;
             new_stmts.extend(std::mem::take(&mut block.stmts));
             block.stmts = new_stmts;
         } else {
+            // Expression body: wrap it in a sequence expression so the entry
+            // counter fires on every call — `(x) => expr` becomes
+            // `(x) => (__c.fns["anon@N"]++, expr)`. Without this, arrows in
+            // expression position (template interpolations, props, computed()
+            // bodies, .map callbacks) register in the universe but never
+            // increment, reading as permanently uncovered. The `fixer` pass
+            // that runs after this visitor adds the required parentheses.
             e.visit_mut_children_with(self);
+            if let swc_core::ecma::ast::BlockStmtOrExpr::Expr(expr) = &mut *e.body {
+                let counter = self.fn_counter_expr(&name);
+                let body = std::mem::replace(
+                    expr,
+                    Box::new(Expr::Invalid(Invalid {
+                        span: Default::default(),
+                    })),
+                );
+                *expr = Box::new(Expr::Seq(SeqExpr {
+                    span: Default::default(),
+                    exprs: vec![Box::new(counter), body],
+                }));
+            }
         }
     }
 
@@ -418,7 +440,7 @@ impl VisitMut for InstrumenterVisitor {
         if let Some(body) = &mut c.body {
             // Record the constructor's fn entry; per-statement line counters
             // come from `visit_mut_stmts` during the recursive visit.
-            let prefix: Vec<Stmt> = vec![self.fn_counter_inline(&name)];
+            let prefix: Vec<Stmt> = vec![self.fn_counter_stmt(&name)];
             body.visit_mut_children_with(self);
             let mut new_stmts = prefix;
             new_stmts.extend(std::mem::take(&mut body.stmts));
@@ -452,12 +474,6 @@ impl VisitMut for InstrumenterVisitor {
             out.push(stmt);
         }
         *stmts = out;
-    }
-}
-
-impl InstrumenterVisitor {
-    fn fn_counter_inline(&mut self, name: &str) -> Stmt {
-        self.fn_counter_stmt(name)
     }
 }
 
@@ -968,6 +984,74 @@ mod tests {
         // anon@<line of arrow start> — line 1.
         let cnt = lookup_fns(&cov, "/abs/foo.ts", "anon@1");
         assert_eq!(cnt, 1, "anon@1 should fire once\ncode:\n{}", out.code);
+    }
+
+    #[test]
+    fn instruments_expression_bodied_arrow_entry() {
+        // #76 regression: expression-bodied arrows used to register in the fns
+        // universe but never increment — phantom "uncovered" functions.
+        let src = "const g = (x) => x + 1;\ng(2);\ng(3);\n";
+        let out = instrument(src, &opts("/abs/foo.ts")).expect("instrument");
+        let cov = run_coverage(&out.code);
+        assert_eq!(
+            lookup_fns(&cov, "/abs/foo.ts", "anon@1"),
+            2,
+            "expression-bodied arrow should count each call\ncode:\n{}",
+            out.code
+        );
+    }
+
+    #[test]
+    fn uncalled_expression_bodied_arrow_stays_zero() {
+        let src = "const g = (x) => x + 1;\n";
+        let out = instrument(src, &opts("/abs/foo.ts")).expect("instrument");
+        let cov = run_coverage(&out.code);
+        assert_eq!(
+            lookup_fns(&cov, "/abs/foo.ts", "anon@1"),
+            0,
+            "uncalled arrow must stay at 0\ncode:\n{}",
+            out.code
+        );
+    }
+
+    #[test]
+    fn instruments_arrow_in_expression_position() {
+        // Arrows passed as call arguments (.map callbacks, computed() bodies,
+        // template-interpolation props) must count entries per invocation.
+        let src = "const out = [1, 2, 3].map((x) => x * 2);\n";
+        let out = instrument(src, &opts("/abs/foo.ts")).expect("instrument");
+        let cov = run_coverage(&out.code);
+        assert_eq!(
+            lookup_fns(&cov, "/abs/foo.ts", "anon@1"),
+            3,
+            ".map callback should fire once per element\ncode:\n{}",
+            out.code
+        );
+    }
+
+    #[test]
+    fn instruments_arrow_with_object_literal_body() {
+        // `() => ({...})` — the seq-expr wrap must stay parenthesized so the
+        // body still parses as an object literal, not a block.
+        let src = "const mk = () => ({ a: 1 });\nconst v = mk();\nif (v.a !== 1) throw new Error(\"bad\");\n";
+        let out = instrument(src, &opts("/abs/foo.ts")).expect("instrument");
+        let cov = run_coverage(&out.code);
+        assert_eq!(
+            lookup_fns(&cov, "/abs/foo.ts", "anon@1"),
+            1,
+            "object-literal-bodied arrow should count\ncode:\n{}",
+            out.code
+        );
+    }
+
+    #[test]
+    fn block_bodied_arrow_registers_name_once() {
+        // The old code pushed the name twice for block-bodied arrows
+        // (once up front, once via the counter builder).
+        let src = "const g = (x) => { return x + 1 };\n";
+        let out = instrument(src, &opts("/abs/foo.ts")).expect("instrument");
+        let count = out.map.fns.iter().filter(|n| *n == "anon@1").count();
+        assert_eq!(count, 1, "anon@1 duplicated in fns universe: {:?}", out.map.fns);
     }
 
     #[test]
