@@ -24,6 +24,13 @@ export type InputProps = {
    * write. `0` or omitted means synchronous (current behaviour).
    */
   debounceMs?: number;
+  /**
+   * Optional callback invoked with the new value after each user edit
+   * (after the `value` signal write, inside the same debounce window).
+   * Use this to react to edits directly instead of bridging the signal
+   * with an `effect`.
+   */
+  onChange?: (value: string) => void;
 };
 
 /**
@@ -41,6 +48,7 @@ export default function Input(props: InputProps): TemplateResult {
   const onInput = (e: Event) => {
     const target = e.target as HTMLInputElement;
     props.value.set(target.value);
+    props.onChange?.(target.value);
   };
   const handler = debounce(onInput, props.debounceMs ?? 0);
   const labelNode: TemplateResult | null = props.label

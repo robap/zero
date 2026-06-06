@@ -45,4 +45,32 @@ describe("Input", () => {
     await new Promise((r) => setTimeout(r, 80));
     expect(value.val).toBe("abc");
   });
+
+  it("invokes onChange with the new value after the signal write", () => {
+    const value = signal("");
+    const seen: string[] = [];
+    const el = render(
+      Input({
+        value,
+        onChange: (v) => seen.push(`${v}:${value.val}`),
+      }),
+    );
+    fire(find(el, "input")!, "input", { target: { value: "hello" } });
+    // Callback sees the new value, and the signal is already written.
+    expect(seen).toEqual(["hello:hello"]);
+  });
+
+  it("debounces onChange together with the signal write", async () => {
+    const value = signal("");
+    const seen: string[] = [];
+    const el = render(
+      Input({ value, debounceMs: 50, onChange: (v) => seen.push(v) }),
+    );
+    const input = find(el, "input")!;
+    fire(input, "input", { target: { value: "a" } });
+    fire(input, "input", { target: { value: "ab" } });
+    expect(seen).toEqual([]);
+    await new Promise((r) => setTimeout(r, 80));
+    expect(seen).toEqual(["ab"]);
+  });
 });

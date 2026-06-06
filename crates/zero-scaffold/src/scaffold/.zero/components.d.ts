@@ -120,6 +120,7 @@ declare module "zero/components" {
     disabled?: boolean;
     label?: string;
     debounceMs?: number;
+    onChange?: (value: string) => void;
   };
   export function Input(props: InputProps): TemplateResult;
 
@@ -157,6 +158,7 @@ declare module "zero/components" {
     disabled?: boolean;
     label?: string;
     debounceMs?: number;
+    onChange?: (value: string) => void;
   };
   export function Select(props: SelectProps): TemplateResult;
 

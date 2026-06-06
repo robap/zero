@@ -159,10 +159,10 @@ once you redefine the public tokens.
 | `Combobox` | `value: Signal<string>`, `loadOptions: (q) => Promise<ComboboxOption[]>`; optional `initialLabel`, `size`, `placeholder`, `label`, `disabled`, `debounceMs`, `minQueryLength`, `noResultsLabel`, `loadingLabel`, `onChange` | `Combobox({ value, loadOptions: loadUsers })` |
 | `Dialog`   | `open: Signal<boolean>`; optional `size`, `title`, `children`, `onClose`   | `Dialog({ open, title: "Confirm", children: html\`…\` })`                        |
 | `Drawer`   | `open: Signal<boolean>`, `side`; optional `mode`, `size`, `title`, `body`, `controls` | `Drawer({ open, side: "right", mode: "push", title: "Edit user", body: form })`  |
-| `Input`    | `value: Signal<string>`; optional `type`, `size`, `placeholder`, `label`, `debounceMs` | `Input({ value: name, label: "Name", type: "text" })`                            |
+| `Input`    | `value: Signal<string>`; optional `type`, `size`, `placeholder`, `label`, `debounceMs`, `onChange` | `Input({ value: name, label: "Name", type: "text" })`                            |
 | `Pagination` | `page: Signal<number>`, `totalPages: Signal<number> \| Computed<number> \| number`; optional `size`, `siblingCount`, `boundaryCount`, `disabled`, `onChange`, `summary` | `Pagination({ page, totalPages: 10 })`                                          |
 | `Radio`    | `selected: Signal<string>`, `name`, `value`; optional `label`, `debounceMs` | `Radio({ selected: choice, name: "size", value: "lg", label: "Large" })`         |
-| `Select`   | `value: Signal<string>`, `options: SelectOption[]`; optional `label`, `debounceMs` | `Select({ value: country, options: [{ value: "us", label: "USA" }] })`           |
+| `Select`   | `value: Signal<string>`, `options: SelectOption[]`; optional `label`, `debounceMs`, `onChange` | `Select({ value: country, options: [{ value: "us", label: "USA" }] })`           |
 | `Spinner`  | optional `variant`, `size`, `label`                                        | `Spinner({ size: "lg", label: "Loading" })`                                      |
 | `Tabs`     | `active: Signal<string>`, `tabs`, `panels`                                 | `Tabs({ active, tabs: [...], panels: { ... } })`                                 |
 | `Table`    | `columns`, `rows: Signal<T[]>`, `rowKey`; optional `density`, `loading`, `sort`, `onSortChange` | `Table({ columns, rows, rowKey: r => r.id })`                                    |
@@ -208,6 +208,18 @@ the downstream effect, not the signal write. Note that
 `Combobox.debounceMs` means something different (the gap before
 `loadOptions` runs after the last keystroke), so the same prop name
 carries a different meaning on that component.
+
+`Input` and `Select` also accept `onChange?: (value: string) => void`,
+invoked with the new value after each user edit (after the signal
+write, inside the same `debounceMs` window). Reach for it whenever you
+need to *react* to an edit — fire a search query, sync external state —
+instead of watching the `value` signal with an `effect`. The effect
+route is a footgun when the app also writes the signal from outside
+(reset, query-param sync): the obvious two-effect bidirectional mirror
+silently reverts user edits because the sync effect subscribes to the
+mirror it compares against. A direct callback, like `Button.onClick`,
+has no such failure mode. `onChange` fires only on user edits, never on
+programmatic `value.set(...)` calls.
 
 Props typed `Signal<T> | T` accept a `Computed<T>` too where noted:
 `Pagination.totalPages`, `Pagination.disabled`, and

@@ -16,6 +16,23 @@ pub struct Answers {
     pub out: String,
 }
 
+impl Answers {
+    /// The wizard's default answers — what `prompt_user` returns when
+    /// every prompt is accepted as-is. Used by `zero init --yes` so
+    /// non-interactive shells (CI, scripts) never touch the terminal.
+    ///
+    /// # Returns
+    /// `Answers` with `root = "web"`, `port = 3000`, no proxy, `out = "dist"`.
+    pub fn defaults() -> Self {
+        Self {
+            root: "web".to_string(),
+            port: 3000,
+            proxy: None,
+            out: "dist".to_string(),
+        }
+    }
+}
+
 /// Run the interactive wizard, returning the collected `Answers`.
 ///
 /// # Returns

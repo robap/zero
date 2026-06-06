@@ -52,4 +52,22 @@ describe("Select", () => {
     await new Promise((r) => setTimeout(r, 80));
     expect(value.val).toBe("b");
   });
+
+  it("invokes onChange with the new value after the signal write", () => {
+    const value = signal("a");
+    const seen: string[] = [];
+    const el = render(
+      Select({
+        value,
+        options: [
+          { value: "a", label: "A" },
+          { value: "b", label: "B" },
+        ],
+        onChange: (v) => seen.push(`${v}:${value.val}`),
+      }),
+    );
+    fire(find(el, "select")!, "change", { target: { value: "b" } });
+    // Callback sees the new value, and the signal is already written.
+    expect(seen).toEqual(["b:b"]);
+  });
 });

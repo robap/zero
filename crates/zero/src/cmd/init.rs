@@ -35,8 +35,15 @@ pub async fn run(yes: bool) -> anyhow::Result<()> {
     let config = if toml_path.exists() {
         Config::load_from_cwd()?
     } else {
-        println!("zero init — let's set up a project");
-        let answers = prompt_user()?;
+        // `--yes` must never touch the terminal: take the wizard's
+        // defaults so scripted/CI scaffolding works in non-interactive
+        // shells (dialoguer errors with "not a terminal" otherwise).
+        let answers = if yes {
+            Answers::defaults()
+        } else {
+            println!("zero init — let's set up a project");
+            prompt_user()?
+        };
         let input = toml_input_from_answers(&answers);
         write_toml_file(&toml_path, &render_toml(&input))?;
         config_from_answers(&answers)?
@@ -50,7 +57,7 @@ pub async fn run(yes: bool) -> anyhow::Result<()> {
         );
     }
 
-    println!("{}", render_init_plan());
+    println!("{}", render_init_plan(!yes));
     if !yes && !crate::prompts::confirm_default_yes("Proceed?")? {
         println!("zero init: aborted by user");
         return Ok(());
@@ -74,9 +81,13 @@ pub async fn run(yes: bool) -> anyhow::Result<()> {
 /// Build the multi-line plan string `zero init` prints before writing
 /// any files. Pure (no I/O) so tests can assert against it.
 ///
+/// # Parameters
+/// - `with_prompt`: append the trailing `"Proceed? [Y/n]"` line. `false`
+///   under `--yes`, where no prompt follows the plan.
+///
 /// # Returns
-/// The rendered plan, ending with `"Proceed? [Y/n]"`.
-fn render_init_plan() -> String {
+/// The rendered plan.
+fn render_init_plan(with_prompt: bool) -> String {
     let mut out = String::new();
     out.push_str("zero init will create:\n\n");
     out.push_str("  framework files (regenerable, under .zero/)\n");
@@ -95,7 +106,9 @@ fn render_init_plan() -> String {
     ] {
         let _ = writeln!(out, "    {path}");
     }
-    out.push_str("\nProceed? [Y/n]");
+    if with_prompt {
+        out.push_str("\nProceed? [Y/n]");
+    }
     out
 }
 
@@ -145,7 +158,7 @@ mod tests {
 
     #[test]
     fn init_plan_lists_framework_and_user_groups() {
-        let plan = render_init_plan();
+        let plan = render_init_plan(true);
         assert!(
             plan.contains("framework files (regenerable, under .zero/)"),
             "missing framework header: {plan}"
@@ -170,8 +183,32 @@ mod tests {
     }
 
     #[test]
+    fn init_plan_omits_prompt_when_not_interactive() {
+        let plan = render_init_plan(false);
+        assert!(
+            !plan.contains("Proceed?"),
+            "plan must not dangle a prompt under --yes: {plan}"
+        );
+        assert!(
+            plan.contains("user files"),
+            "plan body must still render: {plan}"
+        );
+    }
+
+    #[test]
+    fn answers_defaults_match_wizard_defaults() {
+        let a = crate::prompts::Answers::defaults();
+        assert_eq!(a.root, "web");
+        assert_eq!(a.port, 3000);
+        assert_eq!(a.proxy, None);
+        assert_eq!(a.out, "dist");
+        // Defaults must round-trip through the same validation as the wizard.
+        config_from_answers(&a).expect("default answers produce a valid config");
+    }
+
+    #[test]
     fn init_plan_lists_agents_md_under_framework_files() {
-        let plan = render_init_plan();
+        let plan = render_init_plan(true);
         let framework_idx = plan
             .find("framework files (regenerable, under .zero/)")
             .expect("framework header present");
