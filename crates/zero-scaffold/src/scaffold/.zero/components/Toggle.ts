@@ -1,11 +1,13 @@
 import { html } from "zero";
-import type { Signal, TemplateResult } from "zero";
+import type { Ref, Signal, TemplateResult } from "zero";
 import {
   ariaDescribedBy,
   ariaInvalid,
   debounce,
   errorNode,
+  nativeRef,
   uniqueId,
+  type NativeAttrs,
 } from "./_internal.ts";
 
 export type ToggleProps = {
@@ -23,6 +25,18 @@ export type ToggleProps = {
    * `aria-describedby`.
    */
   error?: Signal<string | null>;
+  /**
+   * Focus the inner switch `<input>` (not the wrapper label) after mount.
+   */
+  autofocus?: boolean;
+  /**
+   * Additional native attributes applied to the inner switch `<input>`
+   * after mount. Additive-only: attributes the component renders itself
+   * (`type`, `class`, `role`, …) win and the colliding key is skipped.
+   * `true` sets an empty attribute, `false` skips the key, numbers are
+   * stringified.
+   */
+  attrs?: NativeAttrs;
 };
 
 /**
@@ -43,6 +57,10 @@ export default function Toggle(props: ToggleProps): TemplateResult {
   // DOM tree and the browser would refuse to render them.
   // The error node sits after the closing </label>: inside the label,
   // clicking the message would flip the switch.
+  const controlRef: Ref<HTMLInputElement> = nativeRef(
+    props.attrs,
+    props.autofocus,
+  );
   const errId = uniqueId("toggle-error");
-  return html`<label class="toggle"><input type="checkbox" class="toggle-input" role="switch" checked=${() => checked.val} aria-checked=${() => String(checked.val)} disabled=${props.disabled ?? false} aria-invalid=${ariaInvalid(props.error)} aria-describedby=${ariaDescribedBy(props.error, errId)} @change=${handler} /><span class="toggle-track"><span class="toggle-thumb"></span></span><span class="toggle-label">${props.label ?? ""}</span></label>${errorNode(props.error, errId)}`;
+  return html`<label class="toggle"><input ref=${controlRef} type="checkbox" class="toggle-input" role="switch" checked=${() => checked.val} aria-checked=${() => String(checked.val)} disabled=${props.disabled ?? false} aria-invalid=${ariaInvalid(props.error)} aria-describedby=${ariaDescribedBy(props.error, errId)} @change=${handler} /><span class="toggle-track"><span class="toggle-thumb"></span></span><span class="toggle-label">${props.label ?? ""}</span></label>${errorNode(props.error, errId)}`;
 }

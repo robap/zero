@@ -12,6 +12,24 @@ describe("Toggle", () => {
     expect(find(el, ".toggle")).toBeTruthy();
   });
 
+  it("applies attrs to the inner switch input and focuses it with autofocus", async () => {
+    const checked = signal(false);
+    const el = render(
+      Toggle({
+        checked,
+        label: "Wifi",
+        autofocus: true,
+        attrs: { name: "wifi", "data-test": "tg" },
+      }),
+    );
+    const input = find(el, "input")!;
+    await Promise.resolve();
+    expect(input.getAttribute("name")).toBe("wifi");
+    expect(input.getAttribute("data-test")).toBe("tg");
+    expect(input.getAttribute("role")).toBe("switch");
+    expect(document.activeElement).toBe(input);
+  });
+
   it("renders no error node and aria-invalid 'false' without an error prop", () => {
     const checked = signal(false);
     const el = render(Toggle({ checked, label: "Wifi" }));

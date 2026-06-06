@@ -12,6 +12,24 @@ describe("Input", () => {
     expect(find(el, ".input")).toBeTruthy();
   });
 
+  it("applies attrs additively and focuses with autofocus after mount", async () => {
+    const value = signal("");
+    const el = render(
+      Input({
+        value,
+        autofocus: true,
+        attrs: { name: "customer", "data-test": "x", required: true, class: "nope" },
+      }),
+    );
+    const input = find(el, "input")!;
+    await Promise.resolve();
+    expect(input.getAttribute("name")).toBe("customer");
+    expect(input.getAttribute("data-test")).toBe("x");
+    expect(input.getAttribute("required")).toBe("");
+    expect(input.getAttribute("class")).toBe("input input-md");
+    expect(document.activeElement).toBe(input);
+  });
+
   it("updates its signal on input events", () => {
     const value = signal("");
     const el = render(Input({ value }));

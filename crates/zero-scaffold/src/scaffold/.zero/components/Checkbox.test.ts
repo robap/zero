@@ -12,6 +12,24 @@ describe("Checkbox", () => {
     expect(find(el, ".checkbox")).toBeTruthy();
   });
 
+  it("applies attrs to the inner input and focuses it with autofocus", async () => {
+    const checked = signal(false);
+    const el = render(
+      Checkbox({
+        checked,
+        label: "Sub",
+        autofocus: true,
+        attrs: { name: "subscribe", "data-test": "cb", type: "nope" },
+      }),
+    );
+    const input = find(el, "input")!;
+    await Promise.resolve();
+    expect(input.getAttribute("name")).toBe("subscribe");
+    expect(input.getAttribute("data-test")).toBe("cb");
+    expect(input.getAttribute("type")).toBe("checkbox");
+    expect(document.activeElement).toBe(input);
+  });
+
   it("flips its signal on change", () => {
     const checked = signal(false);
     const el = render(Checkbox({ checked, label: "Subscribe" }));

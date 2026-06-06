@@ -25,6 +25,7 @@ export { default as Drawer } from "./Drawer.ts";
 export type { DrawerProps, DrawerMode, DrawerSide, DrawerSize } from "./Drawer.ts";
 export { default as Input } from "./Input.ts";
 export type { InputProps, InputSize, InputType } from "./Input.ts";
+export type { NativeAttrs } from "./_internal.ts";
 export { default as Pagination } from "./Pagination.ts";
 export type { PaginationProps, PaginationSize } from "./Pagination.ts";
 export { default as Radio } from "./Radio.ts";

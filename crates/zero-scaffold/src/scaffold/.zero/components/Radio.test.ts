@@ -12,6 +12,26 @@ describe("Radio", () => {
     expect(find(el, ".radio")).toBeTruthy();
   });
 
+  it("applies attrs to the inner input without overriding the prop-rendered name", async () => {
+    const selected = signal("a");
+    const el = render(
+      Radio({
+        selected,
+        name: "size",
+        value: "a",
+        label: "A",
+        autofocus: true,
+        attrs: { name: "smuggled", "data-test": "rd" },
+      }),
+    );
+    const input = find(el, "input")!;
+    await Promise.resolve();
+    expect(input.getAttribute("name")).toBe("size");
+    expect(input.getAttribute("data-test")).toBe("rd");
+    expect(input.getAttribute("type")).toBe("radio");
+    expect(document.activeElement).toBe(input);
+  });
+
   it("renders no error node and aria-invalid 'false' without an error prop", () => {
     const selected = signal("a");
     const el = render(Radio({ selected, name: "g", value: "a", label: "A" }));

@@ -199,6 +199,14 @@ describe('document listeners', () => {
     fire(document, 'click');
     expect(handler).toHaveBeenCalledTimes(1);
   });
+
+  it('document listener fires for events bubbling up from descendants', () => {
+    const handler = spy();
+    document.addEventListener('mousedown', handler);
+    fire(document.body, 'mousedown');
+    expect(handler).toHaveBeenCalledTimes(1);
+    document.removeEventListener('mousedown', handler);
+  });
 });
 
 describe('input selection APIs', () => {

@@ -12,6 +12,23 @@ describe("TextArea", () => {
     expect(find(el, ".textarea")).toBeTruthy();
   });
 
+  it("applies attrs additively and focuses with autofocus after mount", async () => {
+    const value = signal("");
+    const el = render(
+      TextArea({
+        value,
+        autofocus: true,
+        attrs: { name: "notes", maxlength: 200, class: "nope" },
+      }),
+    );
+    const area = find(el, "textarea")!;
+    await Promise.resolve();
+    expect(area.getAttribute("name")).toBe("notes");
+    expect(area.getAttribute("maxlength")).toBe("200");
+    expect(area.getAttribute("class")).toBe("textarea");
+    expect(document.activeElement).toBe(area);
+  });
+
   it("updates its signal on input events", () => {
     const value = signal("");
     const el = render(TextArea({ value }));

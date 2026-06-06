@@ -1,5 +1,56 @@
 import { html } from "zero";
-import type { Signal, Computed, TemplateResult } from "zero";
+import type { Signal, Computed, Ref, TemplateResult } from "zero";
+
+/**
+ * Native attributes accepted by every form control's `attrs` prop.
+ * `true` sets an empty attribute, `false` skips the key, numbers are
+ * stringified. Plain values only — not reactive, no event handlers.
+ *
+ * @internal
+ */
+export type NativeAttrs = Record<string, string | number | boolean>;
+
+/**
+ * Build the internal template ref every form control binds to its
+ * underlying element, carrying the control's native props. Each time the
+ * template commits the element (initial render, and again on every
+ * re-commit — e.g. a dialog re-opening), a microtask applies `attrs`
+ * additively (keys whose attribute is already present — component-owned
+ * attributes — are skipped) and focuses the element when `autofocus` is
+ * true. The apply is skipped when the element was disposed before the
+ * tick. With neither prop given, returns a plain ref.
+ *
+ * @template T
+ * @param attrs Native attributes to apply additively.
+ * @param autofocus Focus the element after each commit.
+ * @returns A ref to bind via the template's `ref=` attribute.
+ * @internal
+ */
+export function nativeRef<T extends Element>(
+  attrs?: NativeAttrs,
+  autofocus?: boolean,
+): Ref<T> {
+  if (attrs == null && autofocus !== true) return { el: null };
+  let current: T | null = null;
+  return {
+    get el(): T | null {
+      return current;
+    },
+    set el(v: T | null) {
+      current = v;
+      if (v == null) return;
+      void Promise.resolve().then(() => {
+        // Disposed (or replaced) before the tick — skip the stale apply.
+        if (current !== v) return;
+        for (const [key, value] of Object.entries(attrs ?? {})) {
+          if (value === false || v.hasAttribute(key)) continue;
+          v.setAttribute(key, value === true ? "" : String(value));
+        }
+        if (autofocus === true) (v as unknown as HTMLElement).focus();
+      });
+    },
+  };
+}
 
 /**
  * Either a writable signal or a read-only computed of the same value.

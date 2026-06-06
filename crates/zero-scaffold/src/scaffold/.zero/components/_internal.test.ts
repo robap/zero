@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "zero/test";
 import { render, find, cleanup } from "zero/test";
-import { signal, computed } from "zero";
+import { signal, computed, ref } from "zero";
 import {
   isReactive,
   read,
@@ -9,9 +9,81 @@ import {
   errorNode,
   ariaInvalid,
   ariaDescribedBy,
+  nativeRef,
 } from "./_internal.ts";
 
 describe("_internal", () => {
+  describe("nativeRef", () => {
+    it("applies string/number/true attrs additively and focuses after the element commits", async () => {
+      const el = document.createElement("input");
+      el.setAttribute("class", "input input-md");
+      document.body.appendChild(el);
+      const r = nativeRef<HTMLInputElement>(
+        {
+          name: "customer",
+          tabindex: 3,
+          required: true,
+          skipped: false,
+          class: "nope",
+        },
+        true,
+      );
+      r.el = el as unknown as HTMLInputElement;
+      // Nothing happens synchronously — the apply is post-commit.
+      expect(el.hasAttribute("name")).toBe(false);
+      await Promise.resolve();
+      expect(el.getAttribute("name")).toBe("customer");
+      expect(el.getAttribute("tabindex")).toBe("3");
+      expect(el.getAttribute("required")).toBe("");
+      expect(el.hasAttribute("skipped")).toBe(false);
+      expect(el.getAttribute("class")).toBe("input input-md");
+      expect(document.activeElement).toBe(el);
+      document.body.removeChild(el);
+    });
+
+    it("re-applies on a later commit — deferred dialog-open case included", async () => {
+      // Simulates a Dialog: the component (and ref) exist long before the
+      // element commits, and the element commits again on each re-open.
+      const r = nativeRef<HTMLInputElement>({ name: "code" }, true);
+      await Promise.resolve();
+      expect(r.el).toBe(null); // nothing committed yet — no crash, no work
+      const first = document.createElement("input");
+      document.body.appendChild(first);
+      r.el = first as unknown as HTMLInputElement;
+      await Promise.resolve();
+      expect(first.getAttribute("name")).toBe("code");
+      expect(document.activeElement).toBe(first);
+      // Dialog closes (disposal nulls the ref), then reopens with fresh DOM.
+      r.el = null;
+      const second = document.createElement("input");
+      document.body.appendChild(second);
+      r.el = second as unknown as HTMLInputElement;
+      await Promise.resolve();
+      expect(second.getAttribute("name")).toBe("code");
+      expect(document.activeElement).toBe(second);
+      document.body.removeChild(first);
+      document.body.removeChild(second);
+    });
+
+    it("bails when the element is cleaned up before the microtask", async () => {
+      const el = document.createElement("input");
+      const r = nativeRef<HTMLInputElement>({ name: "x" }, true);
+      r.el = el as unknown as HTMLInputElement;
+      r.el = null; // disposed in the same task
+      await Promise.resolve();
+      expect(el.hasAttribute("name")).toBe(false);
+      expect(r.el).toBe(null);
+    });
+
+    it("acts as a plain ref when no attrs and no autofocus are given", () => {
+      const r = nativeRef<HTMLInputElement>(undefined, undefined);
+      const el = document.createElement("input");
+      r.el = el as unknown as HTMLInputElement;
+      expect(r.el).toBe(el);
+      r.el = null;
+      expect(r.el).toBe(null);
+    });
+  });
   describe("isReactive", () => {
     it("returns false for plain primitives", () => {
       expect(isReactive(5)).toBe(false);

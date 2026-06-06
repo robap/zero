@@ -20,6 +20,23 @@ describe("Select", () => {
     expect(find(el, ".select")).toBeTruthy();
   });
 
+  it("applies attrs additively and focuses with autofocus after mount", async () => {
+    const value = signal("a");
+    const el = render(
+      Select({
+        value,
+        options: [{ value: "a", label: "A" }],
+        autofocus: true,
+        attrs: { name: "country", class: "nope" },
+      }),
+    );
+    const select = find(el, "select")!;
+    await Promise.resolve();
+    expect(select.getAttribute("name")).toBe("country");
+    expect(select.getAttribute("class")).toBe("select select-md");
+    expect(document.activeElement).toBe(select);
+  });
+
   it("renders no error node and aria-invalid 'false' without an error prop", () => {
     const value = signal("a");
     const el = render(

@@ -155,20 +155,20 @@ once you redefine the public tokens.
 | `Badge`    | optional `variant`, `size`, `children`                                     | `Badge({ variant: "success", children: "New" })`                                 |
 | `Button`   | optional `variant`, `size`, `type`, `form`, `name`, `value`, `disabled`, `loading`, `onClick`, `children` | `Button({ variant: "primary", onClick: save, children: "Save" })`                |
 | `Card`     | optional `variant`, `title`, `children`                                    | `Card({ title: "Profile", children: html\`<p>…</p>\` })`                         |
-| `Checkbox` | `checked: Signal<boolean>`; optional `label`, `disabled`, `debounceMs`, `error` | `Checkbox({ checked: agreed, label: "I agree" })`                                |
-| `Combobox` | `value: Signal<string>`, `loadOptions: (q) => Promise<ComboboxOption[]>`; optional `initialLabel`, `size`, `placeholder`, `label`, `disabled`, `debounceMs`, `minQueryLength`, `noResultsLabel`, `loadingLabel`, `onChange`, `error` | `Combobox({ value, loadOptions: loadUsers })` |
+| `Checkbox` | `checked: Signal<boolean>`; optional `label`, `disabled`, `debounceMs`, `error`, `autofocus`, `attrs` | `Checkbox({ checked: agreed, label: "I agree" })`                                |
+| `Combobox` | `value: Signal<string>`, `loadOptions: (q) => Promise<ComboboxOption[]>`; optional `initialLabel`, `size`, `placeholder`, `label`, `disabled`, `debounceMs`, `minQueryLength`, `noResultsLabel`, `loadingLabel`, `onChange`, `allowCustom`, `error`, `autofocus`, `attrs` | `Combobox({ value, loadOptions: loadUsers })` |
 | `Dialog`   | `open: Signal<boolean>`; optional `size`, `title`, `children`, `onClose`   | `Dialog({ open, title: "Confirm", children: html\`…\` })`                        |
 | `Drawer`   | `open: Signal<boolean>`, `side`; optional `mode`, `size`, `title`, `body`, `controls` | `Drawer({ open, side: "right", mode: "push", title: "Edit user", body: form })`  |
-| `Input`    | `value: Signal<string>`; optional `type`, `size`, `placeholder`, `label`, `debounceMs`, `onChange`, `error` | `Input({ value: name, label: "Name", type: "text" })`                            |
+| `Input`    | `value: Signal<string>`; optional `type`, `size`, `placeholder`, `label`, `debounceMs`, `onChange`, `error`, `autofocus`, `attrs` | `Input({ value: name, label: "Name", type: "text" })`                            |
 | `Pagination` | `page: Signal<number>`, `totalPages: Signal<number> \| Computed<number> \| number`; optional `size`, `siblingCount`, `boundaryCount`, `disabled`, `onChange`, `summary` | `Pagination({ page, totalPages: 10 })`                                          |
-| `Radio`    | `selected: Signal<string>`, `name`, `value`; optional `label`, `debounceMs`, `error` | `Radio({ selected: choice, name: "size", value: "lg", label: "Large" })`         |
-| `Select`   | `value: Signal<string>`, `options: SelectOption[]`; optional `label`, `debounceMs`, `onChange`, `error` | `Select({ value: country, options: [{ value: "us", label: "USA" }] })`           |
+| `Radio`    | `selected: Signal<string>`, `name`, `value`; optional `label`, `debounceMs`, `error`, `autofocus`, `attrs` | `Radio({ selected: choice, name: "size", value: "lg", label: "Large" })`         |
+| `Select`   | `value: Signal<string>`, `options: SelectOption[]`; optional `label`, `debounceMs`, `onChange`, `error`, `autofocus`, `attrs` | `Select({ value: country, options: [{ value: "us", label: "USA" }] })`           |
 | `Spinner`  | optional `variant`, `size`, `label`                                        | `Spinner({ size: "lg", label: "Loading" })`                                      |
 | `Tabs`     | `active: Signal<string>`, `tabs`, `panels`                                 | `Tabs({ active, tabs: [...], panels: { ... } })`                                 |
 | `Table`    | `columns`, `rows: Signal<T[]>`, `rowKey`; optional `density`, `loading`, `sort`, `onSortChange` | `Table({ columns, rows, rowKey: r => r.id })`                                    |
-| `TextArea` | `value: Signal<string>`; optional `rows`, `placeholder`, `label`, `debounceMs`, `error` | `TextArea({ value: notes, rows: 5, label: "Notes" })`                            |
+| `TextArea` | `value: Signal<string>`; optional `rows`, `placeholder`, `label`, `debounceMs`, `error`, `autofocus`, `attrs` | `TextArea({ value: notes, rows: 5, label: "Notes" })`                            |
 | `Toast`    | `open: Signal<boolean>`, `message`; optional `variant`, `duration`         | `Toast({ open, message: "Saved", variant: "success" })`                          |
-| `Toggle`   | `checked: Signal<boolean>`; optional `label`, `disabled`, `debounceMs`, `error` | `Toggle({ checked: darkMode, label: "Dark mode" })`                              |
+| `Toggle`   | `checked: Signal<boolean>`; optional `label`, `disabled`, `debounceMs`, `error`, `autofocus`, `attrs` | `Toggle({ checked: darkMode, label: "Dark mode" })`                              |
 
 The convention across the library:
 
@@ -231,6 +231,41 @@ via `aria-describedby`. When the signal is `null` (or the prop is
 omitted) nothing renders and `aria-invalid` is `"false"`. Bind
 `form.fields.<name>.error` from [`createForm`](#forms) directly to this
 prop — or any `Signal<string | null>` you manage yourself.
+
+The same seven controls also accept two native-element props:
+
+- **`autofocus?: boolean`** — the component focuses its underlying
+  element each time that element is committed to the DOM: on first
+  render, and again every time a dialog/drawer re-opens and re-renders
+  its body. The first field of a panel form takes focus on every open,
+  with no raw `<input>` fallback or hand-rolled ref plumbing:
+
+  ```ts
+  Dialog({
+    open,
+    title: "Add part",
+    children: html`<form>
+      ${Input({ value: name, label: "Name", autofocus: true })}
+      …
+    </form>`,
+  });
+  ```
+
+- **`attrs?: Record<string, string | number | boolean>`** — additional
+  native attributes for the underlying element (`name`,
+  `autocomplete`, `min`/`max`, `data-*`, …). Applied **additively**:
+  any attribute the component renders itself (`class`, `type`,
+  `aria-invalid`, `Radio`'s `name`, …) wins, and the colliding key is
+  skipped — `attrs` extends the element, it never fights the
+  component. `true` sets an empty attribute (`required: true` →
+  `required=""`), `false` skips the key, numbers are stringified.
+  Values are plain (not reactive) and there is no event-handler
+  smuggling — use the component's callbacks for behavior.
+
+For the label-wrapped controls (`Checkbox`, `Radio`, `Toggle`) and
+`Combobox`, both props target the inner `<input>`, not the wrapper.
+Both apply in a microtask after the element commits, so a test
+asserting on them must `await Promise.resolve()` first.
 
 Props typed `Signal<T> | T` accept a `Computed<T>` too where noted:
 `Pagination.totalPages`, `Pagination.disabled`, and
@@ -372,6 +407,66 @@ The default comparator handles numbers (subtraction), strings
 (`localeCompare`), and nullish values (sorted last in asc, first in
 desc). For mixed-type columns or custom orderings, pass
 `compare: (a, b) => number` on the column.
+
+## Combobox
+
+By default `Combobox` is **strict-select**: the parent owns
+`value: Signal<string>`, only picking a fetched option writes it, and
+any free text left in the field reverts to the last picked label on
+blur. That is the right contract when the value must be one of a known
+set (user pickers, foreign keys).
+
+For "suggest existing but allow new" fields — a category picker that
+should also accept a brand-new category — pass
+**`allowCustom: true`**. The visible text then *commits* instead of
+reverting:
+
+```ts
+const category = signal("");
+Combobox({
+  value: category,
+  loadOptions: searchCategories,
+  allowCustom: true,
+  onChange: (value, option) => {
+    // option is the picked ComboboxOption, or the synthesized
+    // { value: text, label: text } for a brand-new entry.
+  },
+});
+```
+
+The commit rules:
+
+- **Triggers** — blur, clicking outside the control, or pressing Enter
+  when the visible text is not an accepted ghost completion. Tab keeps
+  its usual behavior (accepts a showing ghost; otherwise the focus move
+  blurs and the blur commits). Escape closes the dropdown without
+  committing — the text is still committed when focus eventually
+  leaves.
+- **Near-match resolution** — committed text is trimmed, and if it
+  case-insensitively equals the whole label of a currently loaded
+  option, that option is picked instead (canonical `value` and `label`,
+  regular `onChange`). Typing `hardware` when `Hardware` exists never
+  creates a case-variant duplicate.
+- **Novel text** — `value` is set to the trimmed text and `onChange`
+  fires once with a synthesized `{ value: text, label: text }` option.
+  Callers that care whether an entry is new compare the value against
+  their known options.
+- **Empty text commits `""`** — deliberately clearing the field clears
+  the value; it does not resurrect the previous label.
+- **Enter precedence** — with the dropdown open, Enter picks the
+  highlighted option only when the visible text equals that option's
+  label (you accepted the ghost or arrowed onto it). Otherwise Enter
+  commits your text — unrelated suggestions are never silently picked
+  over what you typed.
+
+Commits are idempotent: dismissing the field again without an edit
+neither rewrites `value` nor re-fires `onChange`.
+
+`Combobox` also accepts the shared [`autofocus` / `attrs`
+props](#component-library-reference); both target the inner typeahead
+`<input>`. Note the component owns that input's visible text (ghost
+completion and selection ranges), so `attrs` is for additive
+attributes like `name` — exactly what its additive-only rule enforces.
 
 ## Forms
 

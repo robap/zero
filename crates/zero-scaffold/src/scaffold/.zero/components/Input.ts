@@ -1,11 +1,13 @@
 import { html } from "zero";
-import type { Signal, TemplateResult } from "zero";
+import type { Ref, Signal, TemplateResult } from "zero";
 import {
   ariaDescribedBy,
   ariaInvalid,
   debounce,
   errorNode,
+  nativeRef,
   uniqueId,
+  type NativeAttrs,
 } from "./_internal.ts";
 
 export type InputType =
@@ -43,6 +45,18 @@ export type InputProps = {
    * `aria-describedby`.
    */
   error?: Signal<string | null>;
+  /**
+   * Focus the underlying `<input>` after mount (e.g. the first field of a
+   * drawer/dialog form).
+   */
+  autofocus?: boolean;
+  /**
+   * Additional native attributes applied to the underlying `<input>` after
+   * mount. Additive-only: attributes the component renders itself (`class`,
+   * `type`, …) win and the colliding key is skipped. `true` sets an empty
+   * attribute, `false` skips the key, numbers are stringified.
+   */
+  attrs?: NativeAttrs;
 };
 
 /**
@@ -63,9 +77,13 @@ export default function Input(props: InputProps): TemplateResult {
     props.onChange?.(target.value);
   };
   const handler = debounce(onInput, props.debounceMs ?? 0);
+  const controlRef: Ref<HTMLInputElement> = nativeRef(
+    props.attrs,
+    props.autofocus,
+  );
   const labelNode: TemplateResult | null = props.label
     ? html`<label class="input-label">${props.label}</label>`
     : null;
   const errId = uniqueId("input-error");
-  return html`${labelNode}<input class=${cls} type=${type} value=${() => props.value.val} placeholder=${props.placeholder ?? ""} disabled=${props.disabled ?? false} aria-invalid=${ariaInvalid(props.error)} aria-describedby=${ariaDescribedBy(props.error, errId)} @input=${handler}>${errorNode(props.error, errId)}`;
+  return html`${labelNode}<input ref=${controlRef} class=${cls} type=${type} value=${() => props.value.val} placeholder=${props.placeholder ?? ""} disabled=${props.disabled ?? false} aria-invalid=${ariaInvalid(props.error)} aria-describedby=${ariaDescribedBy(props.error, errId)} @input=${handler}>${errorNode(props.error, errId)}`;
 }

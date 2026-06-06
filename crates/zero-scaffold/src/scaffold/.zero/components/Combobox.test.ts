@@ -113,6 +113,46 @@ describe("Combobox", () => {
     expect(find(el, "input")!.getAttribute("aria-invalid")).toBe("false");
   });
 
+  it("applies attrs to the inner input, focuses with autofocus, dropdown stays closed", async () => {
+    const value = signal("");
+    const el = render(
+      Combobox({
+        value,
+        loadOptions: staticLoader([]),
+        autofocus: true,
+        attrs: { name: "category" },
+      }),
+    );
+    const input = find(el, ".combobox-input")!;
+    await Promise.resolve();
+    expect(input.getAttribute("name")).toBe("category");
+    expect(document.activeElement).toBe(input);
+    // The focus event runs handleFocus; with no resolved options the
+    // dropdown must stay hidden.
+    expect(find(el, ".combobox-list")!.hasAttribute("hidden")).toBe(true);
+  });
+
+  it("ghost completion still works alongside autofocus/attrs", async () => {
+    const value = signal("");
+    const el = render(
+      Combobox({
+        value,
+        loadOptions: staticLoader([{ value: "foobar", label: "foobar" }]),
+        debounceMs: 5,
+        autofocus: true,
+        attrs: { name: "thing" },
+      }),
+    );
+    const input = find(el, "input")!;
+    await Promise.resolve();
+    fireInput(input, "foo", 3);
+    await wait(25);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((input as any).value).toBe("foobar");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((input as any).selectionStart).toBe(3);
+  });
+
   it("typing triggers a debounced fetch", async () => {
     const value = signal("");
     const loader = spy(staticLoader(ABC));
@@ -530,6 +570,228 @@ describe("Combobox", () => {
     await wait(25);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((input as any).value).toBe("foo");
+  });
+
+  it("allowCustom: blur commits novel text to value and fires onChange once", async () => {
+    const value = signal("");
+    const onChange = spy<(v: string, o: ComboboxOption) => void>();
+    const el = render(
+      Combobox({
+        value,
+        loadOptions: staticLoader([]),
+        debounceMs: 5,
+        allowCustom: true,
+        onChange,
+      }),
+    );
+    const input = find(el, "input")!;
+    fireInput(input, "widgets", 7);
+    await wait(25);
+    fire(input, "blur");
+    expect(value.val).toBe("widgets");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((input as any).value).toBe("widgets");
+    expect(onChange.callCount).toBe(1);
+    expect(onChange.calls[0]![0]).toBe("widgets");
+    expect((onChange.calls[0]![1] as ComboboxOption).value).toBe("widgets");
+    expect((onChange.calls[0]![1] as ComboboxOption).label).toBe("widgets");
+  });
+
+  it("allowCustom: case-insensitive near-match resolves to the existing option, trimmed", async () => {
+    const value = signal("");
+    const onChange = spy<(v: string, o: ComboboxOption) => void>();
+    const loader = async (_q: string): Promise<ComboboxOption[]> => [
+      { value: "a1", label: "Alpha" },
+    ];
+    const el = render(
+      Combobox({
+        value,
+        loadOptions: loader,
+        debounceMs: 5,
+        allowCustom: true,
+        onChange,
+      }),
+    );
+    const input = find(el, "input")!;
+    // Trailing space defeats the ghost so the raw text reaches blur.
+    fireInput(input, "alpha ", 6);
+    await wait(25);
+    fire(input, "blur");
+    expect(value.val).toBe("a1");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((input as any).value).toBe("Alpha");
+    expect(onChange.callCount).toBe(1);
+    expect((onChange.calls[0]![1] as ComboboxOption).label).toBe("Alpha");
+  });
+
+  it("allowCustom: clearing the field commits empty and clears value", async () => {
+    const value = signal("old-id");
+    const onChange = spy<(v: string, o: ComboboxOption) => void>();
+    const el = render(
+      Combobox({
+        value,
+        loadOptions: staticLoader([]),
+        initialLabel: "Old",
+        debounceMs: 5,
+        allowCustom: true,
+        onChange,
+      }),
+    );
+    const input = find(el, "input")!;
+    fireInput(input, "", 0);
+    await wait(25);
+    fire(input, "blur");
+    expect(value.val).toBe("");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((input as any).value).toBe("");
+    expect(onChange.callCount).toBe(1);
+    expect(onChange.calls[0]![0]).toBe("");
+  });
+
+  it("allowCustom: repeated dismissal does not re-fire onChange", async () => {
+    const value = signal("");
+    const onChange = spy<(v: string, o: ComboboxOption) => void>();
+    const el = render(
+      Combobox({
+        value,
+        loadOptions: staticLoader([]),
+        debounceMs: 5,
+        allowCustom: true,
+        onChange,
+      }),
+    );
+    const input = find(el, "input")!;
+    fireInput(input, "widgets", 7);
+    await wait(25);
+    fire(input, "blur");
+    expect(onChange.callCount).toBe(1);
+    fire(input, "blur");
+    expect(onChange.callCount).toBe(1);
+    expect(value.val).toBe("widgets");
+  });
+
+  it("allowCustom: clicking outside the root commits the visible text", async () => {
+    const value = signal("");
+    const onChange = spy<(v: string, o: ComboboxOption) => void>();
+    const el = render(
+      Combobox({
+        value,
+        loadOptions: staticLoader([]),
+        debounceMs: 5,
+        allowCustom: true,
+        onChange,
+      }),
+    );
+    const input = find(el, "input")!;
+    fireInput(input, "widgets", 7);
+    await wait(25);
+    // Empty result keeps the dropdown open (empty state), so the
+    // outside-mousedown listener is active.
+    expect(find(el, ".combobox-list")!.hasAttribute("hidden")).toBe(false);
+    fire(document.body, "mousedown");
+    expect(value.val).toBe("widgets");
+    expect(onChange.callCount).toBe(1);
+    expect(find(el, ".combobox-list")!.hasAttribute("hidden")).toBe(true);
+  });
+
+  it("allowCustom: Enter on novel text commits it instead of picking the auto-highlight", async () => {
+    const value = signal("");
+    const onChange = spy<(v: string, o: ComboboxOption) => void>();
+    // Loader ignores the query, so the dropdown holds unrelated options
+    // (highlight auto-set to 0) while the visible text stays novel.
+    const loader = async (_q: string): Promise<ComboboxOption[]> => ABC;
+    const el = render(
+      Combobox({
+        value,
+        loadOptions: loader,
+        debounceMs: 5,
+        allowCustom: true,
+        onChange,
+      }),
+    );
+    const input = find(el, "input")!;
+    fireInput(input, "Xyz", 3);
+    await wait(25);
+    fire(input, "keydown", { key: "Enter" });
+    expect(value.val).toBe("Xyz");
+    expect(onChange.callCount).toBe(1);
+    expect(onChange.calls[0]![0]).toBe("Xyz");
+    expect(find(el, ".combobox-list")!.hasAttribute("hidden")).toBe(true);
+  });
+
+  it("allowCustom: ghost-accepted and arrowed Enter still pick the option", async () => {
+    const value = signal("");
+    const onChange = spy<(v: string, o: ComboboxOption) => void>();
+    const el = render(
+      Combobox({
+        value,
+        loadOptions: staticLoader(ABC),
+        debounceMs: 5,
+        allowCustom: true,
+        onChange,
+      }),
+    );
+    const input = find(el, "input")!;
+    // Ghost: typing "a" fills "alpha"; Enter picks the real option.
+    fireInput(input, "a", 1);
+    await wait(25);
+    fire(input, "keydown", { key: "Enter" });
+    expect(value.val).toBe("a1");
+    expect((onChange.calls[0]![1] as ComboboxOption).label).toBe("alpha");
+    // Arrow: moving the highlight rewrites the visible text; Enter picks.
+    fireInput(input, "a", 1);
+    await wait(25);
+    fire(input, "keydown", { key: "ArrowDown" });
+    fire(input, "keydown", { key: "Enter" });
+    expect(value.val).toBe("a2");
+    expect(onChange.callCount).toBe(2);
+  });
+
+  it("allowCustom: Escape closes without committing; the later blur commits once", async () => {
+    const value = signal("");
+    const onChange = spy<(v: string, o: ComboboxOption) => void>();
+    const el = render(
+      Combobox({
+        value,
+        loadOptions: staticLoader([]),
+        debounceMs: 5,
+        allowCustom: true,
+        onChange,
+      }),
+    );
+    const input = find(el, "input")!;
+    fireInput(input, "Xyz", 3);
+    await wait(25);
+    fire(input, "keydown", { key: "Escape" });
+    expect(value.val).toBe("");
+    expect(onChange.callCount).toBe(0);
+    fire(input, "blur");
+    expect(value.val).toBe("Xyz");
+    expect(onChange.callCount).toBe(1);
+  });
+
+  it("allowCustom: Tab on novel text does not pick; the following blur commits", async () => {
+    const value = signal("");
+    const onChange = spy<(v: string, o: ComboboxOption) => void>();
+    const loader = async (_q: string): Promise<ComboboxOption[]> => ABC;
+    const el = render(
+      Combobox({
+        value,
+        loadOptions: loader,
+        debounceMs: 5,
+        allowCustom: true,
+        onChange,
+      }),
+    );
+    const input = find(el, "input")!;
+    fireInput(input, "Xyz", 3);
+    await wait(25);
+    fire(input, "keydown", { key: "Tab" });
+    expect(value.val).toBe("");
+    expect(onChange.callCount).toBe(0);
+    fire(input, "blur");
+    expect(value.val).toBe("Xyz");
+    expect(onChange.callCount).toBe(1);
   });
 
   it("onChange fires exactly once per pick", async () => {

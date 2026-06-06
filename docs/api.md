@@ -127,9 +127,12 @@ Source of truth:
 | `Button`   | `Button(props?: ButtonProps): TemplateResult`                            | [Components § Component library reference](./components.html#component-library-reference) |
 | `Card`     | `Card(props?: CardProps): TemplateResult`                                | [Components § Component library reference](./components.html#component-library-reference) |
 | `Checkbox` | `Checkbox(props: CheckboxProps): TemplateResult`                         | [Components § Component library reference](./components.html#component-library-reference) |
+| `Combobox` | `Combobox(props: ComboboxProps): TemplateResult`                         | [Components § Combobox](./components.html#combobox)                       |
 | `createForm` | `createForm<K extends string>(config: FormConfig<K>): Form<K>`         | [Components § Forms](./components.html#forms)                             |
 | `Dialog`   | `Dialog(props: DialogProps): TemplateResult`                             | [Components § Component library reference](./components.html#component-library-reference) |
+| `Drawer`   | `Drawer(props: DrawerProps): TemplateResult`                             | [Components § Drawer](./components.html#drawer)                           |
 | `Input`    | `Input(props: InputProps): TemplateResult`                               | [Components § Component library reference](./components.html#component-library-reference) |
+| `Pagination` | `Pagination(props: PaginationProps): TemplateResult`                   | [Components § Component library reference](./components.html#component-library-reference) |
 | `Radio`    | `Radio(props: RadioProps): TemplateResult`                               | [Components § Component library reference](./components.html#component-library-reference) |
 | `Select`   | `Select(props: SelectProps): TemplateResult`                             | [Components § Component library reference](./components.html#component-library-reference) |
 | `Spinner`  | `Spinner(props?: SpinnerProps): TemplateResult`                          | [Components § Component library reference](./components.html#component-library-reference) |
@@ -149,8 +152,13 @@ reference.
 `Form<K>`, `FormField`, `SubmitAction<K>` — live there too. Every form
 control's `Props` type (`Input`, `Select`, `TextArea`, `Checkbox`,
 `Radio`, `Toggle`, `Combobox`) accepts
-`error?: Signal<string | null>`; see
-[Components § Forms](./components.html#forms).
+`error?: Signal<string | null>` (see
+[Components § Forms](./components.html#forms)), plus
+`autofocus?: boolean` and `attrs?: NativeAttrs` — additive-only native
+attributes for the underlying element (see
+[Components § Component library reference](./components.html#component-library-reference)).
+`Combobox` additionally accepts `allowCustom?: boolean` for free-text
+commit; see [Components § Combobox](./components.html#combobox).
 
 ## `"zero/wc"`
 

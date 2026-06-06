@@ -4,8 +4,10 @@ import {
   ariaDescribedBy,
   ariaInvalid,
   errorNode,
+  nativeRef,
   read,
   uniqueId,
+  type NativeAttrs,
   type Reactive,
 } from "./_internal.ts";
 
@@ -30,11 +32,33 @@ export type ComboboxProps = {
   loadingLabel?: string;
   onChange?: (value: string, option: ComboboxOption) => void;
   /**
+   * Allow free text: on blur, outside click, or Enter without an accepted
+   * ghost, the visible text (trimmed) is committed to `value` instead of
+   * strict-reverting. Text that case-insensitively equals a loaded
+   * option's label resolves to that option (canonical value/label);
+   * otherwise `onChange` fires with a synthesized
+   * `{ value: text, label: text }` option. Empty text commits `""`
+   * (clears). Defaults to `false` (strict revert).
+   */
+  allowCustom?: boolean;
+  /**
    * Optional error message signal; when non-null the control renders the
    * message below itself, sets `aria-invalid`, and links the message via
    * `aria-describedby`.
    */
   error?: Signal<string | null>;
+  /**
+   * Focus the inner typeahead `<input>` after mount.
+   */
+  autofocus?: boolean;
+  /**
+   * Additional native attributes applied to the inner typeahead `<input>`
+   * after mount. Additive-only: attributes the component renders itself
+   * (`class`, `type`, `role`, …) win and the colliding key is skipped.
+   * `true` sets an empty attribute, `false` skips the key, numbers are
+   * stringified.
+   */
+  attrs?: NativeAttrs;
 };
 
 let _comboboxIdCounter = 0;
@@ -42,6 +66,7 @@ let _comboboxIdCounter = 0;
 type ComboboxCtx = {
   props: ComboboxProps;
   debounceMs: number;
+  allowCustom: boolean;
   minQueryLength: number;
   noResultsLabel: string;
   loadingLabel: string;
@@ -200,6 +225,55 @@ function pick(ctx: ComboboxCtx, opt: ComboboxOption): void {
 }
 
 /**
+ * Commit the visible text per the `allowCustom` rules: trim it; close
+ * quietly when it equals the last committed label (idempotent dismissal);
+ * resolve a case-insensitive whole-label match to that option via
+ * {@link pick}; otherwise write the text to `value` and fire `onChange`
+ * with a synthesized `{ value: text, label: text }` option. Empty text
+ * commits `""` (clears).
+ *
+ * @param ctx
+ * @returns
+ * @internal
+ */
+function commitText(ctx: ComboboxCtx): void {
+  const el = ctx.inputRef.el;
+  if (el == null) return;
+  const t = el.value.trim();
+  if (t === ctx.lastLabel.val) {
+    el.value = t;
+    ctx.open.set(false);
+    ctx.highlight.set(-1);
+    return;
+  }
+  const needle = t.toLowerCase();
+  const match = ctx.options.val.find((o) => o.label.toLowerCase() === needle);
+  if (match) {
+    pick(ctx, match);
+    return;
+  }
+  ctx.props.value.set(t);
+  ctx.lastLabel.set(t);
+  el.value = t;
+  ctx.open.set(false);
+  ctx.highlight.set(-1);
+  ctx.props.onChange?.(t, { value: t, label: t });
+}
+
+/**
+ * Dismissal dispatcher for blur and outside click: commit the visible
+ * text under `allowCustom`, strict-revert otherwise.
+ *
+ * @param ctx
+ * @returns
+ * @internal
+ */
+function handleDismiss(ctx: ComboboxCtx): void {
+  if (ctx.allowCustom) commitText(ctx);
+  else revertOnBlur(ctx);
+}
+
+/**
  * Apply the strict-revert rule. If visible text is not a known option
  * label, revert it to `lastLabel.val`. Never writes to `value`.
  *
@@ -265,7 +339,12 @@ function onKeyArrowUp(ctx: ComboboxCtx, e: KeyboardEvent): void {
 }
 
 /**
- * Enter handler — pick the currently highlighted option, if any.
+ * Enter handler. Default mode picks the currently highlighted option, if
+ * any. Under `allowCustom` the highlight is picked only when the visible
+ * text equals its label (the user accepted a ghost or arrowed onto it,
+ * which rewrites the visible text) — otherwise the visible text is
+ * committed via {@link commitText}, so Enter on novel text never silently
+ * picks an unrelated auto-highlighted suggestion.
  *
  * @param ctx
  * @param e
@@ -275,7 +354,16 @@ function onKeyArrowUp(ctx: ComboboxCtx, e: KeyboardEvent): void {
 function onKeyEnter(ctx: ComboboxCtx, e: KeyboardEvent): void {
   e.preventDefault();
   const opt = ctx.options.val[ctx.highlight.val];
-  if (opt) pick(ctx, opt);
+  if (!ctx.allowCustom) {
+    if (opt) pick(ctx, opt);
+    return;
+  }
+  const el = ctx.inputRef.el;
+  if (opt && el && el.value === opt.label) {
+    pick(ctx, opt);
+    return;
+  }
+  commitText(ctx);
 }
 
 /**
@@ -500,7 +588,7 @@ function registerOutsideClick(
       if (!root) return;
       const target = e.target as Node | null;
       if (target && root.contains?.(target)) return;
-      revertOnBlur(ctx);
+      handleDismiss(ctx);
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
@@ -543,6 +631,7 @@ export default function Combobox(props: ComboboxProps): TemplateResult {
   const ctx: ComboboxCtx = {
     props,
     debounceMs: props.debounceMs ?? 200,
+    allowCustom: props.allowCustom ?? false,
     minQueryLength: props.minQueryLength ?? 1,
     noResultsLabel: props.noResultsLabel ?? "No results",
     loadingLabel: props.loadingLabel ?? "Loading…",
@@ -553,7 +642,7 @@ export default function Combobox(props: ComboboxProps): TemplateResult {
     busy: signal(false),
     lastLabel: signal(props.initialLabel ?? ""),
     resolved: signal(false),
-    inputRef: ref<HTMLInputElement>(),
+    inputRef: nativeRef<HTMLInputElement>(props.attrs, props.autofocus),
     state: { timer: null, serial: 0, lastPrefix: "", allowGhost: false },
   };
   const rootRef: Ref<HTMLElement> = ref();
@@ -596,7 +685,7 @@ export default function Combobox(props: ComboboxProps): TemplateResult {
           @input=${(e: Event) => handleInput(ctx, e)}
           @keydown=${(e: KeyboardEvent) => handleKey(ctx, e)}
           @focus=${() => handleFocus(ctx)}
-          @blur=${() => revertOnBlur(ctx)}
+          @blur=${() => handleDismiss(ctx)}
         >
         <span class="combobox-spinner" hidden=${() => !ctx.busy.val} aria-hidden="true"></span>
       </div>

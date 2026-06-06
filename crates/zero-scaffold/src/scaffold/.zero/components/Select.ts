@@ -1,11 +1,13 @@
 import { html } from "zero";
-import type { Signal, TemplateResult } from "zero";
+import type { Ref, Signal, TemplateResult } from "zero";
 import {
   ariaDescribedBy,
   ariaInvalid,
   debounce,
   errorNode,
+  nativeRef,
   uniqueId,
+  type NativeAttrs,
 } from "./_internal.ts";
 
 export type SelectSize = "sm" | "md" | "lg";
@@ -39,6 +41,18 @@ export type SelectProps = {
    * `aria-describedby`.
    */
   error?: Signal<string | null>;
+  /**
+   * Focus the underlying `<select>` after mount (e.g. the first field of a
+   * drawer/dialog form).
+   */
+  autofocus?: boolean;
+  /**
+   * Additional native attributes applied to the underlying `<select>` after
+   * mount. Additive-only: attributes the component renders itself (`class`,
+   * …) win and the colliding key is skipped. `true` sets an empty
+   * attribute, `false` skips the key, numbers are stringified.
+   */
+  attrs?: NativeAttrs;
 };
 
 /**
@@ -64,6 +78,10 @@ export default function Select(props: SelectProps): TemplateResult {
     (o) =>
       html`<option value=${o.value} selected=${() => props.value.val === o.value}>${o.label}</option>`,
   );
+  const controlRef: Ref<HTMLSelectElement> = nativeRef(
+    props.attrs,
+    props.autofocus,
+  );
   const errId = uniqueId("select-error");
-  return html`${labelNode}<select class=${cls} disabled=${props.disabled ?? false} aria-invalid=${ariaInvalid(props.error)} aria-describedby=${ariaDescribedBy(props.error, errId)} @change=${handler}>${options}</select>${errorNode(props.error, errId)}`;
+  return html`${labelNode}<select ref=${controlRef} class=${cls} disabled=${props.disabled ?? false} aria-invalid=${ariaInvalid(props.error)} aria-describedby=${ariaDescribedBy(props.error, errId)} @change=${handler}>${options}</select>${errorNode(props.error, errId)}`;
 }

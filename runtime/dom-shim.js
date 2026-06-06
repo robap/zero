@@ -1439,7 +1439,15 @@ function _makeEventTarget() {
     _listeners,
     addEventListener(event, handler, options) {
       if (!_listeners.has(event)) _listeners.set(event, []);
-      _listeners.get(event).push({ handler, once: options?.once ?? false });
+      _listeners.get(event).push({
+        handler,
+        once: options?.once ?? false,
+        // Record the capture flag (boolean or options form) so a bubbling
+        // _dispatchEvent fires these listeners in the right phase; without
+        // it, `entry.capture !== capture` skipped every document/window
+        // listener for events dispatched on descendants.
+        capture: options === true || (options?.capture ?? false),
+      });
     },
     removeEventListener(event, handler) {
       if (!_listeners.has(event)) return;

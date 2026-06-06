@@ -4,6 +4,14 @@
 declare module "zero/components" {
   import type { Signal, Computed, TemplateResult } from "zero";
 
+  /**
+   * Native attributes accepted by every form control's `attrs` prop.
+   * Applied additively after mount: attributes the component renders
+   * itself win and the colliding key is skipped. `true` sets an empty
+   * attribute, `false` skips the key, numbers are stringified.
+   */
+  export type NativeAttrs = Record<string, string | number | boolean>;
+
   export type AvatarSize = "sm" | "md" | "lg" | "xl";
   export type AvatarProps = {
     src?: string;
@@ -53,6 +61,10 @@ declare module "zero/components" {
     disabled?: boolean;
     debounceMs?: number;
     error?: Signal<string | null>;
+    /** Focus the inner checkbox `<input>` after mount. */
+    autofocus?: boolean;
+    /** Additive-only native attributes for the inner checkbox `<input>`. */
+    attrs?: NativeAttrs;
   };
   export function Checkbox(props: CheckboxProps): TemplateResult;
 
@@ -71,7 +83,18 @@ declare module "zero/components" {
     noResultsLabel?: string;
     loadingLabel?: string;
     onChange?: (value: string, option: ComboboxOption) => void;
+    /**
+     * Allow free text: blur/outside-click/Enter-without-ghost commits the
+     * trimmed visible text to `value`; a case-insensitive whole-label match
+     * resolves to that option; otherwise `onChange` gets a synthesized
+     * `{ value: text, label: text }`. Defaults to false (strict revert).
+     */
+    allowCustom?: boolean;
     error?: Signal<string | null>;
+    /** Focus the inner typeahead `<input>` after mount. */
+    autofocus?: boolean;
+    /** Additive-only native attributes for the inner typeahead `<input>`. */
+    attrs?: NativeAttrs;
   };
   export function Combobox(props: ComboboxProps): TemplateResult;
 
@@ -151,6 +174,10 @@ declare module "zero/components" {
     debounceMs?: number;
     onChange?: (value: string) => void;
     error?: Signal<string | null>;
+    /** Focus the underlying `<input>` after mount. */
+    autofocus?: boolean;
+    /** Additive-only native attributes for the underlying `<input>`. */
+    attrs?: NativeAttrs;
   };
   export function Input(props: InputProps): TemplateResult;
 
@@ -177,6 +204,13 @@ declare module "zero/components" {
     disabled?: boolean;
     debounceMs?: number;
     error?: Signal<string | null>;
+    /** Focus the inner radio `<input>` after mount. */
+    autofocus?: boolean;
+    /**
+     * Additive-only native attributes for the inner radio `<input>`.
+     * `name`/`value` are first-class props and always win here.
+     */
+    attrs?: NativeAttrs;
   };
   export function Radio(props: RadioProps): TemplateResult;
 
@@ -191,6 +225,10 @@ declare module "zero/components" {
     debounceMs?: number;
     onChange?: (value: string) => void;
     error?: Signal<string | null>;
+    /** Focus the underlying `<select>` after mount. */
+    autofocus?: boolean;
+    /** Additive-only native attributes for the underlying `<select>`. */
+    attrs?: NativeAttrs;
   };
   export function Select(props: SelectProps): TemplateResult;
 
@@ -239,6 +277,10 @@ declare module "zero/components" {
     label?: string;
     debounceMs?: number;
     error?: Signal<string | null>;
+    /** Focus the underlying `<textarea>` after mount. */
+    autofocus?: boolean;
+    /** Additive-only native attributes for the underlying `<textarea>`. */
+    attrs?: NativeAttrs;
   };
   export function TextArea(props: TextAreaProps): TemplateResult;
 
@@ -258,6 +300,10 @@ declare module "zero/components" {
     disabled?: boolean;
     debounceMs?: number;
     error?: Signal<string | null>;
+    /** Focus the inner switch `<input>` after mount. */
+    autofocus?: boolean;
+    /** Additive-only native attributes for the inner switch `<input>`. */
+    attrs?: NativeAttrs;
   };
   export function Toggle(props: ToggleProps): TemplateResult;
 }
