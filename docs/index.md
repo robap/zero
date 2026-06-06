@@ -40,7 +40,8 @@ once you've got it running.
   substitution values, attribute and event binding, modifiers,
   `each`, `ref`.
 - **[Components](./components.html)** — props, children,
-  composition, and the seventeen shipped components.
+  composition, the eighteen shipped components, and the
+  `createForm` form-state primitive.
 - **[Routing](./routing.html)** — lazy routes, params, guards,
   `load()`, nested routes, navigation, route-scoped fetch.
 - **[HTTP](./http.html)** — `createHttp()`, methods, middleware,

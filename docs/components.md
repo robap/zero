@@ -155,20 +155,20 @@ once you redefine the public tokens.
 | `Badge`    | optional `variant`, `size`, `children`                                     | `Badge({ variant: "success", children: "New" })`                                 |
 | `Button`   | optional `variant`, `size`, `type`, `form`, `name`, `value`, `disabled`, `loading`, `onClick`, `children` | `Button({ variant: "primary", onClick: save, children: "Save" })`                |
 | `Card`     | optional `variant`, `title`, `children`                                    | `Card({ title: "Profile", children: html\`<p>…</p>\` })`                         |
-| `Checkbox` | `checked: Signal<boolean>`; optional `label`, `disabled`, `debounceMs`     | `Checkbox({ checked: agreed, label: "I agree" })`                                |
-| `Combobox` | `value: Signal<string>`, `loadOptions: (q) => Promise<ComboboxOption[]>`; optional `initialLabel`, `size`, `placeholder`, `label`, `disabled`, `debounceMs`, `minQueryLength`, `noResultsLabel`, `loadingLabel`, `onChange` | `Combobox({ value, loadOptions: loadUsers })` |
+| `Checkbox` | `checked: Signal<boolean>`; optional `label`, `disabled`, `debounceMs`, `error` | `Checkbox({ checked: agreed, label: "I agree" })`                                |
+| `Combobox` | `value: Signal<string>`, `loadOptions: (q) => Promise<ComboboxOption[]>`; optional `initialLabel`, `size`, `placeholder`, `label`, `disabled`, `debounceMs`, `minQueryLength`, `noResultsLabel`, `loadingLabel`, `onChange`, `error` | `Combobox({ value, loadOptions: loadUsers })` |
 | `Dialog`   | `open: Signal<boolean>`; optional `size`, `title`, `children`, `onClose`   | `Dialog({ open, title: "Confirm", children: html\`…\` })`                        |
 | `Drawer`   | `open: Signal<boolean>`, `side`; optional `mode`, `size`, `title`, `body`, `controls` | `Drawer({ open, side: "right", mode: "push", title: "Edit user", body: form })`  |
-| `Input`    | `value: Signal<string>`; optional `type`, `size`, `placeholder`, `label`, `debounceMs`, `onChange` | `Input({ value: name, label: "Name", type: "text" })`                            |
+| `Input`    | `value: Signal<string>`; optional `type`, `size`, `placeholder`, `label`, `debounceMs`, `onChange`, `error` | `Input({ value: name, label: "Name", type: "text" })`                            |
 | `Pagination` | `page: Signal<number>`, `totalPages: Signal<number> \| Computed<number> \| number`; optional `size`, `siblingCount`, `boundaryCount`, `disabled`, `onChange`, `summary` | `Pagination({ page, totalPages: 10 })`                                          |
-| `Radio`    | `selected: Signal<string>`, `name`, `value`; optional `label`, `debounceMs` | `Radio({ selected: choice, name: "size", value: "lg", label: "Large" })`         |
-| `Select`   | `value: Signal<string>`, `options: SelectOption[]`; optional `label`, `debounceMs`, `onChange` | `Select({ value: country, options: [{ value: "us", label: "USA" }] })`           |
+| `Radio`    | `selected: Signal<string>`, `name`, `value`; optional `label`, `debounceMs`, `error` | `Radio({ selected: choice, name: "size", value: "lg", label: "Large" })`         |
+| `Select`   | `value: Signal<string>`, `options: SelectOption[]`; optional `label`, `debounceMs`, `onChange`, `error` | `Select({ value: country, options: [{ value: "us", label: "USA" }] })`           |
 | `Spinner`  | optional `variant`, `size`, `label`                                        | `Spinner({ size: "lg", label: "Loading" })`                                      |
 | `Tabs`     | `active: Signal<string>`, `tabs`, `panels`                                 | `Tabs({ active, tabs: [...], panels: { ... } })`                                 |
 | `Table`    | `columns`, `rows: Signal<T[]>`, `rowKey`; optional `density`, `loading`, `sort`, `onSortChange` | `Table({ columns, rows, rowKey: r => r.id })`                                    |
-| `TextArea` | `value: Signal<string>`; optional `rows`, `placeholder`, `label`, `debounceMs` | `TextArea({ value: notes, rows: 5, label: "Notes" })`                            |
+| `TextArea` | `value: Signal<string>`; optional `rows`, `placeholder`, `label`, `debounceMs`, `error` | `TextArea({ value: notes, rows: 5, label: "Notes" })`                            |
 | `Toast`    | `open: Signal<boolean>`, `message`; optional `variant`, `duration`         | `Toast({ open, message: "Saved", variant: "success" })`                          |
-| `Toggle`   | `checked: Signal<boolean>`; optional `label`, `disabled`, `debounceMs`     | `Toggle({ checked: darkMode, label: "Dark mode" })`                              |
+| `Toggle`   | `checked: Signal<boolean>`; optional `label`, `disabled`, `debounceMs`, `error` | `Toggle({ checked: darkMode, label: "Dark mode" })`                              |
 
 The convention across the library:
 
@@ -220,6 +220,17 @@ silently reverts user edits because the sync effect subscribes to the
 mirror it compares against. A direct callback, like `Button.onClick`,
 has no such failure mode. `onChange` fires only on user edits, never on
 programmatic `value.set(...)` calls.
+
+Every form control — `Input`, `Select`, `TextArea`, `Checkbox`,
+`Radio`, `Toggle`, `Combobox` — accepts
+`error?: Signal<string | null>`. While the signal holds a message the
+control renders it below itself in a `<small class="text-muted">`
+carrying a stable `data-field-error` attribute (the test hook), sets
+`aria-invalid="true"` on the underlying control, and links the message
+via `aria-describedby`. When the signal is `null` (or the prop is
+omitted) nothing renders and `aria-invalid` is `"false"`. Bind
+`form.fields.<name>.error` from [`createForm`](#forms) directly to this
+prop — or any `Signal<string | null>` you manage yourself.
 
 Props typed `Signal<T> | T` accept a `Computed<T>` too where noted:
 `Pagination.totalPages`, `Pagination.disabled`, and
@@ -361,6 +372,143 @@ The default comparator handles numbers (subtraction), strings
 (`localeCompare`), and nullish values (sorted last in asc, first in
 desc). For mixed-type columns or custom orderings, pass
 `compare: (a, b) => number` on the column.
+
+## Forms
+
+`createForm` is the form-state primitive: one call declares the
+fields, their initial values, and their validators, and returns typed
+reactive state you bind straight onto the controls. It replaces the
+hand-rolled pattern of a value+error signal pair per field, a
+`validate()` routine, an `applyFieldErrors`/`resetFormState` duo, and
+per-form `HttpError` unwrapping.
+
+```ts
+import { html } from "zero";
+import { Input, createForm } from "zero/components";
+import { createLocation } from "../store.ts";
+
+const form = createForm({
+  fields: {
+    code: {
+      initial: "",
+      validate: (v) =>
+        v.trim() === "" ? "Code is required."
+        : v.trim().length > 10 ? "Code must be 10 characters or fewer."
+        : null,
+    },
+    name: {
+      initial: "",
+      validate: (v) => (v.trim() === "" ? "Name is required." : null),
+    },
+  },
+  // Cross-field rules; fills only fields without a per-field error.
+  validate: (values) =>
+    values.code.trim() === values.name.trim()
+      ? { name: "Name must differ from code." }
+      : {},
+});
+
+// Validates, gates, and maps HttpError 400/409 {errors} automatically.
+// The action only builds the typed body and handles success.
+const onSubmit = form.submit(async (values) => {
+  await createLocation({
+    code: values.code.trim(),
+    name: values.name.trim(),
+  });
+  // Success handling is yours: close the dialog, toast, navigate.
+});
+
+const body = html`
+  <form class="stack gap-md" @submit=${onSubmit}>
+    ${() => (form.error.val ? html`<p class="text-muted" role="alert">${form.error}</p>` : html``)}
+    ${Input({ value: form.fields.code.value, label: "Code", error: form.fields.code.error })}
+    ${Input({ value: form.fields.name.value, label: "Name", error: form.fields.name.error })}
+    <button class="button button-primary button-md" type="submit"
+      disabled=${() => !form.isValid.val}>Add location</button>
+  </form>
+`;
+
+// Reopening the dialog later: form.reset();
+```
+
+### Configuration
+
+`createForm(config)` takes:
+
+- **`fields`** — a record of field declarations. Field names flow
+  through as a string-literal union, so `form.fields.<name>` and the
+  `values` record are fully typed. Each field has:
+  - `initial: string` — the initial value, also restored by `reset()`.
+    v1 field values are strings (matching `Input`/`Select`/`TextArea`;
+    keep numeric inputs as strings and convert at submit time).
+  - `validate?: (value, values) => string | null` — per-field rule;
+    return a message or `null`. Receives all current values for rules
+    that need context.
+- **`validate?: (values) => Partial<Record<field, string>>`** — the
+  cross-field validator. Runs after per-field validators and fills only
+  keys that don't already carry a per-field error.
+
+Validators are plain functions — there is no rule DSL and no async
+validation (server-side uniqueness belongs on the 409 path; see
+[HTTP § Server validation errors](./http.html#server-validation-errors)).
+
+### Returned shape
+
+For each declared field, `form.fields.<name>` exposes:
+
+- **`value: Signal<string>`** — bind to a control's `value` prop.
+  Writing marks the field touched.
+- **`error: Signal<string | null>`** — bind to a control's `error`
+  prop.
+- **`touched: Signal<boolean>`** — `false` until the user first edits
+  the field; reset by `reset()`.
+
+And the form itself:
+
+- **`isValid`** — a live computed: `true` iff running every validator
+  over the current values yields no errors. Drive a disabled submit
+  button with it. Reading it never populates any field's `error`
+  signal — validation *display* is gated on submit.
+- **`error: Signal<string | null>`** — the form-level error
+  (unmatched server keys, network failures).
+- **`values()`** — a plain snapshot `{ field: string }`. No trimming;
+  normalize in your submit action.
+- **`reset()`** — restores initials and clears all field errors, all
+  `touched` flags, and the form-level error. Call it when reopening a
+  dialog.
+- **`setErrors(errors)`** — applies a `Record<field, string>` to field
+  error signals; declared fields not present are cleared.
+- **`submit(action)`** — wraps your action into an async `@submit`
+  handler (next section).
+
+Field errors appear only via `submit()` or `setErrors()` — never from
+merely reading `isValid` — with one refinement: once a field *shows* an
+error, editing it re-validates just that field live, so the message
+clears the moment the user fixes the value (or switches if a different
+rule now fails).
+
+### Submit
+
+`form.submit(action)` returns an async event handler for `@submit`.
+In order, it:
+
+1. calls `preventDefault()` on the event;
+2. marks every field touched;
+3. runs all validators and applies the result to field errors, clearing
+   the form-level error;
+4. returns without calling `action` if anything failed;
+5. awaits `action(values())` — your action builds the typed request
+   body and handles success (close the dialog, toast, navigate);
+6. on a thrown `HttpError` with status `400`/`409` and a non-empty
+   `errors` object in the body, maps keys matching declared fields onto
+   those fields' error signals and joins messages under unmatched keys
+   into the form-level `error` (never silently dropped). Any other
+   failure — missing/empty `errors`, other statuses, network errors —
+   sets the generic form-level message `"Could not save. Try again."`.
+
+The handler never rethrows, so a `@submit` binding needs no try/catch.
+The wire convention it consumes is documented in
+[HTTP § Server validation errors](./http.html#server-validation-errors).
 
 ---
 

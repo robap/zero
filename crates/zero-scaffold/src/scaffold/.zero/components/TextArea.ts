@@ -1,6 +1,12 @@
 import { html } from "zero";
 import type { Signal, TemplateResult } from "zero";
-import { debounce } from "./_internal.ts";
+import {
+  ariaDescribedBy,
+  ariaInvalid,
+  debounce,
+  errorNode,
+  uniqueId,
+} from "./_internal.ts";
 
 export type TextAreaProps = {
   value: Signal<string>;
@@ -13,6 +19,12 @@ export type TextAreaProps = {
    * write. `0` or omitted means synchronous (current behaviour).
    */
   debounceMs?: number;
+  /**
+   * Optional error message signal; when non-null the control renders the
+   * message below itself, sets `aria-invalid`, and links the message via
+   * `aria-describedby`.
+   */
+  error?: Signal<string | null>;
 };
 
 /**
@@ -31,5 +43,6 @@ export default function TextArea(props: TextAreaProps): TemplateResult {
   const labelNode: TemplateResult | null = props.label
     ? html`<label class="textarea-label">${props.label}</label>`
     : null;
-  return html`${labelNode}<textarea class="textarea" rows=${props.rows ?? 4} placeholder=${props.placeholder ?? ""} disabled=${props.disabled ?? false} @input=${handler}>${() => props.value.val}</textarea>`;
+  const errId = uniqueId("textarea-error");
+  return html`${labelNode}<textarea class="textarea" rows=${props.rows ?? 4} placeholder=${props.placeholder ?? ""} disabled=${props.disabled ?? false} aria-invalid=${ariaInvalid(props.error)} aria-describedby=${ariaDescribedBy(props.error, errId)} @input=${handler}>${() => props.value.val}</textarea>${errorNode(props.error, errId)}`;
 }

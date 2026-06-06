@@ -1,6 +1,12 @@
 import { html } from "zero";
 import type { Signal, TemplateResult } from "zero";
-import { debounce } from "./_internal.ts";
+import {
+  ariaDescribedBy,
+  ariaInvalid,
+  debounce,
+  errorNode,
+  uniqueId,
+} from "./_internal.ts";
 
 export type InputType =
   | "text"
@@ -31,6 +37,12 @@ export type InputProps = {
    * with an `effect`.
    */
   onChange?: (value: string) => void;
+  /**
+   * Optional error message signal; when non-null the control renders the
+   * message below itself, sets `aria-invalid`, and links the message via
+   * `aria-describedby`.
+   */
+  error?: Signal<string | null>;
 };
 
 /**
@@ -54,5 +66,6 @@ export default function Input(props: InputProps): TemplateResult {
   const labelNode: TemplateResult | null = props.label
     ? html`<label class="input-label">${props.label}</label>`
     : null;
-  return html`${labelNode}<input class=${cls} type=${type} value=${() => props.value.val} placeholder=${props.placeholder ?? ""} disabled=${props.disabled ?? false} @input=${handler}>`;
+  const errId = uniqueId("input-error");
+  return html`${labelNode}<input class=${cls} type=${type} value=${() => props.value.val} placeholder=${props.placeholder ?? ""} disabled=${props.disabled ?? false} aria-invalid=${ariaInvalid(props.error)} aria-describedby=${ariaDescribedBy(props.error, errId)} @input=${handler}>${errorNode(props.error, errId)}`;
 }

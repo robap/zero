@@ -52,6 +52,7 @@ declare module "zero/components" {
     label?: string;
     disabled?: boolean;
     debounceMs?: number;
+    error?: Signal<string | null>;
   };
   export function Checkbox(props: CheckboxProps): TemplateResult;
 
@@ -70,8 +71,36 @@ declare module "zero/components" {
     noResultsLabel?: string;
     loadingLabel?: string;
     onChange?: (value: string, option: ComboboxOption) => void;
+    error?: Signal<string | null>;
   };
   export function Combobox(props: ComboboxProps): TemplateResult;
+
+  export type FieldConfig<K extends string> = {
+    initial: string;
+    validate?: (value: string, values: Record<K, string>) => string | null;
+  };
+  export type FormField = {
+    value: Signal<string>;
+    error: Signal<string | null>;
+    touched: Signal<boolean>;
+  };
+  export type FormConfig<K extends string> = {
+    fields: Record<K, FieldConfig<K>>;
+    validate?: (values: Record<K, string>) => Partial<Record<K, string>>;
+  };
+  export type SubmitAction<K extends string> = (
+    values: Record<K, string>,
+  ) => void | Promise<void>;
+  export type Form<K extends string> = {
+    fields: Record<K, FormField>;
+    isValid: Computed<boolean>;
+    error: Signal<string | null>;
+    values(): Record<K, string>;
+    reset(): void;
+    setErrors(errors: Partial<Record<K, string>>): void;
+    submit(action: SubmitAction<K>): (e: Event) => Promise<void>;
+  };
+  export function createForm<K extends string>(config: FormConfig<K>): Form<K>;
 
   export type DialogSize = "sm" | "md" | "lg";
   export type DialogProps = {
@@ -121,6 +150,7 @@ declare module "zero/components" {
     label?: string;
     debounceMs?: number;
     onChange?: (value: string) => void;
+    error?: Signal<string | null>;
   };
   export function Input(props: InputProps): TemplateResult;
 
@@ -146,6 +176,7 @@ declare module "zero/components" {
     label?: string;
     disabled?: boolean;
     debounceMs?: number;
+    error?: Signal<string | null>;
   };
   export function Radio(props: RadioProps): TemplateResult;
 
@@ -159,6 +190,7 @@ declare module "zero/components" {
     label?: string;
     debounceMs?: number;
     onChange?: (value: string) => void;
+    error?: Signal<string | null>;
   };
   export function Select(props: SelectProps): TemplateResult;
 
@@ -206,6 +238,7 @@ declare module "zero/components" {
     disabled?: boolean;
     label?: string;
     debounceMs?: number;
+    error?: Signal<string | null>;
   };
   export function TextArea(props: TextAreaProps): TemplateResult;
 
@@ -224,6 +257,7 @@ declare module "zero/components" {
     label?: string;
     disabled?: boolean;
     debounceMs?: number;
+    error?: Signal<string | null>;
   };
   export function Toggle(props: ToggleProps): TemplateResult;
 }

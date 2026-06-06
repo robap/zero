@@ -1,6 +1,13 @@
 import { html, signal, effect, ref } from "zero";
 import type { Signal, TemplateResult, Ref } from "zero";
-import { read, type Reactive } from "./_internal.ts";
+import {
+  ariaDescribedBy,
+  ariaInvalid,
+  errorNode,
+  read,
+  uniqueId,
+  type Reactive,
+} from "./_internal.ts";
 
 export type ComboboxSize = "sm" | "md" | "lg";
 
@@ -22,6 +29,12 @@ export type ComboboxProps = {
   noResultsLabel?: string;
   loadingLabel?: string;
   onChange?: (value: string, option: ComboboxOption) => void;
+  /**
+   * Optional error message signal; when non-null the control renders the
+   * message below itself, sets `aria-invalid`, and links the message via
+   * `aria-describedby`.
+   */
+  error?: Signal<string | null>;
 };
 
 let _comboboxIdCounter = 0;
@@ -551,6 +564,7 @@ export default function Combobox(props: ComboboxProps): TemplateResult {
   const labelNode: TemplateResult | null = props.label
     ? html`<label class="combobox-label" for=${inputId}>${props.label}</label>`
     : null;
+  const errId = uniqueId("combobox-error");
 
   return html`
     <div
@@ -575,6 +589,8 @@ export default function Combobox(props: ComboboxProps): TemplateResult {
           aria-activedescendant=${() =>
             ctx.highlight.val >= 0 ? optionId(ctx.highlight.val) : null}
           placeholder=${props.placeholder ?? ""}
+          aria-invalid=${ariaInvalid(props.error)}
+          aria-describedby=${ariaDescribedBy(props.error, errId)}
           value=${() => ctx.lastLabel.val}
           disabled=${() => read(props.disabled) === true}
           @input=${(e: Event) => handleInput(ctx, e)}
@@ -591,6 +607,6 @@ export default function Combobox(props: ComboboxProps): TemplateResult {
         hidden=${() => !ctx.open.val}
         aria-busy=${() => (ctx.busy.val ? "true" : "false")}
       >${() => dropdownBody(ctx, optionId)}</ul>
-    </div>
+    </div>${errorNode(props.error, errId)}
   `;
 }

@@ -30,6 +30,10 @@ const TPL_ZERO_SCSS: &str = include_str!("scaffold/.zero/styles/zero.scss");
 const TPL_AGENTS_MD: &str = include_str!("scaffold/AGENTS.md");
 const TPL_COMPONENTS_INDEX_TS: &str = include_str!("scaffold/.zero/components/index.ts");
 const TPL_COMPONENTS_INTERNAL_TS: &str = include_str!("scaffold/.zero/components/_internal.ts");
+const TPL_COMPONENTS_INTERNAL_TEST_TS: &str =
+    include_str!("scaffold/.zero/components/_internal.test.ts");
+const TPL_FORM_TS: &str = include_str!("scaffold/.zero/components/form.ts");
+const TPL_FORM_TEST_TS: &str = include_str!("scaffold/.zero/components/form.test.ts");
 const TPL_COMPONENTS_DTS: &str = include_str!("scaffold/.zero/components.d.ts");
 const TPL_COMPONENTS_AGGREGATE_SCSS: &str = include_str!("scaffold/.zero/styles/_components.scss");
 
@@ -148,6 +152,12 @@ pub fn framework_manifest() -> Vec<(&'static str, &'static str)> {
         (".zero/styles/zero.scss", TPL_ZERO_SCSS),
         (".zero/components/index.ts", TPL_COMPONENTS_INDEX_TS),
         (".zero/components/_internal.ts", TPL_COMPONENTS_INTERNAL_TS),
+        (
+            ".zero/components/_internal.test.ts",
+            TPL_COMPONENTS_INTERNAL_TEST_TS,
+        ),
+        (".zero/components/form.ts", TPL_FORM_TS),
+        (".zero/components/form.test.ts", TPL_FORM_TEST_TS),
         (".zero/components.d.ts", TPL_COMPONENTS_DTS),
         (".zero/components/Avatar.ts", TPL_AVATAR_TS),
         (".zero/components/Avatar.test.ts", TPL_AVATAR_TEST_TS),
@@ -471,6 +481,28 @@ mod tests {
                 "_components.scss missing @use 'components/{cls}': {agg}"
             );
         }
+    }
+
+    #[test]
+    fn form_module_registered() {
+        let manifest = framework_manifest();
+        let paths: BTreeSet<&str> = manifest.iter().map(|(p, _)| *p).collect();
+        assert!(
+            paths.contains(".zero/components/form.ts"),
+            "manifest missing .zero/components/form.ts"
+        );
+        assert!(
+            paths.contains(".zero/components/form.test.ts"),
+            "manifest missing .zero/components/form.test.ts"
+        );
+        assert!(
+            TPL_COMPONENTS_INDEX_TS.contains("export { createForm } from \"./form.ts\";"),
+            "components/index.ts must re-export createForm"
+        );
+        assert!(
+            TPL_COMPONENTS_DTS.contains("createForm"),
+            "components.d.ts must declare createForm"
+        );
     }
 
     #[test]
@@ -1002,6 +1034,9 @@ mod tests {
             ".zero/components.d.ts",
             ".zero/components/index.ts",
             ".zero/components/_internal.ts",
+            ".zero/components/_internal.test.ts",
+            ".zero/components/form.ts",
+            ".zero/components/form.test.ts",
             // Design-system SCSS partials + aggregate.
             ".zero/styles/_palette.scss",
             ".zero/styles/_tokens.scss",

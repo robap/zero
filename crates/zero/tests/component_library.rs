@@ -32,8 +32,10 @@ fn showcase_test_runs_all_component_tests() {
     // Each shipped component must show up in the report. The list mirrors
     // the manifest's `COMPONENT_NAMES` and is intentionally hard-coded so a
     // missing test (e.g. a component shipped without its `.test.ts`) is a
-    // clear failure here.
+    // clear failure here. `createForm` is the `form.test.ts` describe name —
+    // not a component, but load-bearing the same way.
     for name in [
+        "createForm",
         "Avatar",
         "Badge",
         "Button",

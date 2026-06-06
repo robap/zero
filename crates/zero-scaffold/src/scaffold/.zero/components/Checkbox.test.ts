@@ -26,6 +26,45 @@ describe("Checkbox", () => {
     expect(checked.val).toBe(true);
   });
 
+  it("renders no error node and aria-invalid 'false' without an error prop", () => {
+    const checked = signal(false);
+    const el = render(Checkbox({ checked, label: "Sub" }));
+    expect(find(el, "[data-field-error]")).toBe(null);
+    expect(find(el, "input")!.getAttribute("aria-invalid")).toBe("false");
+  });
+
+  it("renders the error message with aria wiring when errored", () => {
+    const checked = signal(false);
+    const error = signal<string | null>("Must accept.");
+    const el = render(Checkbox({ checked, label: "Sub", error }));
+    const node = find(el, "[data-field-error]")!;
+    expect(node).toBeTruthy();
+    expect((node.textContent ?? "").trim()).toBe("Must accept.");
+    const input = find(el, "input")!;
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    expect(input.getAttribute("aria-describedby")).toBe(
+      node.getAttribute("id"),
+    );
+  });
+
+  it("renders the error node outside the label", () => {
+    const checked = signal(false);
+    const error = signal<string | null>("Must accept.");
+    const el = render(Checkbox({ checked, label: "Sub", error }));
+    expect(find(el, "[data-field-error]")).toBeTruthy();
+    expect(find(el, "label [data-field-error]")).toBe(null);
+  });
+
+  it("clears the error node and aria-invalid when the signal goes null", () => {
+    const checked = signal(false);
+    const error = signal<string | null>("Must accept.");
+    const el = render(Checkbox({ checked, label: "Sub", error }));
+    expect(find(el, "[data-field-error]")).toBeTruthy();
+    error.set(null);
+    expect(find(el, "[data-field-error]")).toBe(null);
+    expect(find(el, "input")!.getAttribute("aria-invalid")).toBe("false");
+  });
+
   it("honours debounceMs", async () => {
     const checked = signal(false);
     const el = render(Checkbox({ checked, label: "Subscribe", debounceMs: 50 }));

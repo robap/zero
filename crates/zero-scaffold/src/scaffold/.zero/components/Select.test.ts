@@ -20,6 +20,43 @@ describe("Select", () => {
     expect(find(el, ".select")).toBeTruthy();
   });
 
+  it("renders no error node and aria-invalid 'false' without an error prop", () => {
+    const value = signal("a");
+    const el = render(
+      Select({ value, options: [{ value: "a", label: "A" }] }),
+    );
+    expect(find(el, "[data-field-error]")).toBe(null);
+    expect(find(el, "select")!.getAttribute("aria-invalid")).toBe("false");
+  });
+
+  it("renders the error message with aria wiring when errored", () => {
+    const value = signal("a");
+    const error = signal<string | null>("Pick one.");
+    const el = render(
+      Select({ value, error, options: [{ value: "a", label: "A" }] }),
+    );
+    const node = find(el, "[data-field-error]")!;
+    expect(node).toBeTruthy();
+    expect((node.textContent ?? "").trim()).toBe("Pick one.");
+    const select = find(el, "select")!;
+    expect(select.getAttribute("aria-invalid")).toBe("true");
+    expect(select.getAttribute("aria-describedby")).toBe(
+      node.getAttribute("id"),
+    );
+  });
+
+  it("clears the error node and aria-invalid when the signal goes null", () => {
+    const value = signal("a");
+    const error = signal<string | null>("Pick one.");
+    const el = render(
+      Select({ value, error, options: [{ value: "a", label: "A" }] }),
+    );
+    expect(find(el, "[data-field-error]")).toBeTruthy();
+    error.set(null);
+    expect(find(el, "[data-field-error]")).toBe(null);
+    expect(find(el, "select")!.getAttribute("aria-invalid")).toBe("false");
+  });
+
   it("updates its signal on change events", () => {
     const value = signal("a");
     const el = render(

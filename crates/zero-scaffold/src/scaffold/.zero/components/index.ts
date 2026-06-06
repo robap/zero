@@ -11,6 +11,14 @@ export { default as Checkbox } from "./Checkbox.ts";
 export type { CheckboxProps } from "./Checkbox.ts";
 export { default as Combobox } from "./Combobox.ts";
 export type { ComboboxOption, ComboboxProps, ComboboxSize } from "./Combobox.ts";
+export { createForm } from "./form.ts";
+export type {
+  FieldConfig,
+  Form,
+  FormConfig,
+  FormField,
+  SubmitAction,
+} from "./form.ts";
 export { default as Dialog } from "./Dialog.ts";
 export type { DialogProps, DialogSize } from "./Dialog.ts";
 export { default as Drawer } from "./Drawer.ts";

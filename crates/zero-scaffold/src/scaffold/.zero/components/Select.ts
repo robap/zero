@@ -1,6 +1,12 @@
 import { html } from "zero";
 import type { Signal, TemplateResult } from "zero";
-import { debounce } from "./_internal.ts";
+import {
+  ariaDescribedBy,
+  ariaInvalid,
+  debounce,
+  errorNode,
+  uniqueId,
+} from "./_internal.ts";
 
 export type SelectSize = "sm" | "md" | "lg";
 
@@ -27,6 +33,12 @@ export type SelectProps = {
    * with an `effect`.
    */
   onChange?: (value: string) => void;
+  /**
+   * Optional error message signal; when non-null the control renders the
+   * message below itself, sets `aria-invalid`, and links the message via
+   * `aria-describedby`.
+   */
+  error?: Signal<string | null>;
 };
 
 /**
@@ -52,5 +64,6 @@ export default function Select(props: SelectProps): TemplateResult {
     (o) =>
       html`<option value=${o.value} selected=${() => props.value.val === o.value}>${o.label}</option>`,
   );
-  return html`${labelNode}<select class=${cls} disabled=${props.disabled ?? false} @change=${handler}>${options}</select>`;
+  const errId = uniqueId("select-error");
+  return html`${labelNode}<select class=${cls} disabled=${props.disabled ?? false} aria-invalid=${ariaInvalid(props.error)} aria-describedby=${ariaDescribedBy(props.error, errId)} @change=${handler}>${options}</select>${errorNode(props.error, errId)}`;
 }

@@ -46,6 +46,37 @@ describe("Input", () => {
     expect(value.val).toBe("abc");
   });
 
+  it("renders no error node and aria-invalid 'false' without an error prop", () => {
+    const value = signal("");
+    const el = render(Input({ value }));
+    expect(find(el, "[data-field-error]")).toBe(null);
+    expect(find(el, "input")!.getAttribute("aria-invalid")).toBe("false");
+  });
+
+  it("renders the error message with aria wiring when errored", () => {
+    const value = signal("");
+    const error = signal<string | null>("Required.");
+    const el = render(Input({ value, error }));
+    const node = find(el, "[data-field-error]")!;
+    expect(node).toBeTruthy();
+    expect((node.textContent ?? "").trim()).toBe("Required.");
+    const input = find(el, "input")!;
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    expect(input.getAttribute("aria-describedby")).toBe(
+      node.getAttribute("id"),
+    );
+  });
+
+  it("clears the error node and aria-invalid when the signal goes null", () => {
+    const value = signal("");
+    const error = signal<string | null>("Required.");
+    const el = render(Input({ value, error }));
+    expect(find(el, "[data-field-error]")).toBeTruthy();
+    error.set(null);
+    expect(find(el, "[data-field-error]")).toBe(null);
+    expect(find(el, "input")!.getAttribute("aria-invalid")).toBe("false");
+  });
+
   it("invokes onChange with the new value after the signal write", () => {
     const value = signal("");
     const seen: string[] = [];

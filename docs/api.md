@@ -127,6 +127,7 @@ Source of truth:
 | `Button`   | `Button(props?: ButtonProps): TemplateResult`                            | [Components § Component library reference](./components.html#component-library-reference) |
 | `Card`     | `Card(props?: CardProps): TemplateResult`                                | [Components § Component library reference](./components.html#component-library-reference) |
 | `Checkbox` | `Checkbox(props: CheckboxProps): TemplateResult`                         | [Components § Component library reference](./components.html#component-library-reference) |
+| `createForm` | `createForm<K extends string>(config: FormConfig<K>): Form<K>`         | [Components § Forms](./components.html#forms)                             |
 | `Dialog`   | `Dialog(props: DialogProps): TemplateResult`                             | [Components § Component library reference](./components.html#component-library-reference) |
 | `Input`    | `Input(props: InputProps): TemplateResult`                               | [Components § Component library reference](./components.html#component-library-reference) |
 | `Radio`    | `Radio(props: RadioProps): TemplateResult`                               | [Components § Component library reference](./components.html#component-library-reference) |
@@ -143,6 +144,13 @@ aliases (`ButtonVariant`, `ButtonType`, `InputType`, `BadgeSize`, `SelectOption`
 `TableColumn<T>`, `TabsTab`, etc.) live in
 `.zero/components.d.ts` — that file is the canonical, typed
 reference.
+
+`createForm`'s exported types — `FormConfig<K>`, `FieldConfig<K>`,
+`Form<K>`, `FormField`, `SubmitAction<K>` — live there too. Every form
+control's `Props` type (`Input`, `Select`, `TextArea`, `Checkbox`,
+`Radio`, `Toggle`, `Combobox`) accepts
+`error?: Signal<string | null>`; see
+[Components § Forms](./components.html#forms).
 
 ## `"zero/wc"`
 

@@ -78,6 +78,41 @@ describe("Combobox", () => {
     expect(list.hasAttribute("hidden")).toBe(true);
   });
 
+  it("renders no error node and aria-invalid 'false' without an error prop", () => {
+    const value = signal("");
+    const el = render(Combobox({ value, loadOptions: staticLoader([]) }));
+    expect(find(el, "[data-field-error]")).toBe(null);
+    expect(find(el, "input")!.getAttribute("aria-invalid")).toBe("false");
+  });
+
+  it("renders the error message with aria wiring when errored", () => {
+    const value = signal("");
+    const error = signal<string | null>("Unknown part.");
+    const el = render(
+      Combobox({ value, error, loadOptions: staticLoader([]) }),
+    );
+    const node = find(el, "[data-field-error]")!;
+    expect(node).toBeTruthy();
+    expect((node.textContent ?? "").trim()).toBe("Unknown part.");
+    const input = find(el, "input")!;
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    expect(input.getAttribute("aria-describedby")).toBe(
+      node.getAttribute("id"),
+    );
+  });
+
+  it("clears the error node and aria-invalid when the signal goes null", () => {
+    const value = signal("");
+    const error = signal<string | null>("Unknown part.");
+    const el = render(
+      Combobox({ value, error, loadOptions: staticLoader([]) }),
+    );
+    expect(find(el, "[data-field-error]")).toBeTruthy();
+    error.set(null);
+    expect(find(el, "[data-field-error]")).toBe(null);
+    expect(find(el, "input")!.getAttribute("aria-invalid")).toBe("false");
+  });
+
   it("typing triggers a debounced fetch", async () => {
     const value = signal("");
     const loader = spy(staticLoader(ABC));

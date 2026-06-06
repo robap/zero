@@ -96,6 +96,32 @@ Other failures surface as their natural errors:
 | Network failure (DNS, offline, CORS)  | `TypeError`                          |
 | Aborted via signal                    | `DOMException` (`name: "AbortError"`) |
 
+### Server validation errors
+
+For validation failures, backends should respond `400` (bad input) or
+`409` (conflict, e.g. uniqueness) with a body of this shape:
+
+```json
+{ "errors": { "<field>": "<message>", "...": "..." } }
+```
+
+Key the `errors` object by the **client's field names** — that is what
+makes the convention composable:
+[`createForm().submit()`](./components.html#forms) catches the
+`HttpError`, and for a `400`/`409` with a non-empty `errors` object:
+
+- keys matching the form's declared fields set those fields' error
+  signals (the message renders under the control via its `error` prop);
+- messages under **unmatched keys** are concatenated (single space, in
+  body order) into the form-level `error` signal — surfaced, never
+  silently dropped;
+- if `errors` is absent or empty — and for every other failure
+  (other statuses, network errors) — the form-level error gets the
+  generic `"Could not save. Try again."`.
+
+The submit handler never rethrows, so form code needs no try/catch
+around the request.
+
 ## Middleware
 
 `client.use(mw)` registers a middleware. The signature mirrors

@@ -135,10 +135,8 @@ mod tests {
 
     #[test]
     fn does_not_fire_on_top_level_signal_or_computed() {
-        let d = run(
-            "import { signal, computed } from \"zero\"; \
-             const c = signal(0); const d = computed(() => c.val * 2);",
-        );
+        let d = run("import { signal, computed } from \"zero\"; \
+             const c = signal(0); const d = computed(() => c.val * 2);");
         assert!(d.is_empty(), "expected none, got {d:?}");
     }
 
