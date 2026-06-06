@@ -63,7 +63,12 @@ version.
 ### Source layout
 
 Real apps benefit from a small, predictable layout under `<root>/`.
-Adopt as much of it as your example complexity warrants.
+Nothing in the tooling enforces one — routing is explicit imports, and
+`zero lint` does not care where a file lives — so pick the layout that
+keeps each *thing you'd want to read in one sitting* in one place, and
+adopt as much structure as your app's complexity warrants.
+
+The default the scaffold and examples use is **layer-first**:
 
 ```
 src/
@@ -95,6 +100,46 @@ For dynamic segments, prefer plain names: `routes/issues/index.ts`
 singular/plural pair reads naturally; no bracket syntax is needed
 because the router takes the pattern from `app.route(...)`, not from
 the filename.
+
+### Keep an entity's lifecycle in one module
+
+Layer-first has a failure mode: a single entity's model, mutators,
+persistence, and dialogs smear across all four directories, and "what
+is this thing, who changes it, how is it saved" can no longer be read
+in one place. Two rules prevent it:
+
+- **The store module owns the entity's whole lifecycle.** Its type
+  declarations, its signal, its mutators, *and* its load/save
+  functions all live in `stores/<entity>.ts`. Don't split the model
+  into `lib/` and re-export it from the store (or vice versa) — a
+  re-export shim that exists only to bridge a folder split is a sign
+  the split is wrong.
+- **`lib/` is for helpers with no entity** — formatters, validators,
+  guards, the HTTP client. If a `lib/` file imports an entity's types,
+  it probably belongs in that entity's store module.
+
+When an app grows past a handful of entities, **feature-first** is the
+natural next step — group everything about one domain in one folder:
+
+```
+src/
+  app.ts
+  state.ts
+  features/
+    issues/
+      store.ts       # model + signal + mutators + load/save
+      routes.ts      # route components, load(), meta
+      IssueCard.ts   # feature-local components
+  components/        # shared presentational components only
+  lib/               # shared non-UI helpers
+```
+
+This is fully supported: module-level `signal()` / `computed()` are
+lint-legal in any directory (a store is wherever you say it is), and
+the route table in `app.ts` imports from wherever the files live. The
+conventions that matter are behavioral, not spatial: mutate store
+signals only through their exported mutators, and keep presentational
+components free of store writes.
 
 → See `../examples/tracker/web/src/`.
 
@@ -157,16 +202,27 @@ single-source-of-truth guarantee.
 A store is a plain TypeScript module that exports a signal plus the
 functions that legally mutate it. There is no framework class to
 extend, no provider tree, no reducer to register — the module *is* the
-store.
+store. And there is no blessed directory: `signal()` at module scope
+is legal anywhere, so a store can live in `stores/`, a feature folder,
+or wherever your layout puts it.
 
 ```ts
-// stores/issues.ts
+// stores/issues.ts — the entity's one-stop module
+export type Issue = { id: string; title: string; status: IssueStatus };
+export type IssuesState = { items: Issue[]; loaded: boolean };
+
 export const issues: Signal<IssuesState> = signal({ items: [], loaded: false });
 
 export function setIssues(items: Issue[]): void { /* ... */ }
 export function addComment(id: string, c: Comment): void { /* ... */ }
 export function updateStatus(id: string, status: IssueStatus): void { /* ... */ }
+
+export async function loadIssues(init?: { fetch?: typeof fetch }): Promise<void> { /* ... */ }
 ```
+
+The model types, the signal, the mutators, and the persistence
+functions belong together — see §1's "Keep an entity's lifecycle in
+one module."
 
 Component code imports the mutator functions. **Never** call `.set()`
 or `.update()` on a store signal from a component or a route — every

@@ -1,8 +1,9 @@
 //! Lint a hand-crafted project containing every JS/TS framework idiom
-//! failure mode. Asserts that each rule ID (R01, R02, T01–T04, C01,
-//! C02, I01, I02, S01) fires AND that R03 stays silent (the fixture's
-//! one would-be R03 violation lives under `src/stores/`, which is
-//! exempt).
+//! failure mode. Asserts that each rule ID (R01–R03, T01–T04, C01,
+//! C02, I01, I02, S01) fires — R03 via the module-level `effect()` in
+//! `src/lib/leaky-effect.ts` — AND that module-level `signal()` /
+//! `computed()` stay lint-clean regardless of directory
+//! (`src/stores/ok.ts`, `src/features/parts/store.ts`).
 
 mod common;
 
@@ -35,15 +36,18 @@ fn js_failure_patterns_fire_expected_rules() {
         "expected lint to fail; stderr={stderr}"
     );
     for rule in [
-        "R01", "R02", "T01", "T02", "T03", "T04", "C01", "C02", "I01", "I02", "S01",
+        "R01", "R02", "R03", "T01", "T02", "T03", "T04", "C01", "C02", "I01", "I02", "S01",
     ] {
         assert!(
             stderr.contains(rule),
             "expected rule {rule} to fire; stderr=\n{stderr}"
         );
     }
-    assert!(
-        !stderr.contains("R03"),
-        "R03 should not fire — the only top-level signal() is under src/stores/ (exempt). stderr=\n{stderr}"
-    );
+    for clean in ["stores/ok.ts", "features/parts/store.ts"] {
+        assert!(
+            !stderr.contains(clean),
+            "module-level signal()/computed() must lint clean in any directory; \
+             {clean} was flagged. stderr=\n{stderr}"
+        );
+    }
 }

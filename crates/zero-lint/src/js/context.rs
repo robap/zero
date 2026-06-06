@@ -25,8 +25,6 @@ pub struct FileCtx<'a> {
     /// `true` when the file lives under `<root>/src/components/` or
     /// `<root>/src/routes/`.
     pub is_under_components_or_routes: bool,
-    /// `true` when the file lives under `<root>/src/stores/`.
-    pub is_under_stores: bool,
     /// `true` when the file is the app entry point —
     /// `<root>/src/app.{ts,tsx,js,jsx}`. R03 exempts this file because
     /// the entry module IS the bootstrap scope.
@@ -48,7 +46,7 @@ impl<'a> FileCtx<'a> {
         module: ast::Module,
     ) -> Self {
         let is_test_file = is_test_basename(file);
-        let (is_under_components_or_routes, is_under_stores) = classify_dir(file, root);
+        let is_under_components_or_routes = classify_dir(file, root);
         let is_app_entry = is_app_entry(file, root);
         let zero_imports = collect_zero_imports(&module);
         Self {
@@ -59,7 +57,6 @@ impl<'a> FileCtx<'a> {
             module,
             is_test_file,
             is_under_components_or_routes,
-            is_under_stores,
             is_app_entry,
             zero_imports,
         }
@@ -105,18 +102,16 @@ fn is_app_entry(file: &Path, root: &Path) -> bool {
     matches!(name, "app.ts" | "app.tsx" | "app.js" | "app.jsx")
 }
 
-fn classify_dir(file: &Path, root: &Path) -> (bool, bool) {
+fn classify_dir(file: &Path, root: &Path) -> bool {
     let Ok(rel) = file.strip_prefix(root) else {
-        return (false, false);
+        return false;
     };
     let mut comps = rel.components();
     if comps.next().map(|c| c.as_os_str()) != Some(std::ffi::OsStr::new("src")) {
-        return (false, false);
+        return false;
     }
     let first = comps.next().and_then(|c| c.as_os_str().to_str());
-    let in_cor = matches!(first, Some("components") | Some("routes"));
-    let in_stores = matches!(first, Some("stores"));
-    (in_cor, in_stores)
+    matches!(first, Some("components") | Some("routes"))
 }
 
 fn collect_zero_imports(module: &ast::Module) -> HashMap<String, String> {
@@ -198,7 +193,6 @@ mod tests {
         let file = PathBuf::from("/tmp/src/components/Btn.ts");
         let ctx = FileCtx::new(&file, "", &root, cm, m);
         assert!(ctx.is_under_components_or_routes);
-        assert!(!ctx.is_under_stores);
     }
 
     #[test]
@@ -211,12 +205,11 @@ mod tests {
     }
 
     #[test]
-    fn classifies_stores_dir() {
+    fn classifies_stores_dir_as_not_components_or_routes() {
         let (m, cm) = parse("");
         let root = PathBuf::from("/tmp");
         let file = PathBuf::from("/tmp/src/stores/auth.ts");
         let ctx = FileCtx::new(&file, "", &root, cm, m);
-        assert!(ctx.is_under_stores);
         assert!(!ctx.is_under_components_or_routes);
     }
 

@@ -252,7 +252,7 @@ teaching pages): <https://robap.github.io/zero/linting.html>.
 |------|--------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------|
 | R01  | ``html`${count.val}` ``                                                              | ``html`${count}` `` — pass the signal, not its current value.                        |
 | R02  | `count.val = 5;`                                                                     | `count.set(5)` / `count.update(n => n + 1)`.                                         |
-| R03  | top-level `signal()` / `effect()` / `computed()` outside `src/stores/**` and `src/app.{ts,js,tsx,jsx}` | wrap in a function, the app entry, or a store factory under `src/stores/**`.         |
+| R03  | top-level `effect()` outside `src/app.{ts,js,tsx,jsx}`                               | move into a function, a component body, or the app entry. Top-level `signal()` / `computed()` are fine anywhere — that's what a store is. |
 | T01  | `el.addEventListener("click", h)` in components/routes                               | ``html`<button @click=${h}>` ``.                                                     |
 | T02  | `@click.captuer=${h}` (typo)                                                         | one of `prevent`, `stop`, `once`, `throttle`, `debounce`, `enter`, `escape`, `space`, `tab`, `up`, `down`, `left`, `right`. |
 | T03  | `each(items, render)`                                                                | `each(items, render, item => item.id)`.                                              |
@@ -477,9 +477,13 @@ Import the `TemplateResult` type via `@typedef`, not at runtime.
 
 ## Best practices
 
-Real apps benefit from a small, predictable layout — `state.ts`, `stores/`,
-`components/`, `routes/`, `lib/`. Keep route components, their `load()`,
-and their `meta` co-located in one file per route.
+Real apps benefit from a small, predictable layout. The scaffold's
+default is layer-first — `state.ts`, `stores/`, `components/`,
+`routes/`, `lib/` — but nothing enforces it: routing is explicit
+imports and lint does not care where files live, so a feature-first
+layout (`features/<domain>/{store,routes}.ts`) is equally valid. Keep
+route components, their `load()`, and their `meta` co-located in one
+file per route.
 
 - **Use `zero/components` for every interactive primitive.** Drop to raw
   `<button>` / `<input>` only when the shipped component cannot express
@@ -493,6 +497,10 @@ and their `meta` co-located in one file per route.
   `interface StateTypes` from `"zero"` so reads infer their value type.
 - **Mutate store signals only via the store's exported mutators.** Components
   never call `signal.set()` on a store signal.
+- **Keep an entity's lifecycle in one module.** The store module owns the
+  entity's types, signal, mutators, *and* load/save functions. Don't split
+  the model into `lib/` and bridge it with a re-export shim — `lib/` is for
+  helpers with no entity (formatters, validators, guards, the HTTP client).
 - **Co-locate `load` / `meta` / `default` in the route file.** Import them
   at the registration site: `app.route("/issues/:id", IssuePage, { load, meta, guard: requireAuth });`. `load()` is side-effect-only — its return value is awaited but not piped into the component. Use it to hydrate a store; have the component read via `inject`.
 - **Use `zero/http` for HTTP, not raw `fetch`.** Construct the client once

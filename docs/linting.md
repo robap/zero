@@ -66,7 +66,7 @@ column.
 |------|------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------|
 | R01  | `${signal.val}` inside an ``html\`...\``` template                                                               | Reading `.val` breaks reactivity — pass the signal. See [Reactivity](./reactivity.html#common-pitfalls). |
 | R02  | `signal.val = ...`                                                                                               | Signals are immutable from the outside — use `.set()` / `.update()`. See [Reactivity](./reactivity.html#what-a-signal-is). |
-| R03  | Module-level `signal()` / `computed()` / `effect()` (outside `src/stores/**` and `src/app.{ts,js,tsx,jsx}`)      | Leak — module-level reactives never dispose. Move into a function, the app entry, or a store factory. See [Reactivity § Ownership scopes & cleanup](./reactivity.html#ownership-scopes--cleanup). |
+| R03  | Module-level `effect()` (outside `src/app.{ts,js,tsx,jsx}`)                                                      | Leak — a module-level effect starts at import time and nothing ever disposes it. Move into a function, a component body, or the app entry. Module-level `signal()` / `computed()` are fine anywhere — top-of-module state is what a store is. See [Reactivity § Ownership scopes & cleanup](./reactivity.html#ownership-scopes--cleanup). |
 | T01  | `addEventListener` / `removeEventListener` in `src/{components,routes}/**`                                       | Use `@event=` bindings. See [Templates § Event binding](./templates.html#event-binding). |
 | T02  | Unknown `@event.modifier`                                                                                        | Typo — the allowed set is in [Templates § Event modifiers](./templates.html#event-modifiers). |
 | T03  | `each(items, render)` with no key function                                                                       | Pass a key fn for stable identity. See [Templates § each()](./templates.html#each--keyed-lists). |
@@ -83,9 +83,10 @@ column.
 `*.test.{ts,js,tsx,jsx}` and `*.spec.{ts,js,tsx,jsx}` files are
 exempt from the **T-rules**, **R03**, and **S01**. Tests legitimately
 reach into the DOM (`querySelector`-style assertions, custom event
-dispatch helpers), legitimately declare module-level signals as test
-fixtures, and `describe` bodies grow with test count — structural,
-not a code smell.
+dispatch helpers), legitimately create effects at module scope (the
+runner's `cleanup()` disposes unowned effects between tests), and
+`describe` bodies grow with test count — structural, not a code
+smell.
 
 `R02`, `C01`, `C02`, `I01`, and `I02` still apply in tests —
 they're about correctness, not framework-idiomatic UI code.
