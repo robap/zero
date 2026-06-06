@@ -13,10 +13,10 @@ use swc_core::common::sync::Lrc;
 use swc_core::common::{FileName, GLOBALS, Globals, Mark, SourceMap as SwcSourceMap, Spanned};
 use swc_core::ecma::ast::{
     AssignExpr, AssignOp, AssignTarget, BlockStmt, Bool, ClassMember, ComputedPropName, EsVersion,
-    Expr, ExprStmt, Function, Ident, IdentName, Invalid, KeyValueProp, Lit, MemberExpr,
-    MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, Number, ObjectLit, Prop,
-    PropName, PropOrSpread, SeqExpr, SimpleAssignTarget, Stmt, Str, UnaryExpr, UnaryOp,
-    UpdateExpr, UpdateOp, VarDecl, VarDeclKind, VarDeclarator,
+    Expr, ExprStmt, Function, Ident, IdentName, Invalid, KeyValueProp, Lit, MemberExpr, MemberProp,
+    Module, ModuleDecl, ModuleExportName, ModuleItem, Number, ObjectLit, Prop, PropName,
+    PropOrSpread, SeqExpr, SimpleAssignTarget, Stmt, Str, UnaryExpr, UnaryOp, UpdateExpr, UpdateOp,
+    VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::codegen::Emitter;
 use swc_core::ecma::codegen::text_writer::JsWriter;
@@ -413,10 +413,10 @@ impl VisitMut for InstrumenterVisitor {
                         span: Default::default(),
                     })),
                 );
-                *expr = Box::new(Expr::Seq(SeqExpr {
+                **expr = Expr::Seq(SeqExpr {
                     span: Default::default(),
                     exprs: vec![Box::new(counter), body],
-                }));
+                });
             }
         }
     }
@@ -1051,7 +1051,11 @@ mod tests {
         let src = "const g = (x) => { return x + 1 };\n";
         let out = instrument(src, &opts("/abs/foo.ts")).expect("instrument");
         let count = out.map.fns.iter().filter(|n| *n == "anon@1").count();
-        assert_eq!(count, 1, "anon@1 duplicated in fns universe: {:?}", out.map.fns);
+        assert_eq!(
+            count, 1,
+            "anon@1 duplicated in fns universe: {:?}",
+            out.map.fns
+        );
     }
 
     #[test]

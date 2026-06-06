@@ -1007,9 +1007,192 @@ function _setSelectionRange(start, end) {
 }
 
 /**
+ * Collect all `<option>` descendants of `select` in document order,
+ * including options nested inside `<optgroup>`.
+ * @internal
+ * @param {object} select
+ * @returns {object[]}
+ */
+function _optionsOf(select) {
+  const options = [];
+  _walkDescendants(select, node => {
+    if (node.nodeType === ELEMENT_NODE && node.tagName === "OPTION") options.push(node);
+  });
+  return options;
+}
+
+/**
+ * Read an option's value: the `value` attribute when present, else the
+ * option's text content (browser fallback).
+ * @internal
+ * @param {object} option
+ * @returns {string}
+ */
+function _optionValue(option) {
+  return _getAttribute(option, "value") ?? _readTextContent(option);
+}
+
+/**
+ * Index of the first option of `select` carrying a `selected` attribute.
+ * When none is marked: `0` for a non-`multiple` select with at least one
+ * option (the browser's default-first rule), else `-1`. The default rule is
+ * suppressed while the select's selection was explicitly cleared (see
+ * `_setSelectedIndex`) — mirroring the browser, where clearing via the value
+ * or selectedIndex setter does not re-select the first option.
+ * @internal
+ * @param {object} select
+ * @returns {number}
+ */
+function _selectedIndexOf(select) {
+  const options = _optionsOf(select);
+  for (let i = 0; i < options.length; i++) {
+    if (_hasAttribute(options[i], "selected")) return i;
+  }
+  if (select._selectionCleared) return -1;
+  return !_hasAttribute(select, "multiple") && options.length > 0 ? 0 : -1;
+}
+
+/**
+ * Make the option at index `i` the sole selection of `select`: remove the
+ * `selected` attribute from every option, then mark `options[i]` when `i`
+ * is in range. `-1` (or any out-of-range index) clears all selection and
+ * raises the select's `_selectionCleared` flag so the default-first rule
+ * stays suppressed until an option is marked again.
+ * @internal
+ * @param {object} select
+ * @param {number} i
+ * @returns {void}
+ */
+function _setSelectedIndex(select, i) {
+  const options = _optionsOf(select);
+  for (const o of options) _removeAttribute(o, "selected");
+  const inRange = i >= 0 && i < options.length;
+  if (inRange) _setAttribute(options[i], "selected", "");
+  select._selectionCleared = !inRange;
+}
+
+/**
+ * Attach the HTMLSelectElement-specific surface on top of the generic input
+ * props (legal because those are defined `configurable: true`). `value` and
+ * `selectedIndex` derive from the options' `selected` attributes — the shim
+ * treats the attribute as current state (no default-vs-dirty model). The
+ * `value` setter is strict: no matching option clears the selection, and no
+ * `value` attribute is ever written on the select itself.
+ * @internal
+ * @param {object} el
+ * @returns {void}
+ */
+function _attachSelectProps(el) {
+  el._selectionCleared = false;
+  Object.defineProperty(el, "value", {
+    get() {
+      const i = _selectedIndexOf(el);
+      return i === -1 ? "" : _optionValue(_optionsOf(el)[i]);
+    },
+    set(v) {
+      const wanted = String(v);
+      _setSelectedIndex(el, _optionsOf(el).findIndex(o => _optionValue(o) === wanted));
+    },
+    configurable: true,
+    enumerable: true,
+  });
+  Object.defineProperty(el, "selectedIndex", {
+    get() { return _selectedIndexOf(el); },
+    set(v) { _setSelectedIndex(el, Number.isFinite(+v) ? +v : -1); },
+    configurable: true,
+    enumerable: true,
+  });
+  Object.defineProperty(el, "options", {
+    get() { return _optionsOf(el); },
+    configurable: true,
+    enumerable: true,
+  });
+  Object.defineProperty(el, "selectedOptions", {
+    get() {
+      const options = _optionsOf(el);
+      const marked = options.filter(o => _hasAttribute(o, "selected"));
+      if (marked.length > 0) return marked;
+      const i = _selectedIndexOf(el);
+      return i === -1 ? [] : [options[i]];
+    },
+    configurable: true,
+    enumerable: true,
+  });
+  _defineBoolAttrProp(el, "multiple", "multiple");
+}
+
+/**
+ * Walk `option`'s ancestors (through `<optgroup>`) to the nearest `<select>`.
+ * @internal
+ * @param {object} option
+ * @returns {object|null}
+ */
+function _ownerSelect(option) {
+  let node = option.parentNode;
+  while (node && node.nodeType === ELEMENT_NODE && node.tagName === "OPTGROUP") {
+    node = node.parentNode;
+  }
+  return node && node.nodeType === ELEMENT_NODE && node.tagName === "SELECT" ? node : null;
+}
+
+/**
+ * Attach the HTMLOptionElement-specific surface on top of the generic input
+ * props. `value` gains the browser's text-content fallback when the `value`
+ * attribute is absent; `selected` reports *current* selectedness, including
+ * the owning select's default-first rule. Orphan options (no `<select>`
+ * ancestor) fall back to attribute presence.
+ * @internal
+ * @param {object} el
+ * @returns {void}
+ */
+function _attachOptionProps(el) {
+  Object.defineProperty(el, "value", {
+    get() { return _optionValue(el); },
+    set(v) { _setAttribute(el, "value", v == null ? "" : String(v)); },
+    configurable: true,
+    enumerable: true,
+  });
+  Object.defineProperty(el, "selected", {
+    get() {
+      if (_hasAttribute(el, "selected")) return true;
+      const select = _ownerSelect(el);
+      if (!select) return false;
+      const i = _selectedIndexOf(select);
+      return i !== -1 && _optionsOf(select)[i] === el;
+    },
+    set(v) {
+      if (!v) {
+        _removeAttribute(el, "selected");
+        return;
+      }
+      const select = _ownerSelect(el);
+      if (select && !_hasAttribute(select, "multiple")) {
+        for (const o of _optionsOf(select)) {
+          if (o !== el) _removeAttribute(o, "selected");
+        }
+      }
+      _setAttribute(el, "selected", "");
+      if (select) select._selectionCleared = false;
+    },
+    configurable: true,
+    enumerable: true,
+  });
+  Object.defineProperty(el, "index", {
+    get() {
+      const select = _ownerSelect(el);
+      return select ? _optionsOf(select).indexOf(el) : 0;
+    },
+    configurable: true,
+    enumerable: true,
+  });
+}
+
+/**
  * Attach the element property surface (classList, dataset, style, textContent,
  * className, input-shaped properties) onto `el`. Each group lives in its own
  * helper to keep `createElement`'s body trim — see boa-maplock-finalizer notes.
+ * Select and option elements gain tag-specific overrides on top of the
+ * generic props.
  * @internal
  * @param {object} el
  * @returns {void}
@@ -1021,6 +1204,8 @@ function _attachElementProps(el) {
   _attachTextContent(el);
   _attachClassNameProp(el);
   _attachInputProps(el);
+  if (el.tagName === "SELECT") _attachSelectProps(el);
+  else if (el.tagName === "OPTION") _attachOptionProps(el);
 }
 
 /**

@@ -711,3 +711,73 @@ describe('each()', () => {
     expect(after[2]).toBe(node2);
   });
 });
+
+describe('select reactive selection', () => {
+  afterEach(cleanup);
+
+  /**
+   * Render the Select-component shape: per-option reactive `selected`
+   * bindings driven by a signal, inside a `<select @change=...>`.
+   * @param {object} sig - value signal
+   * @param {Function} [handler] - optional @change handler
+   * @returns {object} the rendered root
+   */
+  function renderSelectShape(sig, handler = () => {}) {
+    const options = [
+      { value: 'a', label: 'A' },
+      { value: 'b', label: 'B' },
+      { value: 'c', label: 'C' },
+    ].map(
+      (o) =>
+        html`<option value=${o.value} selected=${() => sig.val === o.value}>${o.label}</option>`,
+    );
+    return render(html`<select @change=${handler}>${options}</select>`);
+  }
+
+  it('signal-driven bindings produce observable selection', () => {
+    const sig = signal('b');
+    const el = renderSelectShape(sig);
+    const sel = find(el, 'select');
+    expect(sel.value).toBe('b');
+    expect(sel.selectedOptions.length).toBe(1);
+    sig.set('a');
+    expect(sel.value).toBe('a');
+    expect(findAll(el, 'option')[1].hasAttribute('selected')).toBe(false);
+  });
+
+  it('hand-written selection and signal re-assertion stay consistent', () => {
+    const sig = signal('a');
+    const el = renderSelectShape(sig);
+    const sel = find(el, 'select');
+    sel.value = 'b';
+    const [a, b, c] = findAll(el, 'option');
+    expect(sel.value).toBe('b');
+    expect(a.hasAttribute('selected')).toBe(false);
+    sig.set('c');
+    expect(sel.value).toBe('c');
+    expect(c.selected).toBe(true);
+    expect(a.hasAttribute('selected')).toBe(false);
+    expect(b.hasAttribute('selected')).toBe(false);
+  });
+
+  it('change handler reads the derived value from the real element', () => {
+    const seen = [];
+    const sig = signal('a');
+    const el = renderSelectShape(sig, (e) => seen.push(e.target.value));
+    const sel = find(el, 'select');
+    sel.value = 'b';
+    fire(sel, 'change');
+    expect(seen).toEqual(['b']);
+  });
+
+  it('programmatic writes dispatch no change events', () => {
+    const handler = spy();
+    const sig = signal('a');
+    const el = renderSelectShape(sig, handler);
+    const sel = find(el, 'select');
+    sel.value = 'b';
+    sel.selectedIndex = 0;
+    findAll(el, 'option')[1].selected = true;
+    expect(handler.callCount).toBe(0);
+  });
+});

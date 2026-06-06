@@ -129,6 +129,49 @@ combinations). Ancestor matching is scoped to the queried element. Sibling
 combinators (`+`, `~`), pseudo-classes (`:first-child`, `:not()`, …), and the
 universal selector (`*`) are not supported.
 
+### Form elements
+
+`<select>` elements carry the `HTMLSelectElement` surface, so tests can
+assert which option a select currently shows:
+
+- `select.value` derives from the selected option (it is **not** the
+  `value` attribute). When no option is marked on a non-`multiple` select,
+  the first option is the selection — the browser default.
+- The `value` setter is strict: it selects the first option whose value
+  matches the assigned string; **no match clears the selection** and
+  `value` reads `""`. It never writes a `value` attribute on the select.
+- `selectedIndex` reads/writes the selection by index (`-1` or
+  out-of-range clears).
+- `options` and `selectedOptions` are plain arrays (including options
+  nested in `<optgroup>`), recomputed on each access — not live
+  `HTMLCollection`s.
+- `multiple` is a boolean prop coupled to the `multiple` attribute.
+- `option.value` falls back to the option's text content when the `value`
+  attribute is absent; `option.selected` reports *current* selectedness
+  (including the default-first rule) and enforces single-select mutual
+  exclusivity when set; `option.index` is its position in the owning
+  select.
+
+Programmatic writes (`select.value = …`, `selectedIndex = …`,
+`option.selected = …`) never dispatch `change` or `input` — set state,
+then fire the event, and the handler reads the derived value from the
+real element:
+
+```ts
+// Before: a fake event target carried the state.
+fire(select, "change", { target: { value: "b" } });
+
+// After: the element carries the state itself.
+const sel = find(el, "select") as HTMLSelectElement;
+sel.value = "b";
+fire(sel, "change");          // handler reads e.target.value === "b"
+```
+
+One documented divergence from the browser: the shim treats the
+`selected` **attribute as current state**. There is no
+`defaultSelected` / dirtiness model — reactive `selected=${…}` bindings
+commit the attribute, and reads derive from it.
+
 Wire `cleanup()` into `afterEach` so per-test mounts don't leak:
 
 ```ts

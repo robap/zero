@@ -57,6 +57,38 @@ describe("Select", () => {
     expect(find(el, "select")!.getAttribute("aria-invalid")).toBe("false");
   });
 
+  it("renders the signal-selected option", () => {
+    const value = signal("b");
+    const el = render(
+      Select({
+        value,
+        options: [
+          { value: "a", label: "A" },
+          { value: "b", label: "B" },
+        ],
+      }),
+    );
+    const sel = find(el, "select") as HTMLSelectElement;
+    expect(sel.value).toBe("b");
+    expect(sel.selectedOptions.length).toBe(1);
+  });
+
+  it("selection tracks signal changes", () => {
+    const value = signal("b");
+    const el = render(
+      Select({
+        value,
+        options: [
+          { value: "a", label: "A" },
+          { value: "b", label: "B" },
+        ],
+      }),
+    );
+    const sel = find(el, "select") as HTMLSelectElement;
+    value.set("a");
+    expect(sel.value).toBe("a");
+  });
+
   it("updates its signal on change events", () => {
     const value = signal("a");
     const el = render(
@@ -68,7 +100,9 @@ describe("Select", () => {
         ],
       }),
     );
-    fire(find(el, "select")!, "change", { target: { value: "b" } });
+    const sel = find(el, "select") as HTMLSelectElement;
+    sel.value = "b";
+    fire(sel, "change");
     expect(value.val).toBe("b");
   });
 
@@ -84,7 +118,9 @@ describe("Select", () => {
         ],
       }),
     );
-    fire(find(el, "select")!, "change", { target: { value: "b" } });
+    const sel = find(el, "select") as HTMLSelectElement;
+    sel.value = "b";
+    fire(sel, "change");
     expect(value.val).toBe("a");
     await new Promise((r) => setTimeout(r, 80));
     expect(value.val).toBe("b");
@@ -103,7 +139,9 @@ describe("Select", () => {
         onChange: (v) => seen.push(`${v}:${value.val}`),
       }),
     );
-    fire(find(el, "select")!, "change", { target: { value: "b" } });
+    const sel = find(el, "select") as HTMLSelectElement;
+    sel.value = "b";
+    fire(sel, "change");
     // Callback sees the new value, and the signal is already written.
     expect(seen).toEqual(["b:b"]);
   });

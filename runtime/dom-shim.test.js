@@ -350,3 +350,270 @@ describe('selector engine', () => {
     expect(() => findAll(root, '.#bad')).toThrow('dom-shim: malformed selector');
   });
 });
+
+describe('select element model', () => {
+  afterEach(cleanup);
+
+  it('derives value from the selected-marked option', () => {
+    const el = render(html`
+      <select>
+        <option value="a">A</option>
+        <option value="b" selected>B</option>
+      </select>
+    `);
+    expect(find(el, 'select').value).toBe('b');
+  });
+
+  it('selectedIndex reads the marked option index', () => {
+    const el = render(html`
+      <select>
+        <option value="a">A</option>
+        <option value="b" selected>B</option>
+      </select>
+    `);
+    expect(find(el, 'select').selectedIndex).toBe(1);
+  });
+
+  it('defaults to the first option when nothing is marked (non-multiple)', () => {
+    const el = render(html`
+      <select>
+        <option value="a">A</option>
+        <option value="b">B</option>
+      </select>
+    `);
+    const sel = find(el, 'select');
+    expect(sel.value).toBe('a');
+    expect(sel.selectedIndex).toBe(0);
+  });
+
+  it('reads empty value and selectedIndex -1 on an empty select', () => {
+    const el = render(html`<select></select>`);
+    const sel = find(el, 'select');
+    expect(sel.value).toBe('');
+    expect(sel.selectedIndex).toBe(-1);
+  });
+
+  it('applies no default selection under multiple', () => {
+    const el = render(html`
+      <select multiple>
+        <option value="a">A</option>
+        <option value="b">B</option>
+      </select>
+    `);
+    const sel = find(el, 'select');
+    expect(sel.selectedIndex).toBe(-1);
+    expect(sel.value).toBe('');
+  });
+
+  it('value setter marks the matching option and clears the rest', () => {
+    const el = render(html`
+      <select>
+        <option value="a" selected>A</option>
+        <option value="b">B</option>
+      </select>
+    `);
+    const sel = find(el, 'select');
+    sel.value = 'b';
+    const [a, b] = findAll(el, 'option');
+    expect(b.hasAttribute('selected')).toBe(true);
+    expect(a.hasAttribute('selected')).toBe(false);
+    expect(sel.value).toBe('b');
+  });
+
+  it('value setter with no matching option clears the selection', () => {
+    const el = render(html`
+      <select>
+        <option value="a" selected>A</option>
+        <option value="b">B</option>
+      </select>
+    `);
+    const sel = find(el, 'select');
+    sel.value = 'nope';
+    expect(sel.selectedIndex).toBe(-1);
+    expect(sel.value).toBe('');
+    expect(sel.hasAttribute('value')).toBe(false);
+  });
+
+  it('selectedIndex setter selects in range and clears otherwise', () => {
+    const el = render(html`
+      <select>
+        <option value="a" selected>A</option>
+        <option value="b">B</option>
+      </select>
+    `);
+    const sel = find(el, 'select');
+    sel.selectedIndex = 1;
+    expect(sel.value).toBe('b');
+    expect(findAll(el, 'option')[0].hasAttribute('selected')).toBe(false);
+    sel.selectedIndex = -1;
+    expect(sel.selectedIndex).toBe(-1);
+    sel.selectedIndex = 1;
+    sel.selectedIndex = 99;
+    expect(sel.selectedIndex).toBe(-1);
+  });
+
+  it('options collects optgroup-nested options in document order', () => {
+    const el = render(html`
+      <select>
+        <option value="a">A</option>
+        <optgroup label="g">
+          <option value="b">B</option>
+          <option value="c">C</option>
+        </optgroup>
+        <option value="d">D</option>
+      </select>
+    `);
+    const sel = find(el, 'select');
+    expect(sel.options.map(o => o.value)).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('selectedOptions holds both marked options under multiple, value reads the first', () => {
+    const el = render(html`
+      <select multiple>
+        <option value="a">A</option>
+        <option value="b" selected>B</option>
+        <option value="c" selected>C</option>
+      </select>
+    `);
+    const sel = find(el, 'select');
+    expect(sel.selectedOptions.map(o => o.value)).toEqual(['b', 'c']);
+    expect(sel.value).toBe('b');
+  });
+
+  it('selectedOptions reflects the default-first rule when nothing is marked', () => {
+    const el = render(html`
+      <select>
+        <option value="a">A</option>
+        <option value="b">B</option>
+      </select>
+    `);
+    expect(find(el, 'select').selectedOptions.map(o => o.value)).toEqual(['a']);
+  });
+
+  it('multiple is a boolean prop coupled to the multiple attribute', () => {
+    const el = render(html`<select multiple></select>`);
+    const sel = find(el, 'select');
+    expect(sel.multiple).toBe(true);
+    sel.multiple = false;
+    expect(sel.hasAttribute('multiple')).toBe(false);
+    sel.multiple = true;
+    expect(sel.hasAttribute('multiple')).toBe(true);
+  });
+
+  it('input value keeps the generic attribute-coupled behavior', () => {
+    const el = render(html`<input value="start" />`);
+    const input = find(el, 'input');
+    input.value = 'anything goes';
+    expect(input.value).toBe('anything goes');
+    expect(input.getAttribute('value')).toBe('anything goes');
+  });
+});
+
+describe('option element model', () => {
+  afterEach(cleanup);
+
+  it('option value falls back to text content, attribute wins when present', () => {
+    const el = render(html`
+      <select>
+        <option>Two</option>
+        <option value="three">Three</option>
+      </select>
+    `);
+    const [bare, valued] = findAll(el, 'option');
+    expect(bare.value).toBe('Two');
+    expect(valued.value).toBe('three');
+  });
+
+  it('selected getter applies the default-first rule, but not under multiple', () => {
+    const el = render(html`
+      <div>
+        <select>
+          <option value="a">A</option>
+          <option value="b">B</option>
+        </select>
+        <select multiple>
+          <option value="c">C</option>
+          <option value="d">D</option>
+        </select>
+      </div>
+    `);
+    const [a, b, c, d] = findAll(el, 'option');
+    expect(a.selected).toBe(true);
+    expect(b.selected).toBe(false);
+    expect(c.selected).toBe(false);
+    expect(d.selected).toBe(false);
+  });
+
+  it('selected = true enforces exclusivity in a non-multiple select', () => {
+    const el = render(html`
+      <select>
+        <option value="a" selected>A</option>
+        <option value="b">B</option>
+      </select>
+    `);
+    const [a, b] = findAll(el, 'option');
+    b.selected = true;
+    expect(a.hasAttribute('selected')).toBe(false);
+    expect(a.selected).toBe(false);
+    expect(b.hasAttribute('selected')).toBe(true);
+    expect(b.selected).toBe(true);
+    expect(find(el, 'select').value).toBe('b');
+  });
+
+  it('selected = true under multiple leaves other marked options intact', () => {
+    const el = render(html`
+      <select multiple>
+        <option value="a" selected>A</option>
+        <option value="b">B</option>
+      </select>
+    `);
+    const [a, b] = findAll(el, 'option');
+    b.selected = true;
+    expect(a.hasAttribute('selected')).toBe(true);
+    expect(find(el, 'select').selectedOptions.length).toBe(2);
+  });
+
+  it('selected = false on the marked option reverts to the default first', () => {
+    const el = render(html`
+      <select>
+        <option value="a">A</option>
+        <option value="b" selected>B</option>
+      </select>
+    `);
+    const [a, b] = findAll(el, 'option');
+    b.selected = false;
+    expect(a.selected).toBe(true);
+    expect(find(el, 'select').value).toBe('a');
+  });
+
+  it('orphan option tracks only its own attribute', () => {
+    const el = render(html`<div><option value="x">X</option></div>`);
+    const opt = find(el, 'option');
+    expect(opt.selected).toBe(false);
+    opt.selected = true;
+    expect(opt.selected).toBe(true);
+    expect(opt.hasAttribute('selected')).toBe(true);
+    opt.selected = false;
+    expect(opt.selected).toBe(false);
+  });
+
+  it('index reads the document-order position in the owning select', () => {
+    const el = render(html`
+      <div>
+        <select>
+          <option value="a">A</option>
+          <optgroup label="g">
+            <option value="b">B</option>
+          </optgroup>
+          <option value="c">C</option>
+        </select>
+        <option value="orphan">O</option>
+      </div>
+    `);
+    const [a, b, c, orphan] = findAll(el, 'option');
+    expect(a.index).toBe(0);
+    expect(b.index).toBe(1);
+    expect(c.index).toBe(2);
+    expect(orphan.index).toBe(0);
+  });
+});

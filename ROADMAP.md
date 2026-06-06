@@ -72,6 +72,7 @@ refactor that *is* a tracked item follows the same ⏳ → ✅ lifecycle.
 |------|--------|---------|
 | [dom-shim](issues/dom-shim/spec.md) | ✅ | 2026-05-18 |
 | [dom-shim-selectors](issues/dom-shim-selectors/spec.md) | ✅ | 2026-05-30 |
+| [select-element](issues/select-element/spec.md) | ✅ | 2026-06-06 |
 | [web-platform](issues/web-platform/spec.md) | ✅ | 2026-05-18 |
 | [intl-shim](issues/intl-shim/spec.md) | ✅ | 2026-05-30 |
 
