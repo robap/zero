@@ -341,16 +341,40 @@ installs three constructors:
   `month` (`numeric`/`2-digit`/`short`/`long`/`narrow`), `day`,
   `hour`, `minute`, `second`, `weekday`
   (`short`/`long`/`narrow`), and `hour12`; plus `dateStyle` and
-  `timeStyle` presets (`full`/`long`/`medium`/`short`).
-  `resolvedOptions()` reports `locale: "en-US"`.
+  `timeStyle` presets (`full`/`long`/`medium`/`short`); plus
+  `timeZone: "UTC"` (case-insensitive — rendering switches to
+  the UTC accessors; any other zone throws the shim error
+  below). `resolvedOptions()` reports `locale: "en-US"`, and
+  reports `timeZone` only when it was passed (the shim cannot
+  know the host zone name).
 - `Intl.NumberFormat` — `style` `decimal` (default), `currency`
   (`USD`→`$`, `EUR`→`€`, `GBP`→`£`, `JPY`→`¥`; `JPY` defaults to
   0 fraction digits; the default `currencyDisplay: "symbol"`
   case), `percent`; `minimumFractionDigits` /
-  `maximumFractionDigits`; `useGrouping` (default on).
+  `maximumFractionDigits` (integers 0–100, range-checked;
+  explicit `min > max` throws `RangeError`); `useGrouping`
+  (default on). `style: "currency"` without a `currency` code
+  throws `TypeError`; a malformed code (not 3 letters) throws
+  `RangeError`.
 - `Intl.RelativeTimeFormat` — `format(value, unit)` for
-  `second`…`year` (plural unit names accepted), `numeric`
+  `second`…`year` (plural unit names accepted; an unknown unit
+  or a non-finite value throws `RangeError`), `numeric`
   (`always` default / `auto`).
+
+**Option validation.** Invalid option *values* throw a
+browser-faithful `RangeError` exactly as the real API does
+(e.g. `new Intl.DateTimeFormat("en-US", { day: "" })` throws),
+so formatter configuration is pinnable by tests and `zero
+mutate`'s mutations of option string literals are killable. A
+spec-valid option the shim does **not** implement (e.g.
+`timeZoneName`, `notation`, `localeMatcher`, non-UTC
+`timeZone`, `RelativeTimeFormat` `style` `short`/`narrow`)
+throws the standard `zero test: … is not implemented` error
+instead of being silently ignored. Truly unknown keys are
+ignored, as in browsers. One deliberate strictness beyond the
+spec: `hour12` and `useGrouping` must be real booleans —
+browsers coerce, the shim throws `RangeError`, because
+`hour12: "yes"` in a test is a bug worth surfacing.
 
 **Known limitation — silent en-US.** A non-en-US `locales`
 argument is **accepted and silently formatted as en-US** rather
@@ -360,7 +384,6 @@ one.
 
 Documented partial cases: `DateTimeFormat` `timeStyle`
 `full`/`long` render as `medium` (no timezone name);
-`RelativeTimeFormat` `short`/`narrow` styles render as `long`;
 `formatToParts` / `formatRange*` are not implemented. Other
 `Intl` namespaces (`Collator`, `PluralRules`, `ListFormat`,
 `Segmenter`, `Locale`, `DisplayNames`, `supportedValuesOf`) are

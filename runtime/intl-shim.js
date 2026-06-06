@@ -10,12 +10,12 @@
  * locale — a documented, deliberate departure from the "clear error"
  * discipline of the other shims.
  *
- * The three constructors are plain `function`s rather than `class`es on
- * purpose: under Boa 0.21.1 a `class` object reachable as a GC root from
- * `globalThis` tips the engine's buggy mid-run collector into a "subtract
- * with overflow" / MapLock `BorrowMutError` panic during the heavy showcase
- * component tests (see the `boa_maplock_finalizer` note). A `function`
- * constructor as a global root does not. Keep them as functions.
+ * Option *values*, by contrast, are validated: an invalid value for a
+ * supported option throws a browser-faithful `RangeError`, and a spec-valid
+ * option the shim does not implement throws the standard `zero test: … is
+ * not implemented` shim error. Truly unknown keys are ignored, as in
+ * browsers. This keeps formatter configuration pinnable by tests and makes
+ * mutated option literals killable by `zero mutate`.
  */
 
 /** @type {string[]} */
@@ -38,6 +38,101 @@ const WEEKDAYS_LONG = [
 const WEEKDAYS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 /** @type {string[]} */
 const WEEKDAYS_NARROW = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
+/**
+ * Throw a browser-faithful `RangeError` when `value` is defined and not in
+ * the allowed set. `undefined` (option not passed) is always accepted.
+ * @param {string} ctor - constructor name for the error message
+ * @param {string} option - option property name
+ * @param {any} value - the user-supplied value
+ * @param {string[]} allowed - the spec's allowed values for this option
+ * @returns {void}
+ */
+function _requireOneOf(ctor, option, value, allowed) {
+  if (value === undefined) return;
+  if (!allowed.includes(value)) {
+    throw new RangeError(
+      `Value "${value}" out of range for Intl.${ctor} options property ${option}`,
+    );
+  }
+}
+
+/**
+ * Throw a `RangeError` when `value` is defined and not an actual boolean.
+ * Deliberately stricter than ECMA-402 (which `ToBoolean`-coerces): in a test
+ * runtime, `hour12: "yes"` is a bug worth surfacing.
+ * @param {string} ctor - constructor name for the error message
+ * @param {string} option - option property name
+ * @param {any} value - the user-supplied value
+ * @returns {void}
+ */
+function _requireBoolean(ctor, option, value) {
+  if (value === undefined) return;
+  if (typeof value !== 'boolean') {
+    throw new RangeError(
+      `Value "${value}" out of range for Intl.${ctor} options property ${option} (expected a boolean)`,
+    );
+  }
+}
+
+/**
+ * Throw the standard shim-boundary error for any spec-valid option key the
+ * shim does not implement. Loud beats silently-different-from-browser output.
+ * @param {string} ctor - constructor name for the error message
+ * @param {Record<string, any>} options - the user-supplied options object
+ * @param {string[]} keys - the spec-defined keys this shim rejects
+ * @returns {void}
+ */
+function _rejectUnsupported(ctor, options, keys) {
+  for (const key of keys) {
+    if (options[key] !== undefined) {
+      throw new Error(
+        `zero test: Intl.${ctor} option "${key}" is not implemented. ` +
+        'Remove it or guard the call for the test runtime.',
+      );
+    }
+  }
+}
+
+/** @type {string[]} */
+const DTF_UNSUPPORTED = [
+  'era', 'timeZoneName', 'hourCycle', 'dayPeriod', 'fractionalSecondDigits',
+  'calendar', 'numberingSystem', 'formatMatcher', 'localeMatcher',
+];
+
+/** @type {Record<string, string[]>} */
+const DTF_COMPONENT_VALUES = {
+  weekday: ['long', 'short', 'narrow'],
+  year: ['numeric', '2-digit'],
+  month: ['numeric', '2-digit', 'long', 'short', 'narrow'],
+  day: ['numeric', '2-digit'],
+  hour: ['numeric', '2-digit'],
+  minute: ['numeric', '2-digit'],
+  second: ['numeric', '2-digit'],
+};
+
+/**
+ * Validate `DateTimeFormat` options, throwing on invalid values. Truly
+ * unknown keys (not defined by ECMA-402) are ignored, as in browsers.
+ * @param {Record<string, any>} options
+ * @returns {void}
+ */
+function _validateDateTimeOptions(options) {
+  _rejectUnsupported('DateTimeFormat', options, DTF_UNSUPPORTED);
+  for (const key of Object.keys(DTF_COMPONENT_VALUES)) {
+    _requireOneOf('DateTimeFormat', key, options[key], DTF_COMPONENT_VALUES[key]);
+  }
+  const styles = ['full', 'long', 'medium', 'short'];
+  _requireOneOf('DateTimeFormat', 'dateStyle', options.dateStyle, styles);
+  _requireOneOf('DateTimeFormat', 'timeStyle', options.timeStyle, styles);
+  _requireBoolean('DateTimeFormat', 'hour12', options.hour12);
+  if (options.timeZone !== undefined && String(options.timeZone).toUpperCase() !== 'UTC') {
+    throw new Error(
+      `zero test: Intl.DateTimeFormat timeZone "${options.timeZone}" is not ` +
+      'implemented (only "UTC" is supported). Use "UTC" or remove the option.',
+    );
+  }
+}
 
 /**
  * Zero-pad an integer to two digits.
@@ -106,6 +201,7 @@ function _resolveDateTimeOptions(options) {
     }
   }
   if (options.hour12 !== undefined) components.hour12 = options.hour12;
+  if (options.timeZone !== undefined) components.timeZone = 'UTC';
   const resolved = Object.assign(
     { locale: 'en-US', calendar: 'gregory', numberingSystem: 'latn' },
     components,
@@ -114,14 +210,46 @@ function _resolveDateTimeOptions(options) {
 }
 
 /**
- * Render the weekday prefix (`''` when no `weekday` option is set).
+ * Extract the date/time components the renderers read, from either the local
+ * or the UTC accessor family — the single site where `timeZone: "UTC"`
+ * switches rendering.
  * @param {Date} d
+ * @param {boolean} utc
+ * @returns {{ year: number, monthIndex: number, day: number,
+ *   weekdayIndex: number, hours: number, minutes: number, seconds: number }}
+ */
+function _dateParts(d, utc) {
+  if (utc) {
+    return {
+      year: d.getUTCFullYear(),
+      monthIndex: d.getUTCMonth(),
+      day: d.getUTCDate(),
+      weekdayIndex: d.getUTCDay(),
+      hours: d.getUTCHours(),
+      minutes: d.getUTCMinutes(),
+      seconds: d.getUTCSeconds(),
+    };
+  }
+  return {
+    year: d.getFullYear(),
+    monthIndex: d.getMonth(),
+    day: d.getDate(),
+    weekdayIndex: d.getDay(),
+    hours: d.getHours(),
+    minutes: d.getMinutes(),
+    seconds: d.getSeconds(),
+  };
+}
+
+/**
+ * Render the weekday prefix (`''` when no `weekday` option is set).
+ * @param {ReturnType<typeof _dateParts>} p
  * @param {Record<string, any>} c
  * @returns {string}
  */
-function _formatWeekday(d, c) {
+function _formatWeekday(p, c) {
   if (!c.weekday) return '';
-  const i = d.getDay();
+  const i = p.weekdayIndex;
   if (c.weekday === 'narrow') return WEEKDAYS_NARROW[i];
   if (c.weekday === 'short') return WEEKDAYS_SHORT[i];
   return WEEKDAYS_LONG[i];
@@ -141,79 +269,79 @@ function _monthName(monthIndex, style) {
 
 /**
  * Render a numeric year per the `year` option.
- * @param {Date} d
+ * @param {ReturnType<typeof _dateParts>} p
  * @param {string} style
  * @returns {string}
  */
-function _yearStr(d, style) {
-  const y = d.getFullYear();
+function _yearStr(p, style) {
+  const y = p.year;
   return style === '2-digit' ? _pad2(y % 100) : String(y);
 }
 
 /**
  * Render the date portion for a textual month: `Month D, YYYY` and variants.
- * @param {Date} d
+ * @param {ReturnType<typeof _dateParts>} p
  * @param {Record<string, any>} c
  * @returns {string}
  */
-function _formatTextualDate(d, c) {
-  let s = _monthName(d.getMonth(), c.month);
+function _formatTextualDate(p, c) {
+  let s = _monthName(p.monthIndex, c.month);
   const hasDay = c.day !== undefined;
   const hasYear = c.year !== undefined;
-  if (hasDay && hasYear) s += ` ${d.getDate()}, ${_yearStr(d, c.year)}`;
-  else if (hasDay) s += ` ${d.getDate()}`;
-  else if (hasYear) s += ` ${_yearStr(d, c.year)}`;
+  if (hasDay && hasYear) s += ` ${p.day}, ${_yearStr(p, c.year)}`;
+  else if (hasDay) s += ` ${p.day}`;
+  else if (hasYear) s += ` ${_yearStr(p, c.year)}`;
   return s;
 }
 
 /**
  * Render the date portion for a numeric month: slash-separated `M/D/YYYY`.
- * @param {Date} d
+ * @param {ReturnType<typeof _dateParts>} p
  * @param {Record<string, any>} c
  * @returns {string}
  */
-function _formatNumericDate(d, c) {
+function _formatNumericDate(p, c) {
   const parts = /** @type {string[]} */ ([]);
   if (c.month !== undefined) {
-    const m = d.getMonth() + 1;
+    const m = p.monthIndex + 1;
     parts.push(c.month === '2-digit' ? _pad2(m) : String(m));
   }
   if (c.day !== undefined) {
-    parts.push(c.day === '2-digit' ? _pad2(d.getDate()) : String(d.getDate()));
+    parts.push(c.day === '2-digit' ? _pad2(p.day) : String(p.day));
   }
-  if (c.year !== undefined) parts.push(_yearStr(d, c.year));
+  if (c.year !== undefined) parts.push(_yearStr(p, c.year));
   return parts.join('/');
 }
 
 /**
  * Render the date portion (`''` when no date component is present).
- * @param {Date} d
+ * @param {ReturnType<typeof _dateParts>} p
  * @param {Record<string, any>} c
  * @returns {string}
  */
-function _formatDatePortion(d, c) {
+function _formatDatePortion(p, c) {
   if (c.month === undefined && c.day === undefined && c.year === undefined) return '';
   const textual = c.month === 'long' || c.month === 'short' || c.month === 'narrow';
-  return textual ? _formatTextualDate(d, c) : _formatNumericDate(d, c);
+  return textual ? _formatTextualDate(p, c) : _formatNumericDate(p, c);
 }
 
 /**
  * Render the time portion (`''` when no time component is present).
- * @param {Date} d
+ * @param {ReturnType<typeof _dateParts>} p
  * @param {Record<string, any>} c
  * @returns {string}
  */
-function _formatTimePortion(d, c) {
+function _formatTimePortion(p, c) {
   if (c.hour === undefined && c.minute === undefined && c.second === undefined) return '';
   const hour12 = c.hour12 !== false;
-  const h = d.getHours();
+  const h = p.hours;
   let core = '';
   if (c.hour !== undefined) {
     const hh = hour12 ? (h % 12 === 0 ? 12 : h % 12) : h;
     core = c.hour === '2-digit' ? _pad2(hh) : String(hh);
   }
-  if (c.minute !== undefined) core += `${core ? ':' : ''}${_pad2(d.getMinutes())}`;
-  if (c.second !== undefined) core += `${core ? ':' : ''}${_pad2(d.getSeconds())}`;
+  if (c.minute !== undefined) core += `${core ? ':' : ''}${_pad2(p.minutes)}`;
+  if (c.second !== undefined) core += `${core ? ':' : ''}${_pad2(p.seconds)}`;
   if (hour12 && c.hour !== undefined) core += h < 12 ? ' AM' : ' PM';
   return core;
 }
@@ -234,15 +362,16 @@ function _assembleDateTime(weekday, datePortion, timePortion) {
 }
 
 /**
- * en-US `Intl.DateTimeFormat`. A `function` constructor (not a `class`) — see
- * the file header for the Boa GC rationale.
+ * en-US `Intl.DateTimeFormat`.
  * @constructor
  * @param {string | string[]} [locales]
  * @param {Record<string, any>} [options]
  */
 function DateTimeFormat(locales, options) {
   void locales;
-  const resolved = _resolveDateTimeOptions(options ?? {});
+  const o = options ?? {};
+  _validateDateTimeOptions(o);
+  const resolved = _resolveDateTimeOptions(o);
   /** @type {Record<string, any>} */
   this._components = resolved.components;
   /** @type {Record<string, any>} */
@@ -254,12 +383,12 @@ function DateTimeFormat(locales, options) {
  * @returns {string}
  */
 DateTimeFormat.prototype.format = function format(date) {
-  const d = _coerceDate(date);
   const c = this._components;
+  const p = _dateParts(_coerceDate(date), c.timeZone === 'UTC');
   return _assembleDateTime(
-    _formatWeekday(d, c),
-    _formatDatePortion(d, c),
-    _formatTimePortion(d, c),
+    _formatWeekday(p, c),
+    _formatDatePortion(p, c),
+    _formatTimePortion(p, c),
   );
 };
 
@@ -320,9 +449,8 @@ function _formatNumber(value, minFrac, maxFrac, useGrouping) {
 function _resolveFractionDigits(options, defMin, defMax) {
   const min = options.minimumFractionDigits !== undefined
     ? options.minimumFractionDigits : defMin;
-  let max = options.maximumFractionDigits !== undefined
+  const max = options.maximumFractionDigits !== undefined
     ? options.maximumFractionDigits : Math.max(defMax, min);
-  if (max < min) max = min;
   return { min, max };
 }
 
@@ -360,16 +488,78 @@ function _formatPercent(value, o) {
 }
 
 /**
- * en-US `Intl.NumberFormat`. A `function` constructor (not a `class`) — see
- * the file header for the Boa GC rationale.
+ * Validate one fraction-digit option: when present it must be an integer in
+ * the spec's 0–100 range.
+ * @param {string} option - option property name
+ * @param {any} value - the user-supplied value
+ * @returns {void}
+ */
+function _requireDigitOption(option, value) {
+  if (value === undefined) return;
+  if (!Number.isInteger(value) || value < 0 || value > 100) {
+    throw new RangeError(`${option} value is out of range`);
+  }
+}
+
+/** @type {string[]} */
+const NF_UNSUPPORTED = [
+  'notation', 'unit', 'unitDisplay', 'signDisplay', 'compactDisplay',
+  'currencySign', 'roundingMode', 'roundingPriority', 'roundingIncrement',
+  'trailingZeroDisplay', 'minimumIntegerDigits', 'minimumSignificantDigits',
+  'maximumSignificantDigits', 'localeMatcher',
+];
+
+/**
+ * Validate `NumberFormat` options, throwing on invalid values, and normalize
+ * the currency code to uppercase. Truly unknown keys are ignored, as in
+ * browsers.
+ * @param {Record<string, any>} options
+ * @returns {void}
+ */
+function _validateNumberOptions(options) {
+  _rejectUnsupported('NumberFormat', options, NF_UNSUPPORTED);
+  _requireOneOf('NumberFormat', 'style', options.style, ['decimal', 'currency', 'percent']);
+  _requireBoolean('NumberFormat', 'useGrouping', options.useGrouping);
+  if (options.currencyDisplay !== undefined && options.currencyDisplay !== 'symbol') {
+    throw new Error(
+      `zero test: Intl.NumberFormat option "currencyDisplay" value ` +
+      `"${options.currencyDisplay}" is not implemented (only "symbol" is supported).`,
+    );
+  }
+  _requireDigitOption('minimumFractionDigits', options.minimumFractionDigits);
+  _requireDigitOption('maximumFractionDigits', options.maximumFractionDigits);
+  if (
+    options.minimumFractionDigits !== undefined &&
+    options.maximumFractionDigits !== undefined &&
+    options.minimumFractionDigits > options.maximumFractionDigits
+  ) {
+    throw new RangeError(
+      'maximumFractionDigits value is out of range (less than minimumFractionDigits)',
+    );
+  }
+  if (options.style === 'currency') {
+    if (options.currency === undefined) {
+      throw new TypeError('Currency code is required with currency style');
+    }
+    if (!/^[a-zA-Z]{3}$/.test(String(options.currency))) {
+      throw new RangeError(`Invalid currency code: ${options.currency}`);
+    }
+    options.currency = String(options.currency).toUpperCase();
+  }
+}
+
+/**
+ * en-US `Intl.NumberFormat`.
  * @constructor
  * @param {string | string[]} [locales]
  * @param {Record<string, any>} [options]
  */
 function NumberFormat(locales, options) {
   void locales;
+  const o = Object.assign({}, options ?? {});
+  _validateNumberOptions(o);
   /** @type {Record<string, any>} */
-  this._opts = Object.assign({}, options ?? {});
+  this._opts = o;
   if (!this._opts.style) this._opts.style = 'decimal';
 }
 
@@ -439,8 +629,7 @@ function _formatRelativeAuto(value, unit) {
 }
 
 /**
- * en-US `Intl.RelativeTimeFormat`. A `function` constructor (not a `class`) —
- * see the file header for the Boa GC rationale.
+ * en-US `Intl.RelativeTimeFormat`.
  * @constructor
  * @param {string | string[]} [locales]
  * @param {Record<string, any>} [options]
@@ -448,11 +637,23 @@ function _formatRelativeAuto(value, unit) {
 function RelativeTimeFormat(locales, options) {
   void locales;
   const o = options ?? {};
+  _rejectUnsupported('RelativeTimeFormat', o, ['localeMatcher']);
+  _requireOneOf('RelativeTimeFormat', 'numeric', o.numeric, ['always', 'auto']);
+  _requireOneOf('RelativeTimeFormat', 'style', o.style, ['long', 'short', 'narrow']);
+  if (o.style === 'short' || o.style === 'narrow') {
+    throw new Error(
+      `zero test: Intl.RelativeTimeFormat option "style" value "${o.style}" ` +
+      'is not implemented (only "long" is supported).',
+    );
+  }
   /** @type {string} */
   this._numeric = o.numeric === 'auto' ? 'auto' : 'always';
   /** @type {string} */
   this._style = o.style || 'long';
 }
+
+/** @type {string[]} */
+const RTF_UNITS = ['second', 'minute', 'hour', 'day', 'week', 'month', 'quarter', 'year'];
 
 /**
  * @param {number} value
@@ -460,9 +661,18 @@ function RelativeTimeFormat(locales, options) {
  * @returns {string}
  */
 RelativeTimeFormat.prototype.format = function format(value, unit) {
+  const v = Number(value);
+  if (!Number.isFinite(v)) {
+    throw new RangeError(
+      'Value need to be finite number for Intl.RelativeTimeFormat.prototype.format()',
+    );
+  }
   const u = _normalizeUnit(unit);
-  if (this._numeric === 'auto') return _formatRelativeAuto(value, u);
-  return _formatRelativeAlways(value, u);
+  if (!RTF_UNITS.includes(u)) {
+    throw new RangeError(`Invalid unit argument for format() '${unit}'`);
+  }
+  if (this._numeric === 'auto') return _formatRelativeAuto(v, u);
+  return _formatRelativeAlways(v, u);
 };
 
 /**

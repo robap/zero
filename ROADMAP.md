@@ -76,6 +76,7 @@ refactor that *is* a tracked item follows the same ⏳ → ✅ lifecycle.
 | [select-element](issues/select-element/spec.md) | ✅ | 2026-06-06 |
 | [web-platform](issues/web-platform/spec.md) | ✅ | 2026-05-18 |
 | [intl-shim](issues/intl-shim/spec.md) | ✅ | 2026-05-30 |
+| [intl-validation](issues/intl-validation/spec.md) | ✅ | 2026-06-06 |
 
 ## Test runner & quality
 

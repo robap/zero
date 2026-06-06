@@ -2,10 +2,30 @@
  * Tests for the en-US `Intl` shim (DateTimeFormat, NumberFormat,
  * RelativeTimeFormat). Fixtures are built with the local `new Date(y, m, d,
  * …)` form and asserted via local accessors so expectations are deterministic
- * regardless of the host/Boa timezone.
+ * regardless of the host timezone; UTC cases build from `Date.UTC` instead.
  */
 
 import { describe, it, expect } from 'zero/test';
+
+/**
+ * Assert that `fn` throws an error that is an `instanceof ctor` and whose
+ * message contains `msgPart`.
+ * @param {() => void} fn
+ * @param {Function} ctor
+ * @param {string} [msgPart]
+ * @returns {void}
+ */
+function expectThrows(fn, ctor, msgPart) {
+  let caught = null;
+  try {
+    fn();
+  } catch (e) {
+    caught = e;
+  }
+  expect(caught === null).toBe(false);
+  expect(caught instanceof ctor).toBe(true);
+  if (msgPart !== undefined) expect(String(caught.message)).toContain(msgPart);
+}
 
 describe('Intl.DateTimeFormat', () => {
   /** A fixed local instant: Friday, 2024-01-05 15:07:09. */
@@ -81,6 +101,90 @@ describe('Intl.DateTimeFormat', () => {
   it('reports en-US from resolvedOptions', () => {
     expect(new Intl.DateTimeFormat('fr-FR').resolvedOptions().locale).toBe('en-US');
   });
+
+  it('throws RangeError on an invalid component value (friction probe)', () => {
+    expectThrows(
+      () => new Intl.DateTimeFormat('en-US', { month: 'short', day: '', hour: 'numeric' }),
+      RangeError,
+      'out of range',
+    );
+  });
+
+  it('throws RangeError on an invalid dateStyle or timeStyle', () => {
+    expectThrows(() => new Intl.DateTimeFormat('en-US', { dateStyle: 'huge' }), RangeError, 'dateStyle');
+    expectThrows(() => new Intl.DateTimeFormat('en-US', { timeStyle: '' }), RangeError, 'timeStyle');
+  });
+
+  it('throws RangeError when hour12 is not a boolean', () => {
+    expectThrows(
+      () => new Intl.DateTimeFormat('en-US', { hour: 'numeric', hour12: 'yes' }),
+      RangeError,
+      'hour12',
+    );
+  });
+
+  it('throws a clear shim error on spec-valid but unimplemented options', () => {
+    expectThrows(
+      () => new Intl.DateTimeFormat('en-US', { hour: 'numeric', timeZoneName: 'short' }),
+      Error,
+      'is not implemented',
+    );
+    expectThrows(
+      () => new Intl.DateTimeFormat('en-US', { localeMatcher: 'lookup' }),
+      Error,
+      'localeMatcher',
+    );
+  });
+
+  it('throws RangeError per invalid component family', () => {
+    expectThrows(() => new Intl.DateTimeFormat('en-US', { weekday: 'tiny' }), RangeError, 'weekday');
+    expectThrows(() => new Intl.DateTimeFormat('en-US', { year: 'long' }), RangeError, 'year');
+    expectThrows(() => new Intl.DateTimeFormat('en-US', { month: 'bogus' }), RangeError, 'month');
+    expectThrows(() => new Intl.DateTimeFormat('en-US', { hour: 'full' }), RangeError, 'hour');
+  });
+
+  it('ignores truly unknown option keys, as browsers do', () => {
+    expect(new Intl.DateTimeFormat('en-US', { foo: 1 }).format(d)).toBe('1/5/2024');
+  });
+
+  it('defaults hour-only formats to 12-hour when hour12 is absent', () => {
+    expect(new Intl.DateTimeFormat('en-US', { hour: 'numeric' }).format(d)).toBe('3 PM');
+  });
+
+  it('renders via UTC accessors with timeZone:"UTC"', () => {
+    const utc = new Date(Date.UTC(2024, 0, 5, 23, 7, 9));
+    const out = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'UTC', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+    }).format(utc);
+    expect(out).toBe('Jan 5, 11:07 PM');
+    // Date rollover: host-local rendering of this instant may be Jan 4 or 5;
+    // UTC must always read Jan 5.
+    const rollover = new Date(Date.UTC(2024, 0, 5, 0, 30));
+    const day = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', day: 'numeric' }).format(rollover);
+    expect(day).toBe('5');
+  });
+
+  it('accepts lowercase "utc" as equivalent to "UTC"', () => {
+    const utc = new Date(Date.UTC(2024, 0, 5, 23, 7, 9));
+    const upper = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', hour: 'numeric' }).format(utc);
+    const lower = new Intl.DateTimeFormat('en-US', { timeZone: 'utc', hour: 'numeric' }).format(utc);
+    expect(lower).toBe(upper);
+  });
+
+  it('throws a clear shim error for any non-UTC timeZone', () => {
+    expectThrows(
+      () => new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York' }),
+      Error,
+      'is not implemented',
+    );
+  });
+
+  it('reports timeZone from resolvedOptions only when passed', () => {
+    const withTz = new Intl.DateTimeFormat('en-US', { timeZone: 'utc' }).resolvedOptions();
+    expect(withTz.timeZone).toBe('UTC');
+    const withoutTz = new Intl.DateTimeFormat('en-US').resolvedOptions();
+    expect('timeZone' in withoutTz).toBe(false);
+  });
 });
 
 describe('Intl.NumberFormat', () => {
@@ -119,6 +223,80 @@ describe('Intl.NumberFormat', () => {
 
   it('reports en-US from resolvedOptions', () => {
     expect(new Intl.NumberFormat('de-DE').resolvedOptions().locale).toBe('en-US');
+  });
+
+  it('throws RangeError on an invalid or unshimmed style', () => {
+    expectThrows(() => new Intl.NumberFormat('en-US', { style: 'unit' }), RangeError, 'style');
+    expectThrows(() => new Intl.NumberFormat('en-US', { style: '' }), RangeError, 'style');
+  });
+
+  it('enforces the currency code contract', () => {
+    expectThrows(() => new Intl.NumberFormat('en-US', { style: 'currency' }), TypeError, 'required');
+    expectThrows(
+      () => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'DOLLARS' }),
+      RangeError,
+      'Invalid currency code',
+    );
+    expectThrows(
+      () => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'U$' }),
+      RangeError,
+      'Invalid currency code',
+    );
+    const usd = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'usd' });
+    expect(usd.format(1)).toBe('$1.00');
+    expect(usd.resolvedOptions().currency).toBe('USD');
+  });
+
+  it('range-checks fraction-digit options', () => {
+    expectThrows(
+      () => new Intl.NumberFormat('en-US', { minimumFractionDigits: -1 }),
+      RangeError,
+      'minimumFractionDigits',
+    );
+    expectThrows(
+      () => new Intl.NumberFormat('en-US', { maximumFractionDigits: 101 }),
+      RangeError,
+      'maximumFractionDigits',
+    );
+    expectThrows(
+      () => new Intl.NumberFormat('en-US', { maximumFractionDigits: 1.5 }),
+      RangeError,
+      'maximumFractionDigits',
+    );
+  });
+
+  it('throws RangeError when explicit min exceeds explicit max', () => {
+    expectThrows(
+      () => new Intl.NumberFormat('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 2 }),
+      RangeError,
+      'maximumFractionDigits',
+    );
+  });
+
+  it('floats the default max up under an explicit min alone', () => {
+    expect(new Intl.NumberFormat('en-US', { minimumFractionDigits: 4 }).format(1)).toBe('1.0000');
+  });
+
+  it('throws RangeError when useGrouping is not a boolean', () => {
+    expectThrows(() => new Intl.NumberFormat('en-US', { useGrouping: 'no' }), RangeError, 'useGrouping');
+  });
+
+  it('throws a clear shim error on spec-valid but unimplemented options', () => {
+    expectThrows(
+      () => new Intl.NumberFormat('en-US', { notation: 'compact' }),
+      Error,
+      'is not implemented',
+    );
+    expectThrows(
+      () => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', currencyDisplay: 'code' }),
+      Error,
+      'currencyDisplay',
+    );
+    expect(
+      new Intl.NumberFormat('en-US', {
+        style: 'currency', currency: 'USD', currencyDisplay: 'symbol',
+      }).format(1),
+    ).toBe('$1.00');
   });
 });
 
@@ -159,5 +337,38 @@ describe('Intl.RelativeTimeFormat', () => {
 
   it('reports en-US from resolvedOptions', () => {
     expect(new Intl.RelativeTimeFormat('es-ES').resolvedOptions().locale).toBe('en-US');
+  });
+
+  it('validates constructor options', () => {
+    expectThrows(
+      () => new Intl.RelativeTimeFormat('en-US', { numeric: 'sometimes' }),
+      RangeError,
+      'numeric',
+    );
+    // Spec-valid styles the shim does not render: shim error, not RangeError.
+    expectThrows(() => new Intl.RelativeTimeFormat('en-US', { style: 'short' }), Error, 'is not implemented');
+    expectThrows(() => new Intl.RelativeTimeFormat('en-US', { style: 'narrow' }), Error, 'is not implemented');
+    // Spec-invalid style: RangeError.
+    expectThrows(() => new Intl.RelativeTimeFormat('en-US', { style: 'compact' }), RangeError, 'style');
+    expectThrows(
+      () => new Intl.RelativeTimeFormat('en-US', { localeMatcher: 'lookup' }),
+      Error,
+      'localeMatcher',
+    );
+  });
+
+  it('throws RangeError on an invalid format() unit', () => {
+    const rtf = new Intl.RelativeTimeFormat('en-US');
+    expectThrows(() => rtf.format(-2, 'bananas'), RangeError, 'bananas');
+  });
+
+  it('throws RangeError on a non-finite format() value', () => {
+    const rtf = new Intl.RelativeTimeFormat('en-US');
+    expectThrows(() => rtf.format(Infinity, 'day'), RangeError, 'finite');
+    expectThrows(() => rtf.format(NaN, 'day'), RangeError, 'finite');
+  });
+
+  it('still coerces numeric-string values', () => {
+    expect(new Intl.RelativeTimeFormat('en-US').format('-1', 'day')).toBe('1 day ago');
   });
 });
