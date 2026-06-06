@@ -158,6 +158,75 @@ describe("createForm", () => {
     );
   });
 
+  it("runs an array of validators in order; first non-null wins and stops", () => {
+    const ran: string[] = [];
+    const form = createForm({
+      fields: {
+        code: {
+          initial: "",
+          validate: [
+            (v) => {
+              ran.push("first");
+              return v === "" ? "First message." : null;
+            },
+            () => {
+              ran.push("second");
+              return "Second message.";
+            },
+          ],
+        },
+      },
+    });
+    form.setErrors({ code: "stale" });
+    form.fields.code.value.set("");
+    expect(form.fields.code.error.val).toBe("First message.");
+    expect(ran).toEqual(["first"]);
+  });
+
+  it("passes an array of validators when every validator returns null", () => {
+    const form = createForm({
+      fields: {
+        code: {
+          initial: "ok",
+          validate: [
+            (v) => (v.trim() === "" ? "Code is required." : null),
+            (v) => (v.trim().length > 3 ? "Too long." : null),
+          ],
+        },
+      },
+    });
+    expect(form.isValid.val).toBe(true);
+    form.fields.code.value.set("toolong");
+    expect(form.isValid.val).toBe(false);
+  });
+
+  it("treats validate: [fn] exactly like validate: fn", () => {
+    const rule = (v: string): string | null =>
+      v.trim() === "" ? "Name is required." : null;
+    const single = createForm({
+      fields: { name: { initial: "", validate: rule } },
+    });
+    const listed = createForm({
+      fields: { name: { initial: "", validate: [rule] } },
+    });
+    expect(single.isValid.val).toBe(false);
+    expect(listed.isValid.val).toBe(false);
+    single.fields.name.value.set("Ada");
+    listed.fields.name.value.set("Ada");
+    expect(single.isValid.val).toBe(true);
+    expect(listed.isValid.val).toBe(true);
+  });
+
+  it("treats an empty validate array like no validator", () => {
+    const form = createForm({
+      fields: { name: { initial: "", validate: [] } },
+    });
+    expect(form.isValid.val).toBe(true);
+    form.setErrors({ name: "stale" });
+    form.fields.name.value.set("anything");
+    expect(form.fields.name.error.val).toBe(null);
+  });
+
   it("surfaces nothing when editing an un-errored field", () => {
     const form = createForm({
       fields: {

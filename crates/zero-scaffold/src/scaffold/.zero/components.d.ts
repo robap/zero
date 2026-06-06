@@ -98,9 +98,18 @@ declare module "zero/components" {
   };
   export function Combobox(props: ComboboxProps): TemplateResult;
 
+  /**
+   * Per-field validator: return an error message or `null` when valid.
+   * Receives the field's current value and a snapshot of all values.
+   */
+  export type Validator<K extends string = string> = (
+    value: string,
+    values: Record<K, string>,
+  ) => string | null;
   export type FieldConfig<K extends string> = {
     initial: string;
-    validate?: (value: string, values: Record<K, string>) => string | null;
+    /** One validator or an array run in order; first non-null message wins. */
+    validate?: Validator<K> | Validator<K>[];
   };
   export type FormField = {
     value: Signal<string>;
@@ -124,6 +133,29 @@ declare module "zero/components" {
     submit(action: SubmitAction<K>): (e: Event) => Promise<void>;
   };
   export function createForm<K extends string>(config: FormConfig<K>): Form<K>;
+
+  /** A validator produced by a rule factory; ignores cross-field values. */
+  export type Rule = (value: string) => string | null;
+  /** Options accepted by every rule factory except `required`. */
+  export type RuleOptions = {
+    /** Replaces the rule's default message. */
+    message?: string;
+    /**
+     * When false, the rule also rejects empty (whitespace-only) values.
+     * Default true: empty passes, so optional fields compose.
+     */
+    allowEmpty?: boolean;
+  };
+  export function required(message?: string): Rule;
+  export function minLength(n: number, opts?: string | RuleOptions): Rule;
+  export function maxLength(n: number, opts?: string | RuleOptions): Rule;
+  export function intRange(
+    min: number,
+    max: number,
+    opts?: string | RuleOptions,
+  ): Rule;
+  export function pattern(re: RegExp, opts?: string | RuleOptions): Rule;
+  export function email(opts?: string | RuleOptions): Rule;
 
   export type DialogSize = "sm" | "md" | "lg";
   export type DialogProps = {

@@ -33,9 +33,11 @@ fn showcase_test_runs_all_component_tests() {
     // the manifest's `COMPONENT_NAMES` and is intentionally hard-coded so a
     // missing test (e.g. a component shipped without its `.test.ts`) is a
     // clear failure here. `createForm` is the `form.test.ts` describe name —
-    // not a component, but load-bearing the same way.
+    // not a component, but load-bearing the same way. `validation rules` is
+    // `rules.test.ts`'s describe name, likewise load-bearing.
     for name in [
         "createForm",
+        "validation rules",
         "Avatar",
         "Badge",
         "Button",

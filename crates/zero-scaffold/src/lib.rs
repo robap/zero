@@ -34,6 +34,8 @@ const TPL_COMPONENTS_INTERNAL_TEST_TS: &str =
     include_str!("scaffold/.zero/components/_internal.test.ts");
 const TPL_FORM_TS: &str = include_str!("scaffold/.zero/components/form.ts");
 const TPL_FORM_TEST_TS: &str = include_str!("scaffold/.zero/components/form.test.ts");
+const TPL_RULES_TS: &str = include_str!("scaffold/.zero/components/rules.ts");
+const TPL_RULES_TEST_TS: &str = include_str!("scaffold/.zero/components/rules.test.ts");
 const TPL_COMPONENTS_DTS: &str = include_str!("scaffold/.zero/components.d.ts");
 const TPL_COMPONENTS_AGGREGATE_SCSS: &str = include_str!("scaffold/.zero/styles/_components.scss");
 
@@ -158,6 +160,8 @@ pub fn framework_manifest() -> Vec<(&'static str, &'static str)> {
         ),
         (".zero/components/form.ts", TPL_FORM_TS),
         (".zero/components/form.test.ts", TPL_FORM_TEST_TS),
+        (".zero/components/rules.ts", TPL_RULES_TS),
+        (".zero/components/rules.test.ts", TPL_RULES_TEST_TS),
         (".zero/components.d.ts", TPL_COMPONENTS_DTS),
         (".zero/components/Avatar.ts", TPL_AVATAR_TS),
         (".zero/components/Avatar.test.ts", TPL_AVATAR_TEST_TS),
@@ -503,6 +507,37 @@ mod tests {
             TPL_COMPONENTS_DTS.contains("createForm"),
             "components.d.ts must declare createForm"
         );
+    }
+
+    #[test]
+    fn rules_module_registered() {
+        let manifest = framework_manifest();
+        let paths: BTreeSet<&str> = manifest.iter().map(|(p, _)| *p).collect();
+        assert!(
+            paths.contains(".zero/components/rules.ts"),
+            "manifest missing .zero/components/rules.ts"
+        );
+        assert!(
+            paths.contains(".zero/components/rules.test.ts"),
+            "manifest missing .zero/components/rules.test.ts"
+        );
+        for factory in [
+            "required",
+            "minLength",
+            "maxLength",
+            "intRange",
+            "pattern",
+            "email",
+        ] {
+            assert!(
+                TPL_COMPONENTS_INDEX_TS.contains(factory),
+                "components/index.ts must re-export {factory}"
+            );
+            assert!(
+                TPL_COMPONENTS_DTS.contains(&format!("export function {factory}(")),
+                "components.d.ts must declare {factory}"
+            );
+        }
     }
 
     #[test]
@@ -1037,6 +1072,8 @@ mod tests {
             ".zero/components/_internal.test.ts",
             ".zero/components/form.ts",
             ".zero/components/form.test.ts",
+            ".zero/components/rules.ts",
+            ".zero/components/rules.test.ts",
             // Design-system SCSS partials + aggregate.
             ".zero/styles/_palette.scss",
             ".zero/styles/_tokens.scss",

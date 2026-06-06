@@ -129,6 +129,12 @@ Source of truth:
 | `Checkbox` | `Checkbox(props: CheckboxProps): TemplateResult`                         | [Components § Component library reference](./components.html#component-library-reference) |
 | `Combobox` | `Combobox(props: ComboboxProps): TemplateResult`                         | [Components § Combobox](./components.html#combobox)                       |
 | `createForm` | `createForm<K extends string>(config: FormConfig<K>): Form<K>`         | [Components § Forms](./components.html#forms)                             |
+| `required` | `required(message?: string): Rule`                                       | [Components § Built-in rules](./components.html#built-in-rules)           |
+| `minLength` | `minLength(n: number, opts?: string \| RuleOptions): Rule`              | [Components § Built-in rules](./components.html#built-in-rules)           |
+| `maxLength` | `maxLength(n: number, opts?: string \| RuleOptions): Rule`              | [Components § Built-in rules](./components.html#built-in-rules)           |
+| `intRange` | `intRange(min: number, max: number, opts?: string \| RuleOptions): Rule` | [Components § Built-in rules](./components.html#built-in-rules)           |
+| `pattern`  | `pattern(re: RegExp, opts?: string \| RuleOptions): Rule`                | [Components § Built-in rules](./components.html#built-in-rules)           |
+| `email`    | `email(opts?: string \| RuleOptions): Rule`                              | [Components § Built-in rules](./components.html#built-in-rules)           |
 | `Dialog`   | `Dialog(props: DialogProps): TemplateResult`                             | [Components § Component library reference](./components.html#component-library-reference) |
 | `Drawer`   | `Drawer(props: DrawerProps): TemplateResult`                             | [Components § Drawer](./components.html#drawer)                           |
 | `Input`    | `Input(props: InputProps): TemplateResult`                               | [Components § Component library reference](./components.html#component-library-reference) |
@@ -149,7 +155,8 @@ aliases (`ButtonVariant`, `ButtonType`, `InputType`, `BadgeSize`, `SelectOption`
 reference.
 
 `createForm`'s exported types — `FormConfig<K>`, `FieldConfig<K>`,
-`Form<K>`, `FormField`, `SubmitAction<K>` — live there too. Every form
+`Form<K>`, `FormField`, `SubmitAction<K>`, `Validator<K>` — live there
+too, as do the rule factories' `Rule` and `RuleOptions`. Every form
 control's `Props` type (`Input`, `Select`, `TextArea`, `Checkbox`,
 `Radio`, `Toggle`, `Combobox`) accepts
 `error?: Signal<string | null>` (see

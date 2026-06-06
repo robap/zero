@@ -9,6 +9,18 @@ import { HttpError } from "zero/http";
 const GENERIC_SUBMIT_ERROR = "Could not save. Try again.";
 
 /**
+ * Per-field validator: return an error message or `null` when valid.
+ * Receives the field's current value and a snapshot of all values for
+ * rules that need context.
+ *
+ * @template K Union of the form's field names.
+ */
+export type Validator<K extends string = string> = (
+  value: string,
+  values: Record<K, string>,
+) => string | null;
+
+/**
  * Declaration for a single form field.
  *
  * @template K Union of the form's field names.
@@ -17,11 +29,10 @@ export type FieldConfig<K extends string> = {
   /** Initial value; also the value restored by `Form.reset()`. */
   initial: string;
   /**
-   * Per-field validator; return an error message or `null` when valid.
-   * Receives the field's current value and a snapshot of all values for
-   * rules that need context.
+   * One validator or an array run in declaration order; the first
+   * non-null message wins and is the field's error.
    */
-  validate?: (value: string, values: Record<K, string>) => string | null;
+  validate?: Validator<K> | Validator<K>[];
 };
 
 /**
@@ -119,6 +130,8 @@ export function createForm<K extends string>(config: FormConfig<K>): Form<K> {
   const inner = {} as Record<K, Signal<string>>;
   const fields = {} as Record<K, FormField>;
   const formError = signal<string | null>(null);
+  const validators = {} as Record<K, Validator<K>[]>;
+  for (const k of keys) validators[k] = toList(config.fields[k].validate);
 
   /**
    * Snapshot the current field values. Reads go through the inner
@@ -142,8 +155,13 @@ export function createForm<K extends string>(config: FormConfig<K>): Form<K> {
     const vals = values();
     const errors: Partial<Record<K, string>> = {};
     for (const k of keys) {
-      const msg = config.fields[k].validate?.(vals[k], vals);
-      if (msg != null) errors[k] = msg;
+      for (const validate of validators[k]) {
+        const msg = validate(vals[k], vals);
+        if (msg != null) {
+          errors[k] = msg;
+          break;
+        }
+      }
     }
     if (config.validate) {
       const cross = config.validate(vals);
@@ -212,6 +230,22 @@ export function createForm<K extends string>(config: FormConfig<K>): Form<K> {
   };
 
   return { fields, isValid, error: formError, values, reset, setErrors, submit };
+}
+
+/**
+ * Normalize a field's `validate` declaration to a list of validators:
+ * `undefined` → `[]`, a single function → `[fn]`, an array as given.
+ *
+ * @template K Union of the form's field names.
+ * @param v The field's `validate` declaration.
+ * @returns The validators to run, in order.
+ * @internal
+ */
+function toList<K extends string>(
+  v: Validator<K> | Validator<K>[] | undefined,
+): Validator<K>[] {
+  if (v == null) return [];
+  return Array.isArray(v) ? v : [v];
 }
 
 /**

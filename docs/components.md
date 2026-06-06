@@ -536,16 +536,98 @@ const body = html`
   - `initial: string` — the initial value, also restored by `reset()`.
     v1 field values are strings (matching `Input`/`Select`/`TextArea`;
     keep numeric inputs as strings and convert at submit time).
-  - `validate?: (value, values) => string | null` — per-field rule;
-    return a message or `null`. Receives all current values for rules
-    that need context.
+  - `validate?: Validator | Validator[]` — per-field validation, where
+    `Validator = (value, values) => string | null`; return a message or
+    `null`. Receives all current values for rules that need context. An
+    array runs in declaration order and the **first non-null message
+    wins**; a single function (today's style) works unchanged. Arrays
+    freely mix [built-in rules](#built-in-rules) and hand-written
+    functions.
 - **`validate?: (values) => Partial<Record<field, string>>`** — the
   cross-field validator. Runs after per-field validators and fills only
-  keys that don't already carry a per-field error.
+  keys that don't already carry a per-field error. Function-only — rules
+  and arrays apply per-field.
 
-Validators are plain functions — there is no rule DSL and no async
+Validators are plain functions — there is no string DSL and no async
 validation (server-side uniqueness belongs on the 409 path; see
 [HTTP § Server validation errors](./http.html#server-validation-errors)).
+The [built-in rules](#built-in-rules) below are factories that *return*
+plain validator functions.
+
+### Built-in rules
+
+The most common validations ship as typed rule factories in
+`zero/components`. Each returns a plain single-argument validator
+(`Rule = (value: string) => string | null`), so rules drop straight
+into `validate:` — alone, in arrays, or mixed with hand-written
+functions.
+
+| Rule | Signature | Default message | Empty value |
+|------|-----------|-----------------|-------------|
+| `required` | `required(message?: string)` | `This field is required.` | fails |
+| `minLength` | `minLength(n: number, opts?)` | `Must be at least {n} character(s).` | passes |
+| `maxLength` | `maxLength(n: number, opts?)` | `Must be {n} character(s) or fewer.` | passes |
+| `intRange` | `intRange(min: number, max: number, opts?)` | `Must be a whole number between {min} and {max}.` | passes |
+| `pattern` | `pattern(re: RegExp, opts?)` | `Invalid format.` | passes |
+| `email` | `email(opts?)` | `Enter a valid email address.` | passes |
+
+Semantics:
+
+- `required`, `minLength`, `maxLength`, and `email` operate on the
+  **trimmed** value; `pattern` tests the raw value against `re` (a
+  passed `g`/`y` flag is stripped internally so a stateful regex can't
+  alternate results).
+- `intRange` accepts an optional leading `+`/`-` and leading zeros,
+  and rejects decimals, exponents (`1e3`), and any other non-digit
+  input; bounds are inclusive.
+- `pattern`'s default message names nothing about the pattern — pass a
+  custom message wherever the rule can actually fire.
+- `email` is pragmatic (`x@y.z` shaped, no whitespace), not RFC 5322 —
+  real verification belongs on the server.
+
+**Empty values pass by default** for every rule except `required()`,
+so optional fields with constraints compose without hand-written
+functions — `validate: maxLength(200)` accepts an empty notes field
+but caps a filled one. Make a field mandatory by composing
+`required()` in front, or opt a single rule into enforcing empties
+with `allowEmpty: false`.
+
+`opts` is `string | RuleOptions` — a plain string is shorthand for the
+custom message:
+
+```ts
+maxLength(200, "Keep notes under 200 chars.");
+intRange(1, 999, { allowEmpty: false });
+pattern(/^[A-Z]{3}-\d{4}$/, { message: "Use the AAA-0000 format." });
+```
+
+Before/after — the hand-written ternary from the example above:
+
+```ts
+import { createForm, maxLength, required } from "zero/components";
+
+// Before: every form re-types the same checks.
+code: {
+  initial: "",
+  validate: (v) =>
+    v.trim() === "" ? "Code is required."
+    : v.trim().length > 10 ? "Code must be 10 characters or fewer."
+    : null,
+},
+
+// After: first failing rule's message wins.
+code: {
+  initial: "",
+  validate: [required("Code is required."), maxLength(10)],
+},
+```
+
+Arrays mix rules and plain functions — a rule for the common part, a
+function for the bespoke part:
+
+```ts
+validate: [required(), (v) => (v === "admin" ? "Reserved name." : null)],
+```
 
 ### Returned shape
 

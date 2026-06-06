@@ -55,6 +55,7 @@ refactor that *is* a tracked item follows the same ⏳ → ✅ lifecycle.
 | [component-debounce](issues/component-debounce/spec.md) | ✅ | 2026-05-24 |
 | [forms](issues/forms/spec.md) | ✅ | 2026-06-06 |
 | [form-controls](issues/form-controls/spec.md) | ✅ | 2026-06-06 |
+| [form-rules](issues/form-rules/spec.md) | ✅ | 2026-06-06 |
 | [alignment](issues/alignment/spec.md) | ✅ | 2026-05-16 |
 
 ## Design system & theming

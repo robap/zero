@@ -18,7 +18,10 @@ export type {
   FormConfig,
   FormField,
   SubmitAction,
+  Validator,
 } from "./form.ts";
+export { email, intRange, maxLength, minLength, pattern, required } from "./rules.ts";
+export type { Rule, RuleOptions } from "./rules.ts";
 export { default as Dialog } from "./Dialog.ts";
 export type { DialogProps, DialogSize } from "./Dialog.ts";
 export { default as Drawer } from "./Drawer.ts";
