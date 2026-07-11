@@ -104,7 +104,7 @@ import {
   render, find, findAll, text, fire, cleanup, spy,
 } from "zero/test";
 
-import { Button, Input, Dialog /* … */ } from "zero/components";
+import { Button, Input, Dialog, createForm, required /* … */ } from "zero/components";
 import { createHttp, HttpError } from "zero/http";
 ```
 
@@ -295,9 +295,117 @@ snippets: <https://robap.github.io/zero/components.html#component-library-refere
 | `Toast`    | `open: Signal<boolean>`                           |
 | `Toggle`   | `checked: Signal<boolean>`                        |
 
+### Shared control props
+
+Every form control (`Input`, `Select`, `TextArea`, `Checkbox`, `Radio`,
+`Toggle`, `Combobox`) also accepts:
+
+- `error?: Signal<string | null>` — while non-null the control renders
+  the message below itself, sets `aria-invalid`, and links it via
+  `aria-describedby`. Bind `form.fields.<name>.error` from
+  [`createForm`](#forms) directly to this prop.
+- `autofocus?: boolean` — focuses the underlying element each time it
+  commits to the DOM: first render and every dialog/drawer re-open.
+- `attrs?: NativeAttrs` — additional native attributes for the
+  underlying element (`name`, `autocomplete`, `min`/`max`, `data-*`, …).
+  Additive-only: attributes the component renders itself win and the
+  colliding key is skipped. `true` sets an empty attribute, `false`
+  skips the key, numbers are stringified. Values are plain, not
+  reactive.
+- `debounceMs?: number` — delays the signal write on the trailing edge
+  (default `0`, synchronous). On `Combobox` the same prop instead sets
+  the gap before `loadOptions` runs after the last keystroke.
+
+`Input`, `Select`, and `Combobox` accept
+`onChange?: (value: string) => void`, invoked with the new value after
+each user edit — never on programmatic `value.set(...)` — so reach for
+it instead of bridging the `value` signal with an `effect`. `Combobox`
+additionally accepts `allowCustom: true` to commit free text that
+matches no loaded option.
+
 Every component partial is wrapped in `@layer components`, so any rule in
 unlayered `styles/app.scss` overrides framework component rules without
 `!important`.
+
+---
+
+## Forms
+
+`createForm` (from `"zero/components"`) declares fields, initial
+values, and validators in one call and returns typed reactive state to
+bind straight onto the controls — replacing hand-rolled value+error
+signal pairs, `validate()` routines, and per-form `HttpError`
+unwrapping. Full chapter:
+<https://robap.github.io/zero/components.html#forms>.
+
+```ts
+import { html } from "zero";
+import { Input, createForm, required, maxLength } from "zero/components";
+
+const form = createForm({
+  fields: {
+    code: { initial: "", validate: [required(), maxLength(10)] },
+    name: { initial: "", validate: required("Name is required.") },
+  },
+  // Optional cross-field validator; fills only fields without a
+  // per-field error.
+  validate: (values) =>
+    values.code.trim() === values.name.trim()
+      ? { name: "Name must differ from code." }
+      : {},
+});
+
+// Validates, gates, and maps HttpError 400/409 `{ errors }` bodies
+// onto matching fields automatically; anything else sets `form.error`.
+const onSubmit = form.submit(async (values) => {
+  await saveLocation({ code: values.code.trim(), name: values.name.trim() });
+  // Success handling is yours: close the dialog, toast, navigate.
+});
+
+const body = html`
+  <form class="stack gap-md" @submit=${onSubmit}>
+    ${Input({ value: form.fields.code.value, label: "Code", error: form.fields.code.error })}
+    ${Input({ value: form.fields.name.value, label: "Name", error: form.fields.name.error })}
+    <button class="button button-primary button-md" type="submit"
+      disabled=${() => !form.isValid.val}>Save</button>
+  </form>
+`;
+```
+
+Returned shape: `form.fields.<name>.{value, error, touched}` (signals
+— bind `value`/`error` straight to control props), `form.isValid`
+(live computed; reading it never populates error signals),
+`form.error` (form-level message), `form.values()`, `form.reset()`,
+`form.setErrors(errors)`, and `form.submit(action)`.
+
+Validators are plain functions `(value, values) => string | null`; an
+array runs in declaration order and the first non-null message wins.
+Field errors appear only via `submit()` / `setErrors()` — but once a
+field shows an error, editing it re-validates just that field live.
+Field values are strings; convert numeric inputs at submit time.
+
+### Built-in rules
+
+Rule factories from `"zero/components"` return plain validators
+(`Rule = (value: string) => string | null`) and drop straight into
+`validate:` — alone, in arrays, or mixed with hand-written functions.
+
+| Rule | Default message | Empty value |
+|------|-----------------|-------------|
+| `required(message?)` | This field is required. | fails |
+| `minLength(n, opts?)` | Must be at least {n} character(s). | passes |
+| `maxLength(n, opts?)` | Must be {n} character(s) or fewer. | passes |
+| `intRange(min, max, opts?)` | Must be a whole number between {min} and {max}. | passes |
+| `pattern(re, opts?)` | Invalid format. | passes |
+| `email(opts?)` | Enter a valid email address. | passes |
+
+Empty values pass for every rule except `required()`, so optional
+fields with constraints compose (`validate: maxLength(200)` accepts an
+empty notes field but caps a filled one). `opts` is
+`string | RuleOptions` — a plain string is shorthand for the custom
+message; `allowEmpty: false` opts a single rule into rejecting
+empties. There is no async validation — server-side uniqueness belongs
+on the 409 path, which `submit()` maps onto fields for you.
 
 ---
 
@@ -316,6 +424,9 @@ writes here. Files currently shipped:
 | `.zero/components/index.ts`           | Re-exports every shipped component.                                    |
 | `.zero/components/<Name>.ts`          | One source file per component (18 total).                              |
 | `.zero/components/<Name>.test.ts`     | One test file per component (18 total).                                |
+| `.zero/components/form.ts`            | `createForm` form-state primitive (+ `form.test.ts`).                  |
+| `.zero/components/rules.ts`           | Built-in validation rule factories (+ `rules.test.ts`).                |
+| `.zero/components/_internal.ts`       | Shared control internals, e.g. `NativeAttrs` (+ `_internal.test.ts`).  |
 | `.zero/styles/_palette.scss`          | 55 framework-internal palette tokens.                                  |
 | `.zero/styles/_tokens.scss`           | Non-color design tokens.                                               |
 | `.zero/styles/_themes.scss`           | Theme aggregator + selector strategy.                                  |

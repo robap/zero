@@ -26,6 +26,8 @@ use zero_test_runner::mutate::{GenerateOptions, MutationSite, Operator, apply, g
 use zero_test_runner::result::Status;
 use zero_transpile::{TranspileOptions, transpile_typescript};
 
+use super::mutate_cache::{self, CacheEntry, CacheMode, CachedSite, MutateCache};
+
 /// Final per-mutant verdict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MutantStatus {
@@ -49,6 +51,16 @@ impl MutantStatus {
             MutantStatus::Survived => 0,
             MutantStatus::Killed => 1,
             MutantStatus::Errored => 2,
+        }
+    }
+
+    /// Inverse of [`MutantStatus::as_str`]; used to replay cached verdicts.
+    fn parse(s: &str) -> Option<MutantStatus> {
+        match s {
+            "killed" => Some(MutantStatus::Killed),
+            "survived" => Some(MutantStatus::Survived),
+            "errored" => Some(MutantStatus::Errored),
+            _ => None,
         }
     }
 }
@@ -87,6 +99,15 @@ pub struct MutationSummary {
     /// is the byte-compare skip count; `equivalent_static` is the
     /// AST-shape skip count.
     pub per_operator: PerOperatorSummary,
+    /// Per-source-file operator tallies (same arrays as `per_operator`,
+    /// restricted to one file). Feeds cache entries.
+    pub per_file_operator: BTreeMap<PathBuf, PerOperatorSummary>,
+    /// Verdicts replayed from `mutation/cache.json` instead of executed.
+    pub reused_mutants: usize,
+    /// Source files whose entire verdict set was replayed from the cache.
+    pub reused_files: usize,
+    /// `true` when the all-unchanged fast path skipped the baseline.
+    pub baseline_skipped: bool,
 }
 
 /// Per-operator aggregate of visitor matches and dispatch verdicts.
@@ -256,11 +277,19 @@ fn write_terminal_summary<W: Write>(
 
     let files_count = summary.outcomes.len();
     writeln!(w, "Mutation testing:")?;
-    writeln!(
-        w,
-        "  Generated: {} mutants across {} files",
-        summary.generated, files_count
-    )?;
+    if summary.reused_mutants > 0 {
+        writeln!(
+            w,
+            "  Generated: {} mutants across {} files ({} reused from cache across {} files)",
+            summary.generated, files_count, summary.reused_mutants, summary.reused_files
+        )?;
+    } else {
+        writeln!(
+            w,
+            "  Generated: {} mutants across {} files",
+            summary.generated, files_count
+        )?;
+    }
     writeln!(
         w,
         "  Killed:    {:>3}  ({:.1}%)",
@@ -489,6 +518,7 @@ pub fn run_inner(
     quiet: bool,
     isolation: Isolation,
     threads: usize,
+    cache_mode: CacheMode,
     progress: &mut dyn Write,
 ) -> anyhow::Result<MutationSummary> {
     let DiscoveryResult { files: test_files } = discover(DiscoveryOpts {
@@ -506,43 +536,404 @@ pub fn run_inner(
     }
 
     let scope = CoverageScope::new(root.to_path_buf(), out_dir.to_path_buf());
+    // Loader paths are canonical; rel_key must agree with them.
+    let canon_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let all_src = walk_src(&scope);
+    let mut memo: HashMap<PathBuf, Option<String>> = HashMap::new();
+    let old_cache = match cache_mode {
+        CacheMode::ReadWrite => mutate_cache::load(&canon_root, env!("CARGO_PKG_VERSION")),
+        _ => None,
+    };
+    if target.is_none()
+        && let Some(replay) = try_fast_path(
+            &canon_root,
+            old_cache.as_ref(),
+            &test_files,
+            &all_src,
+            &mut memo,
+            progress,
+        )
+    {
+        return Ok(replay);
+    }
+
     let baseline = run_baseline(root, &scope, &test_files);
     summary.baseline_passed = baseline.passed;
     if !baseline.passed {
         return Ok(summary);
     }
 
-    let src_files = filter_src_files(walk_src(&scope), cwd, target, progress)?;
-    let mut all_sites = generate_all_sites(&src_files, &baseline.covered, operators, &mut summary);
+    let src_files = filter_src_files(all_src.clone(), cwd, target, progress)?;
+    let to_run = apply_cache_reuse(
+        &canon_root,
+        old_cache.as_ref(),
+        &src_files,
+        &baseline,
+        &test_files,
+        &mut summary,
+        &mut memo,
+    );
+    let queue = generate_queue(
+        &to_run,
+        &baseline.covered,
+        operators,
+        max_mutants,
+        &mut summary,
+    );
+    let total = queue.len();
+
+    let result_rx = dispatch_mutants(root, queue, &baseline, &test_files, isolation, threads);
+    consume_mutant_results(result_rx, total, quiet, cwd, progress, &mut summary);
+
+    // Persist verdicts for the next run. The red-baseline return above keeps
+    // a failing suite from ever touching the cache (R9).
+    if cache_mode != CacheMode::Bypass {
+        persist_cache(
+            &canon_root,
+            (&all_src, &src_files, &test_files),
+            &baseline,
+            &summary,
+            old_cache.as_ref(),
+            &mut memo,
+        );
+    }
+    Ok(summary)
+}
+
+/// Build and write `mutation/cache.json`. Failures degrade silently: a
+/// failed write just means a full run next time.
+fn persist_cache(
+    canon_root: &Path,
+    (all_src, src_files, test_files): (&[PathBuf], &[PathBuf], &[PathBuf]),
+    baseline: &BaselineRun,
+    summary: &MutationSummary,
+    old_cache: Option<&MutateCache>,
+    memo: &mut HashMap<PathBuf, Option<String>>,
+) {
+    let cache = build_cache(
+        canon_root, all_src, src_files, test_files, baseline, summary, old_cache, memo,
+    );
+    let _ = mutate_cache::save(canon_root, env!("CARGO_PKG_VERSION"), &cache);
+}
+
+/// Generate sites for the files that need the pipeline, apply the global
+/// `--max-mutants` cap, and pre-apply into the dispatch queue.
+fn generate_queue(
+    to_run: &[PathBuf],
+    covered: &HashMap<PathBuf, HashSet<u32>>,
+    operators: &[Operator],
+    max_mutants: Option<usize>,
+    summary: &mut MutationSummary,
+) -> Vec<MutantWork> {
+    let mut all_sites = generate_all_sites(to_run, covered, operators, summary);
     if let Some(max) = max_mutants
         && all_sites.len() > max
     {
         all_sites.truncate(max);
     }
+    pre_apply_to_queue(&all_sites, summary)
+}
 
-    let queue = pre_apply_to_queue(&all_sites, &mut summary);
-    let total = queue.len();
-
-    let result_rx = if threads <= 1 || isolation == Isolation::InProcess {
+/// Route the queue to sequential or parallel dispatch.
+fn dispatch_mutants(
+    root: &Path,
+    queue: Vec<MutantWork>,
+    baseline: &BaselineRun,
+    test_files: &[PathBuf],
+    isolation: Isolation,
+    threads: usize,
+) -> std::sync::mpsc::Receiver<MutantResult> {
+    if threads <= 1 || isolation == Isolation::InProcess {
         dispatch_sequential(
             root.to_path_buf(),
             queue,
-            baseline.src_to_tests,
-            test_files,
+            baseline.src_to_tests.clone(),
+            test_files.to_vec(),
             isolation,
         )
     } else {
         dispatch_parallel(
             root.to_path_buf(),
             queue,
-            baseline.src_to_tests,
-            test_files,
+            baseline.src_to_tests.clone(),
+            test_files.to_vec(),
             threads,
         )
-    };
+    }
+}
 
-    consume_mutant_results(result_rx, total, quiet, cwd, progress, &mut summary);
-    Ok(summary)
+/// All-unchanged fast path (R3): when the cached universe matches the
+/// discovered one exactly, replay every entry without running the baseline.
+/// Returns the replayed summary on a hit; `None` falls through to the
+/// normal pipeline. Never fires for `[pattern]` runs (caller gates) or a
+/// partial cache.
+fn try_fast_path(
+    canon_root: &Path,
+    old_cache: Option<&MutateCache>,
+    test_files: &[PathBuf],
+    all_src: &[PathBuf],
+    memo: &mut HashMap<PathBuf, Option<String>>,
+    progress: &mut dyn Write,
+) -> Option<MutationSummary> {
+    let cache = old_cache?;
+    if !fast_path_applies(canon_root, cache, test_files, all_src, memo) {
+        return None;
+    }
+    let mut replay = MutationSummary::default();
+    for (key, entry) in &cache.entries {
+        // An unparseable site declines the whole fast path: soundness
+        // over hit rate.
+        if !fold_cached_entry(&mut replay, &canon_root.join(key), entry) {
+            return None;
+        }
+    }
+    // Printed unconditionally (quiet included): the user must never wonder
+    // whether tests actually ran.
+    let _ = writeln!(
+        progress,
+        "zero mutate: no changes since last run — replaying cached result (baseline skipped)"
+    );
+    replay.baseline_passed = true;
+    replay.baseline_skipped = true;
+    Some(replay)
+}
+
+/// True iff the cached universe matches the discovered one exactly: same
+/// rel test set, same rel src set, every recorded file rehashes to its
+/// cached value, and every src file has an entry.
+fn fast_path_applies(
+    canon_root: &Path,
+    cache: &MutateCache,
+    test_files: &[PathBuf],
+    all_src: &[PathBuf],
+    memo: &mut HashMap<PathBuf, Option<String>>,
+) -> bool {
+    let rel_sorted = |paths: &[PathBuf]| -> Vec<String> {
+        let mut keys: Vec<String> = paths
+            .iter()
+            .map(|p| mutate_cache::rel_key(canon_root, p))
+            .collect();
+        keys.sort();
+        keys
+    };
+    let src_keys = rel_sorted(all_src);
+    if rel_sorted(test_files) != cache.test_files || src_keys != cache.src_files {
+        return false;
+    }
+    // Partial caches (e.g. after a `[pattern]` run dropped an entry) never
+    // fast-path.
+    if !src_keys.iter().all(|k| cache.entries.contains_key(k)) {
+        return false;
+    }
+    // A file that fails to hash (e.g. deleted helper) declines too.
+    cache.files.iter().all(|(k, want)| {
+        mutate_cache::hash_file(&canon_root.join(k), memo).as_deref() == Some(want)
+    })
+}
+
+/// Fold every reusable entry of the previous run's cache into `summary`.
+/// Returns the files that still need the full pipeline.
+fn apply_cache_reuse(
+    canon_root: &Path,
+    old_cache: Option<&MutateCache>,
+    src_files: &[PathBuf],
+    baseline: &BaselineRun,
+    test_files: &[PathBuf],
+    summary: &mut MutationSummary,
+    memo: &mut HashMap<PathBuf, Option<String>>,
+) -> Vec<PathBuf> {
+    let Some(cache) = old_cache else {
+        return src_files.to_vec();
+    };
+    let (reusable, mut to_run) = partition_reusable(
+        src_files.to_vec(),
+        cache,
+        canon_root,
+        baseline,
+        test_files,
+        memo,
+    );
+    for (src, entry) in reusable {
+        if !fold_cached_entry(summary, &src, &entry) {
+            // Unparseable site: soundness over hit rate — re-run the file.
+            to_run.push(src);
+        }
+    }
+    to_run.sort();
+    to_run
+}
+
+/// Split the selected files into (reused, to_run). A file is reused iff the
+/// cache has an entry whose fingerprint matches the one computed from THIS
+/// run's baseline closures.
+fn partition_reusable(
+    src_files: Vec<PathBuf>,
+    cache: &MutateCache,
+    canon_root: &Path,
+    baseline: &BaselineRun,
+    all_tests: &[PathBuf],
+    memo: &mut HashMap<PathBuf, Option<String>>,
+) -> (Vec<(PathBuf, CacheEntry)>, Vec<PathBuf>) {
+    let mut reused = Vec::new();
+    let mut to_run = Vec::new();
+    for src in src_files {
+        let closure = mutate_cache::closure_for(
+            &src,
+            &baseline.src_to_tests,
+            &baseline.test_loaded,
+            all_tests,
+        );
+        let fresh = mutate_cache::fingerprint(canon_root, &closure, memo);
+        let key = mutate_cache::rel_key(canon_root, &src);
+        match (fresh, cache.entries.get(&key)) {
+            (Some(fp), Some(entry)) if entry.fingerprint == fp => {
+                reused.push((src, entry.clone()));
+            }
+            _ => to_run.push(src),
+        }
+    }
+    (reused, to_run)
+}
+
+/// Replay a cached entry into `summary` so totals, per-operator rows, exit
+/// semantics, and `mutation.json` equal what a full run would produce.
+/// Returns `false` (and leaves `summary` untouched) when any site fails to
+/// parse — the caller re-runs the file instead.
+fn fold_cached_entry(summary: &mut MutationSummary, src: &Path, entry: &CacheEntry) -> bool {
+    // Parse everything up front so a bad site can't leave a half-folded
+    // summary behind.
+    let mut parsed: Vec<(MutationSite, MutantStatus)> = Vec::with_capacity(entry.sites.len());
+    for s in &entry.sites {
+        let (Some(operator), Some(status)) =
+            (Operator::parse(&s.operator), MutantStatus::parse(&s.status))
+        else {
+            return false;
+        };
+        parsed.push((
+            MutationSite {
+                file: src.to_path_buf(),
+                operator,
+                line: s.line,
+                column: s.column,
+                original: s.original.clone(),
+                replacement: s.replacement.clone(),
+            },
+            status,
+        ));
+    }
+    let per_op = &entry.per_operator;
+    summary.skipped_unreachable += per_op.unreachable.iter().sum::<usize>();
+    summary.skipped_equivalent_byte += per_op.equivalent_byte.iter().sum::<usize>();
+    summary.skipped_equivalent_static += per_op.equivalent_static.iter().sum::<usize>();
+    let global = &mut summary.per_operator;
+    for i in 0..8 {
+        global.matched[i] += per_op.matched[i];
+        global.unreachable[i] += per_op.unreachable[i];
+        global.equivalent_byte[i] += per_op.equivalent_byte[i];
+        global.equivalent_static[i] += per_op.equivalent_static[i];
+        global.killed[i] += per_op.killed[i];
+        global.survived[i] += per_op.survived[i];
+        global.errored[i] += per_op.errored[i];
+    }
+    summary.per_file_operator.insert(src.to_path_buf(), *per_op);
+    summary.reused_mutants += parsed.len();
+    summary.reused_files += 1;
+    for (site, status) in parsed {
+        summary.generated += 1;
+        match status {
+            MutantStatus::Killed => summary.killed += 1,
+            MutantStatus::Survived => summary.survived += 1,
+            MutantStatus::Errored => summary.errored += 1,
+        }
+        summary
+            .outcomes
+            .entry(src.to_path_buf())
+            .or_default()
+            .push((site, status));
+    }
+    true
+}
+
+/// Build the cache to persist after a run: fresh entries for the files
+/// selected this run, fingerprint-revalidated old entries for the rest.
+/// Files whose closure cannot be fully hashed get no entry at all.
+#[allow(clippy::too_many_arguments)]
+fn build_cache(
+    canon_root: &Path,
+    all_src: &[PathBuf],
+    selected: &[PathBuf],
+    test_files: &[PathBuf],
+    baseline: &BaselineRun,
+    summary: &MutationSummary,
+    old: Option<&MutateCache>,
+    memo: &mut HashMap<PathBuf, Option<String>>,
+) -> MutateCache {
+    let selected_set: HashSet<&PathBuf> = selected.iter().collect();
+    let mut cache = MutateCache::default();
+    let mut universe: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
+    for f in all_src {
+        let closure =
+            mutate_cache::closure_for(f, &baseline.src_to_tests, &baseline.test_loaded, test_files);
+        let Some(fp) = mutate_cache::fingerprint(canon_root, &closure, memo) else {
+            continue;
+        };
+        universe.extend(closure);
+        let key = mutate_cache::rel_key(canon_root, f);
+        if selected_set.contains(f) {
+            cache.entries.insert(key, fresh_entry(fp, f, summary));
+        } else if let Some(prev) = old.and_then(|c| c.entries.get(&key))
+            && prev.fingerprint == fp
+        {
+            cache.entries.insert(key, prev.clone());
+        }
+    }
+    universe.extend(test_files.iter().cloned());
+    universe.extend(all_src.iter().cloned());
+    for p in &universe {
+        if let Some(h) = mutate_cache::hash_file(p, memo) {
+            cache.files.insert(mutate_cache::rel_key(canon_root, p), h);
+        }
+    }
+    cache.test_files = test_files
+        .iter()
+        .map(|p| mutate_cache::rel_key(canon_root, p))
+        .collect();
+    cache.test_files.sort();
+    cache.src_files = all_src
+        .iter()
+        .map(|p| mutate_cache::rel_key(canon_root, p))
+        .collect();
+    cache.src_files.sort();
+    cache
+}
+
+/// Cache entry for a file whose pipeline ran this invocation.
+fn fresh_entry(fingerprint: String, src: &Path, summary: &MutationSummary) -> CacheEntry {
+    let sites = summary
+        .outcomes
+        .get(src)
+        .map(|list| {
+            list.iter()
+                .map(|(site, status)| CachedSite {
+                    line: site.line,
+                    column: site.column,
+                    operator: site.operator.id().to_string(),
+                    original: site.original.clone(),
+                    replacement: site.replacement.clone(),
+                    status: status.as_str().to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    CacheEntry {
+        fingerprint,
+        sites,
+        per_operator: summary
+            .per_file_operator
+            .get(src)
+            .copied()
+            .unwrap_or_default(),
+    }
 }
 
 /// Aggregate output of [`run_baseline`].
@@ -554,6 +945,9 @@ struct BaselineRun {
     covered: HashMap<PathBuf, HashSet<u32>>,
     /// For each in-scope source file, the test files that loaded it.
     src_to_tests: HashMap<PathBuf, Vec<PathBuf>>,
+    /// For each test file, every existing file it loaded (the test file
+    /// itself included; directories and pseudo-modules excluded).
+    test_loaded: HashMap<PathBuf, Vec<PathBuf>>,
 }
 
 /// Run every `test_files` entry with coverage on; collect per-source coverage
@@ -561,6 +955,7 @@ struct BaselineRun {
 fn run_baseline(root: &Path, scope: &CoverageScope, test_files: &[PathBuf]) -> BaselineRun {
     let mut covered: HashMap<PathBuf, HashSet<u32>> = HashMap::new();
     let mut src_to_tests: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+    let mut test_loaded: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
     let mut passed = true;
     for f in test_files {
         let ctx = Rc::new(CoverageContext::new(scope.clone()));
@@ -587,6 +982,21 @@ fn run_baseline(root: &Path, scope: &CoverageScope, test_files: &[PathBuf]) -> B
                     .push(f.clone());
             }
         }
+        // Behavioral closure for this test: every existing file the loader
+        // resolved, plus the test file itself. The harness also registers
+        // the test file's parent *directory* as a resolution base — the
+        // `is_file()` filter drops it. Deliberately NOT filtered by
+        // `scope.covers`: out-of-scope helpers are part of the closure.
+        let mut loaded_files: Vec<PathBuf> = outcome
+            .loaded
+            .iter()
+            .filter(|p| p.is_file())
+            .cloned()
+            .collect();
+        loaded_files.push(f.clone());
+        loaded_files.sort();
+        loaded_files.dedup();
+        test_loaded.insert(f.clone(), loaded_files);
         let _: Vec<CoverageMap> = ctx.drain_maps();
     }
     for v in src_to_tests.values_mut() {
@@ -597,6 +1007,7 @@ fn run_baseline(root: &Path, scope: &CoverageScope, test_files: &[PathBuf]) -> B
         passed,
         covered,
         src_to_tests,
+        test_loaded,
     }
 }
 
@@ -613,6 +1024,9 @@ fn generate_all_sites(
     let empty_lines: HashSet<u32> = HashSet::new();
     let mut all_sites: Vec<(PathBuf, MutationSite, String, String)> = Vec::new();
     for src in src_files {
+        // Every walked file gets a per-file entry — even with zero matches —
+        // so it can replay as a zero-contribution cache member.
+        summary.per_file_operator.entry(src.clone()).or_default();
         let raw = match std::fs::read_to_string(src) {
             Ok(s) => s,
             Err(_) => continue,
@@ -646,6 +1060,12 @@ fn generate_all_sites(
             summary.per_operator.unreachable[i] += result.per_operator.unreachable[i];
             summary.per_operator.equivalent_static[i] += result.per_operator.equivalent_static[i];
         }
+        let per_file = summary.per_file_operator.entry(src.clone()).or_default();
+        for i in 0..8 {
+            per_file.matched[i] += result.per_operator.matched[i];
+            per_file.unreachable[i] += result.per_operator.unreachable[i];
+            per_file.equivalent_static[i] += result.per_operator.equivalent_static[i];
+        }
         for s in result.sites {
             all_sites.push((src.clone(), s, raw.clone(), baseline_js.clone()));
         }
@@ -667,6 +1087,11 @@ fn pre_apply_to_queue(
                 if mutated_js == *baseline_js {
                     summary.skipped_equivalent_byte += 1;
                     summary.per_operator.equivalent_byte[site.operator.index()] += 1;
+                    summary
+                        .per_file_operator
+                        .entry(src_path.clone())
+                        .or_default()
+                        .equivalent_byte[site.operator.index()] += 1;
                 } else {
                     queue.push(MutantWork {
                         src_path: src_path.clone(),
@@ -679,6 +1104,11 @@ fn pre_apply_to_queue(
                 summary.generated += 1;
                 summary.errored += 1;
                 summary.per_operator.errored[site.operator.index()] += 1;
+                summary
+                    .per_file_operator
+                    .entry(src_path.clone())
+                    .or_default()
+                    .errored[site.operator.index()] += 1;
                 summary
                     .outcomes
                     .entry(src_path.clone())
@@ -736,6 +1166,15 @@ fn consume_mutant_results(
                 summary.errored += 1;
                 summary.per_operator.errored[op_idx] += 1;
             }
+        }
+        let per_file = summary
+            .per_file_operator
+            .entry(src_path.clone())
+            .or_default();
+        match status {
+            MutantStatus::Killed => per_file.killed[op_idx] += 1,
+            MutantStatus::Survived => per_file.survived[op_idx] += 1,
+            MutantStatus::Errored => per_file.errored[op_idx] += 1,
         }
         summary
             .outcomes
@@ -969,6 +1408,19 @@ pub fn worker_main(
     run_one_mutant_inproc(root, mutated_src, &mutated_js, &tests)
 }
 
+/// Map the CLI flags onto a [`CacheMode`]. Narrowed runs (`--operators`,
+/// `--max-mutants`) always bypass; `--no-cache` forces a fresh run that
+/// rewrites the cache; the default reads and writes.
+fn cache_mode_for(filter_set: bool, max_set: bool, no_cache: bool) -> CacheMode {
+    if filter_set || max_set {
+        CacheMode::Bypass
+    } else if no_cache {
+        CacheMode::Fresh
+    } else {
+        CacheMode::ReadWrite
+    }
+}
+
 /// CLI entry point for `zero mutate`.
 pub async fn run(
     target: Option<String>,
@@ -976,6 +1428,7 @@ pub async fn run(
     max_mutants: Option<usize>,
     quiet: bool,
     threads: usize,
+    no_cache: bool,
 ) -> anyhow::Result<()> {
     let config = Config::load_from_cwd()?;
     let cwd = std::env::current_dir()?;
@@ -983,6 +1436,7 @@ pub async fn run(
     let out = cwd.join(&config.build.out);
     let filter_was_set = operators.is_some();
     let ops = parse_operators(operators.as_deref())?;
+    let cache_mode = cache_mode_for(filter_was_set, max_mutants.is_some(), no_cache);
 
     let mut stdout = std::io::stdout().lock();
     let summary = run_inner(
@@ -995,6 +1449,7 @@ pub async fn run(
         quiet,
         Isolation::Subprocess,
         threads,
+        cache_mode,
         &mut stdout,
     )?;
 
@@ -1052,6 +1507,774 @@ out = "dist"
     }
 
     #[test]
+    fn baseline_retains_per_test_loaded_sets() {
+        // a.test.ts -> src/a.ts -> src/helper.ts: the test's loaded set must
+        // contain all three files (the test file itself included) and no
+        // directories.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write_zero_toml(root);
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src/helper.ts"),
+            "export function inc(n: number) { return n + 1 }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("src/a.ts"),
+            r#"import { inc } from "./helper.ts";
+export function two() { return inc(1); }
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("a.test.ts"),
+            r#"import { describe, it, expect } from "zero/test";
+import { two } from "./src/a.ts";
+describe("a", () => { it("two", () => expect(two()).toBe(2)); });
+"#,
+        )
+        .unwrap();
+
+        let out = root.join("dist");
+        let scope = CoverageScope::new(root.to_path_buf(), out.clone());
+        let test_files = discover(DiscoveryOpts {
+            root,
+            out_dir: &out,
+            extra_skip_dirs: &[],
+            target: None,
+            cwd: root,
+        })
+        .expect("discover")
+        .files;
+        let baseline = run_baseline(root, &scope, &test_files);
+        assert!(baseline.passed, "baseline should pass");
+
+        let (test_path, loaded) = baseline
+            .test_loaded
+            .iter()
+            .find(|(p, _)| p.to_string_lossy().ends_with("a.test.ts"))
+            .expect("a.test.ts should have a loaded set");
+        let has = |suffix: &str| {
+            loaded
+                .iter()
+                .any(|p| p.to_string_lossy().replace('\\', "/").ends_with(suffix))
+        };
+        assert!(has("a.test.ts"), "missing test file itself: {loaded:?}");
+        assert!(has("src/a.ts"), "missing src/a.ts: {loaded:?}");
+        assert!(has("src/helper.ts"), "missing src/helper.ts: {loaded:?}");
+        assert!(
+            loaded.iter().all(|p| p.is_file()),
+            "loaded set must contain only files: {loaded:?}"
+        );
+        assert!(test_path.is_file());
+    }
+
+    #[test]
+    fn per_file_operator_sums_to_global_and_covers_unreached_files() {
+        // Two files: `foo.ts` is tested (kills + a survivor candidate),
+        // `lonely.ts` is never imported so all its sites are unreachable.
+        let dir = make_project(
+            "export function add(a: number, b: number) { return a + b }\n",
+            r#"import { describe, it, expect } from "zero/test";
+import { add } from "./src/foo.ts";
+describe("g", () => {
+  it("adds 1+2", () => expect(add(1, 2)).toBe(3));
+  it("adds 5+7", () => expect(add(5, 7)).toBe(12));
+});
+"#,
+        );
+        let root = dir.path();
+        fs::write(
+            root.join("src/lonely.ts"),
+            "export function mul(a: number, b: number) { return a * b }\n",
+        )
+        .unwrap();
+        let out = root.join("dist");
+        let mut sink: Vec<u8> = Vec::new();
+        let summary = run_inner(
+            root,
+            &out,
+            root,
+            None,
+            Operator::ALL,
+            None,
+            true,
+            Isolation::InProcess,
+            1,
+            CacheMode::Bypass,
+            &mut sink,
+        )
+        .expect("ok");
+        assert!(summary.baseline_passed);
+
+        // (a) Per-file tallies sum to the global per-operator arrays.
+        let mut folded = PerOperatorSummary::default();
+        for per_file in summary.per_file_operator.values() {
+            for i in 0..8 {
+                folded.matched[i] += per_file.matched[i];
+                folded.unreachable[i] += per_file.unreachable[i];
+                folded.equivalent_byte[i] += per_file.equivalent_byte[i];
+                folded.equivalent_static[i] += per_file.equivalent_static[i];
+                folded.killed[i] += per_file.killed[i];
+                folded.survived[i] += per_file.survived[i];
+                folded.errored[i] += per_file.errored[i];
+            }
+        }
+        for i in 0..8 {
+            assert_eq!(
+                folded.matched[i], summary.per_operator.matched[i],
+                "matched[{i}]"
+            );
+            assert_eq!(
+                folded.unreachable[i], summary.per_operator.unreachable[i],
+                "unreachable[{i}]"
+            );
+            assert_eq!(
+                folded.equivalent_byte[i], summary.per_operator.equivalent_byte[i],
+                "equivalent_byte[{i}]"
+            );
+            assert_eq!(
+                folded.equivalent_static[i], summary.per_operator.equivalent_static[i],
+                "equivalent_static[{i}]"
+            );
+            assert_eq!(
+                folded.killed[i], summary.per_operator.killed[i],
+                "killed[{i}]"
+            );
+            assert_eq!(
+                folded.survived[i], summary.per_operator.survived[i],
+                "survived[{i}]"
+            );
+            assert_eq!(
+                folded.errored[i], summary.per_operator.errored[i],
+                "errored[{i}]"
+            );
+        }
+
+        // (b) The unreached file still has an entry, with matched > 0.
+        let lonely = summary
+            .per_file_operator
+            .iter()
+            .find(|(p, _)| p.to_string_lossy().ends_with("lonely.ts"))
+            .map(|(_, v)| v)
+            .expect("lonely.ts must have a per-file entry");
+        let total_matched: usize = lonely.matched.iter().sum();
+        assert!(
+            total_matched > 0,
+            "lonely.ts should match sites: {lonely:?}"
+        );
+    }
+
+    /// Scaffold a green two-file project: `src/foo.ts` (strongly tested,
+    /// imports `src/helper.ts`) plus `foo.test.ts`. Used by the cache tests.
+    fn make_cache_project() -> TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write_zero_toml(root);
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src/helper.ts"),
+            "export function inc(n: number) { return n + 1 }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("src/foo.ts"),
+            r#"import { inc } from "./helper.ts";
+export function add(a: number, b: number) { return a + b }
+export function addOne(n: number) { return inc(n); }
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("foo.test.ts"),
+            r#"import { describe, it, expect } from "zero/test";
+import { add, addOne } from "./src/foo.ts";
+describe("g", () => {
+  it("adds 1+2", () => expect(add(1, 2)).toBe(3));
+  it("adds 5+7", () => expect(add(5, 7)).toBe(12));
+  it("addOne", () => expect(addOne(1)).toBe(2));
+});
+"#,
+        )
+        .unwrap();
+        dir
+    }
+
+    /// `run_inner` with the standard test-fixture arguments.
+    fn run_for_cache(root: &Path, cache_mode: CacheMode) -> MutationSummary {
+        let out = root.join("dist");
+        let mut sink: Vec<u8> = Vec::new();
+        run_inner(
+            root,
+            &out,
+            root,
+            None,
+            Operator::ALL,
+            None,
+            true,
+            Isolation::InProcess,
+            1,
+            cache_mode,
+            &mut sink,
+        )
+        .expect("run_inner ok")
+    }
+
+    #[test]
+    fn readwrite_run_writes_cache_json() {
+        let dir = make_cache_project();
+        let root = dir.path();
+        let summary = run_for_cache(root, CacheMode::ReadWrite);
+        assert!(summary.baseline_passed);
+
+        let s = fs::read_to_string(root.join("mutation/cache.json")).expect("cache written");
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["schema_version"], 1);
+
+        let entries = v["entries"].as_object().expect("entries object");
+        assert!(
+            entries.contains_key("src/foo.ts"),
+            "keys: {:?}",
+            entries.keys()
+        );
+        assert!(
+            entries.contains_key("src/helper.ts"),
+            "keys: {:?}",
+            entries.keys()
+        );
+        let foo_sites = entries["src/foo.ts"]["sites"].as_array().unwrap();
+        assert!(!foo_sites.is_empty(), "tested file should record sites");
+
+        let files = v["files"].as_object().expect("files object");
+        assert!(
+            files.contains_key("foo.test.ts"),
+            "keys: {:?}",
+            files.keys()
+        );
+        assert!(
+            files.contains_key("src/helper.ts"),
+            "keys: {:?}",
+            files.keys()
+        );
+        for (k, h) in files {
+            let h = h.as_str().unwrap();
+            assert_eq!(h.len(), 64, "hash length for {k}");
+            assert!(
+                h.chars()
+                    .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+                "hash charset for {k}: {h}"
+            );
+        }
+    }
+
+    #[test]
+    fn bypass_run_never_touches_cache_file() {
+        let dir = make_cache_project();
+        let root = dir.path();
+
+        // No cache exists and a Bypass run must not create one.
+        run_for_cache(root, CacheMode::Bypass);
+        assert!(
+            !root.join("mutation/cache.json").exists(),
+            "Bypass must not create a cache"
+        );
+
+        // Pre-seed a cache, then run Bypass again: bytes unchanged.
+        run_for_cache(root, CacheMode::ReadWrite);
+        let before = fs::read(root.join("mutation/cache.json")).unwrap();
+        run_for_cache(root, CacheMode::Bypass);
+        let after = fs::read(root.join("mutation/cache.json")).unwrap();
+        assert_eq!(before, after, "Bypass must leave the cache bytes alone");
+    }
+
+    #[test]
+    fn red_baseline_never_touches_cache_file() {
+        let dir = make_cache_project();
+        let root = dir.path();
+
+        // Seed a valid cache from a green run.
+        run_for_cache(root, CacheMode::ReadWrite);
+        let before = fs::read(root.join("mutation/cache.json")).unwrap();
+
+        // Break the suite, then run ReadWrite: refuses to mutate, cache
+        // bytes unchanged (R9).
+        fs::write(
+            root.join("foo.test.ts"),
+            r#"import { describe, it, expect } from "zero/test";
+import { add } from "./src/foo.ts";
+describe("g", () => { it("oops", () => expect(add(1, 1)).toBe(99)); });
+"#,
+        )
+        .unwrap();
+        let summary = run_for_cache(root, CacheMode::ReadWrite);
+        assert!(!summary.baseline_passed);
+        let after = fs::read(root.join("mutation/cache.json")).unwrap();
+        assert_eq!(before, after, "red baseline must not rewrite the cache");
+
+        // Same with no cache at all: still none created.
+        fs::remove_file(root.join("mutation/cache.json")).unwrap();
+        let summary = run_for_cache(root, CacheMode::ReadWrite);
+        assert!(!summary.baseline_passed);
+        assert!(!root.join("mutation/cache.json").exists());
+    }
+
+    /// Scaffold two *independent* tested files: `src/a.ts` + `a.test.ts`,
+    /// `src/b.ts` + `b.test.ts`.
+    fn make_two_file_project() -> TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write_zero_toml(root);
+        fs::create_dir_all(root.join("src")).unwrap();
+        for (src, test, func) in [
+            ("src/a.ts", "a.test.ts", "alpha"),
+            ("src/b.ts", "b.test.ts", "beta"),
+        ] {
+            fs::write(
+                root.join(src),
+                format!("export function {func}(a: number, b: number) {{ return a + b }}\n"),
+            )
+            .unwrap();
+            fs::write(
+                root.join(test),
+                format!(
+                    r#"import {{ describe, it, expect }} from "zero/test";
+import {{ {func} }} from "./{src}";
+describe("{func}", () => {{
+  it("adds 1+2", () => expect({func}(1, 2)).toBe(3));
+  it("adds 5+7", () => expect({func}(5, 7)).toBe(12));
+}});
+"#
+                ),
+            )
+            .unwrap();
+        }
+        dir
+    }
+
+    /// `run_inner` with a `[pattern]` target and the standard fixture args.
+    fn run_for_cache_target(root: &Path, target: &str, cache_mode: CacheMode) -> MutationSummary {
+        let out = root.join("dist");
+        let mut sink: Vec<u8> = Vec::new();
+        run_inner(
+            root,
+            &out,
+            root,
+            Some(target),
+            Operator::ALL,
+            None,
+            true,
+            Isolation::InProcess,
+            1,
+            cache_mode,
+            &mut sink,
+        )
+        .expect("run_inner ok")
+    }
+
+    #[test]
+    fn pattern_run_drops_stale_nonselected_entry_and_refreshes_selected() {
+        let dir = make_two_file_project();
+        let root = dir.path();
+
+        // Full run seeds entries for both files.
+        run_for_cache(root, CacheMode::ReadWrite);
+        let v: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(root.join("mutation/cache.json")).unwrap())
+                .unwrap();
+        assert!(v["entries"].as_object().unwrap().contains_key("src/b.ts"));
+
+        // Edit the *non-selected* file, then run targeting only a.ts.
+        fs::write(
+            root.join("src/b.ts"),
+            "export function beta(a: number, b: number) { return a + b + 0 }\n",
+        )
+        .unwrap();
+        run_for_cache_target(root, "src/a.ts", CacheMode::ReadWrite);
+
+        let v: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(root.join("mutation/cache.json")).unwrap())
+                .unwrap();
+        let entries = v["entries"].as_object().unwrap();
+        assert!(
+            entries.contains_key("src/a.ts"),
+            "selected file keeps a fresh entry: {:?}",
+            entries.keys()
+        );
+        assert!(
+            !entries.contains_key("src/b.ts"),
+            "stale non-selected entry must be dropped: {:?}",
+            entries.keys()
+        );
+        assert!(
+            !entries["src/a.ts"]["sites"].as_array().unwrap().is_empty(),
+            "a.ts entry should be fresh with sites"
+        );
+    }
+
+    #[test]
+    fn pattern_run_retains_unchanged_nonselected_entry() {
+        let dir = make_two_file_project();
+        let root = dir.path();
+        run_for_cache(root, CacheMode::ReadWrite);
+        // Nothing edited: a pattern run on a.ts must keep b.ts's entry.
+        run_for_cache_target(root, "src/a.ts", CacheMode::ReadWrite);
+        let v: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(root.join("mutation/cache.json")).unwrap())
+                .unwrap();
+        let entries = v["entries"].as_object().unwrap();
+        assert!(
+            entries.contains_key("src/b.ts"),
+            "unchanged non-selected entry must be retained: {:?}",
+            entries.keys()
+        );
+    }
+
+    #[test]
+    fn source_edit_reuses_untouched_file_and_matches_fresh_run() {
+        let dir = make_two_file_project();
+        let root = dir.path();
+        let run1 = run_for_cache(root, CacheMode::ReadWrite);
+        assert!(run1.generated > 0);
+        assert_eq!(run1.reused_mutants, 0, "cold run reuses nothing");
+
+        // Edit A (stays green); B's closure is untouched.
+        fs::write(
+            root.join("src/a.ts"),
+            "export function alpha(a: number, b: number) { return b + a }\n",
+        )
+        .unwrap();
+
+        let run2 = run_for_cache(root, CacheMode::ReadWrite);
+        assert_eq!(run2.reused_files, 1, "only b.ts is reused: {run2:?}");
+        assert!(run2.reused_mutants > 0, "{run2:?}");
+
+        // R2 invariant: totals equal a from-scratch run of the same tree.
+        let fresh = run_for_cache(root, CacheMode::Fresh);
+        assert_eq!(fresh.reused_mutants, 0);
+        assert_eq!(run2.generated, fresh.generated);
+        assert_eq!(run2.killed, fresh.killed);
+        assert_eq!(run2.survived, fresh.survived);
+        assert_eq!(run2.errored, fresh.errored);
+        assert!((run2.score() - fresh.score()).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_edit_invalidates_and_kills_previous_survivor() {
+        let dir = make_two_file_project();
+        let root = dir.path();
+        // Weaken a's test: calls alpha but asserts nothing about it.
+        fs::write(
+            root.join("a.test.ts"),
+            r#"import { describe, it, expect } from "zero/test";
+import { alpha } from "./src/a.ts";
+describe("alpha", () => { it("calls", () => { alpha(1, 2); expect(1).toBe(1); }); });
+"#,
+        )
+        .unwrap();
+        let run1 = run_for_cache(root, CacheMode::ReadWrite);
+        assert!(run1.survived >= 1, "weak test leaves a survivor: {run1:?}");
+
+        // Strengthen the assertion; only a's closure changes.
+        fs::write(
+            root.join("a.test.ts"),
+            r#"import { describe, it, expect } from "zero/test";
+import { alpha } from "./src/a.ts";
+describe("alpha", () => {
+  it("adds 1+2", () => expect(alpha(1, 2)).toBe(3));
+  it("adds 5+7", () => expect(alpha(5, 7)).toBe(12));
+});
+"#,
+        )
+        .unwrap();
+        let run2 = run_for_cache(root, CacheMode::ReadWrite);
+        assert_eq!(run2.reused_files, 1, "b.ts stays reused: {run2:?}");
+        assert_eq!(
+            run2.survived, 0,
+            "stronger test kills the survivor: {run2:?}"
+        );
+        assert!(run2.killed > run1.killed - run1.survived, "{run2:?}");
+    }
+
+    #[test]
+    fn dependency_edit_invalidates_importer_but_not_unrelated() {
+        let dir = make_two_file_project();
+        let root = dir.path();
+        // a.ts gains a dependency on src/c.ts, exercised through a's test.
+        fs::write(
+            root.join("src/c.ts"),
+            "export function base(): number { return 1 }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("src/a.ts"),
+            r#"import { base } from "./c.ts";
+export function alpha(a: number, b: number) { return a + b + base() - base() }
+"#,
+        )
+        .unwrap();
+        let run1 = run_for_cache(root, CacheMode::ReadWrite);
+        assert!(run1.baseline_passed, "{run1:?}");
+
+        // Edit only the dependency (still returns 1 net effect on alpha).
+        fs::write(
+            root.join("src/c.ts"),
+            "export function base(): number { return 2 - 1 }\n",
+        )
+        .unwrap();
+        let run2 = run_for_cache(root, CacheMode::ReadWrite);
+        // a (imports c) and c itself both re-execute; only b is reused.
+        assert_eq!(run2.reused_files, 1, "only b.ts reused: {run2:?}");
+        let reused_keys: Vec<_> = run2
+            .outcomes
+            .keys()
+            .filter(|p| p.to_string_lossy().ends_with("b.ts"))
+            .collect();
+        assert_eq!(reused_keys.len(), 1, "b.ts present in outcomes");
+    }
+
+    #[test]
+    fn fresh_mode_ignores_valid_cache_and_rewrites_it() {
+        let dir = make_two_file_project();
+        let root = dir.path();
+        let run1 = run_for_cache(root, CacheMode::ReadWrite);
+        let mtime_before = fs::metadata(root.join("mutation/cache.json"))
+            .unwrap()
+            .modified()
+            .unwrap();
+
+        let run2 = run_for_cache(root, CacheMode::Fresh);
+        assert_eq!(run2.reused_mutants, 0, "Fresh must not reuse: {run2:?}");
+        assert_eq!(run2.reused_files, 0);
+        assert_eq!(run2.generated, run1.generated, "everything re-executes");
+        assert_eq!(run2.killed, run1.killed);
+
+        let mtime_after = fs::metadata(root.join("mutation/cache.json"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        assert!(mtime_after > mtime_before, "cache must be rewritten");
+    }
+
+    #[test]
+    fn corrupt_or_version_skewed_cache_degrades_to_full_run() {
+        let dir = make_two_file_project();
+        let root = dir.path();
+        let run1 = run_for_cache(root, CacheMode::ReadWrite);
+
+        // Garbage JSON: full run, then a valid cache is rewritten.
+        fs::write(root.join("mutation/cache.json"), "{garbage!").unwrap();
+        let run2 = run_for_cache(root, CacheMode::ReadWrite);
+        assert_eq!(run2.reused_mutants, 0, "corrupt cache reuses nothing");
+        assert_eq!(run2.generated, run1.generated);
+        let v: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(root.join("mutation/cache.json")).unwrap())
+                .expect("rewritten cache parses");
+        assert_eq!(v["schema_version"], 1);
+
+        // Version skew: a structurally valid cache written by another CLI
+        // version is treated as absent.
+        let valid = mutate_cache::load(root, env!("CARGO_PKG_VERSION")).expect("valid cache");
+        mutate_cache::save(root, "0.0.0-other", &valid).expect("doctored save");
+        let run3 = run_for_cache(root, CacheMode::ReadWrite);
+        assert_eq!(run3.reused_mutants, 0, "version skew reuses nothing");
+        assert_eq!(run3.generated, run1.generated);
+        assert!(
+            mutate_cache::load(root, env!("CARGO_PKG_VERSION")).is_some(),
+            "cache rewritten under the current version"
+        );
+    }
+
+    #[test]
+    fn summary_line_reports_reuse_in_quiet_mode() {
+        let dir = make_two_file_project();
+        let root = dir.path();
+        run_for_cache(root, CacheMode::ReadWrite);
+        // Edit a.ts so run 2 reuses exactly b.ts.
+        fs::write(
+            root.join("src/a.ts"),
+            "export function alpha(a: number, b: number) { return b + a }\n",
+        )
+        .unwrap();
+        let run2 = run_for_cache(root, CacheMode::ReadWrite);
+        assert_eq!(run2.reused_files, 1);
+
+        let mut buf: Vec<u8> = Vec::new();
+        write_terminal_summary(&mut buf, &run2, root, true, None).expect("write");
+        let s = String::from_utf8(buf).unwrap();
+        let expect = format!(
+            "Generated: {} mutants across {} files ({} reused from cache across {} files)",
+            run2.generated,
+            run2.outcomes.len(),
+            run2.reused_mutants,
+            run2.reused_files
+        );
+        assert!(s.contains(&expect), "missing reuse parenthetical in:\n{s}");
+    }
+
+    /// Like [`run_for_cache`] but returns the progress sink's contents too.
+    fn run_for_cache_with_sink(root: &Path, cache_mode: CacheMode) -> (MutationSummary, String) {
+        let out = root.join("dist");
+        let mut sink: Vec<u8> = Vec::new();
+        let summary = run_inner(
+            root,
+            &out,
+            root,
+            None,
+            Operator::ALL,
+            None,
+            true,
+            Isolation::InProcess,
+            1,
+            cache_mode,
+            &mut sink,
+        )
+        .expect("run_inner ok");
+        (summary, String::from_utf8(sink).unwrap())
+    }
+
+    #[test]
+    fn unchanged_rerun_hits_fast_path_with_equal_totals() {
+        let dir = make_two_file_project();
+        let root = dir.path();
+        let run1 = run_for_cache(root, CacheMode::ReadWrite);
+        write_mutation_json(root, root, &run1).expect("json 1");
+        let json1: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(root.join("mutation/mutation.json")).unwrap())
+                .unwrap();
+
+        let (run2, sink) = run_for_cache_with_sink(root, CacheMode::ReadWrite);
+        assert!(
+            run2.baseline_skipped,
+            "fast path must skip the baseline: {run2:?}"
+        );
+        assert!(run2.baseline_passed);
+        assert_eq!(run2.reused_mutants, run1.generated);
+        assert_eq!(run2.generated, run1.generated);
+        assert_eq!(run2.killed, run1.killed);
+        assert_eq!(run2.survived, run1.survived);
+        assert_eq!(run2.errored, run1.errored);
+        assert_eq!(run2.skipped_unreachable, run1.skipped_unreachable);
+        assert_eq!(run2.skipped_equivalent_byte, run1.skipped_equivalent_byte);
+        assert_eq!(
+            run2.skipped_equivalent_static,
+            run1.skipped_equivalent_static
+        );
+        assert!((run2.score() - run1.score()).abs() < f64::EPSILON);
+        assert!(
+            sink.contains("no changes since last run — replaying cached result (baseline skipped)"),
+            "missing marker line in:\n{sink}"
+        );
+
+        // The refreshed report equals the previous run's.
+        write_mutation_json(root, root, &run2).expect("json 2");
+        let json2: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(root.join("mutation/mutation.json")).unwrap())
+                .unwrap();
+        assert_eq!(json1["totals"], json2["totals"]);
+    }
+
+    #[test]
+    fn any_edit_declines_fast_path() {
+        let dir = make_two_file_project();
+        let root = dir.path();
+        run_for_cache(root, CacheMode::ReadWrite);
+        fs::write(
+            root.join("src/a.ts"),
+            "export function alpha(a: number, b: number) { return b + a }\n",
+        )
+        .unwrap();
+        let run2 = run_for_cache(root, CacheMode::ReadWrite);
+        assert!(!run2.baseline_skipped, "edit must decline the fast path");
+        assert_eq!(
+            run2.reused_files, 1,
+            "partial reuse still applies: {run2:?}"
+        );
+    }
+
+    #[test]
+    fn new_test_file_declines_fast_path_and_reexecutes_target() {
+        let dir = make_two_file_project();
+        let root = dir.path();
+        run_for_cache(root, CacheMode::ReadWrite);
+
+        // Closure-membership change: a brand-new test exercising A. Every
+        // previously-known file is byte-identical, but the test set differs.
+        fs::write(
+            root.join("a2.test.ts"),
+            r#"import { describe, it, expect } from "zero/test";
+import { alpha } from "./src/a.ts";
+describe("alpha again", () => { it("adds", () => expect(alpha(2, 2)).toBe(4)); });
+"#,
+        )
+        .unwrap();
+        let run2 = run_for_cache(root, CacheMode::ReadWrite);
+        assert!(!run2.baseline_skipped, "test-set change must decline");
+        assert_eq!(run2.reused_files, 1, "B stays reused: {run2:?}");
+        assert!(
+            run2.outcomes
+                .keys()
+                .any(|p| p.to_string_lossy().ends_with("a.ts")),
+            "A re-executes with the new closure: {run2:?}"
+        );
+    }
+
+    #[test]
+    fn partial_cache_declines_fast_path_until_full_run_converges() {
+        let dir = make_two_file_project();
+        let root = dir.path();
+        run_for_cache(root, CacheMode::ReadWrite);
+
+        // Edit B, then refresh only A via a pattern run: B's stale entry is
+        // dropped, leaving a partial cache.
+        fs::write(
+            root.join("src/b.ts"),
+            "export function beta(a: number, b: number) { return b + a }\n",
+        )
+        .unwrap();
+        run_for_cache_target(root, "src/a.ts", CacheMode::ReadWrite);
+
+        // Full run: fast path declines (B has no entry); B re-executes
+        // fresh while A is reused.
+        let run3 = run_for_cache(root, CacheMode::ReadWrite);
+        assert!(
+            !run3.baseline_skipped,
+            "partial cache must decline: {run3:?}"
+        );
+        assert_eq!(run3.reused_files, 1, "A reused: {run3:?}");
+
+        // The cache is complete again: the next run hits the fast path.
+        let run4 = run_for_cache(root, CacheMode::ReadWrite);
+        assert!(
+            run4.baseline_skipped,
+            "pattern-refreshed cache must converge back to complete: {run4:?}"
+        );
+    }
+
+    #[test]
+    fn targeted_run_never_fast_paths() {
+        let dir = make_two_file_project();
+        let root = dir.path();
+        run_for_cache(root, CacheMode::ReadWrite);
+        // Unchanged universe, but a target is set: the baseline must run
+        // even though every selected file is reused.
+        let run2 = run_for_cache_target(root, "src/a.ts", CacheMode::ReadWrite);
+        assert!(!run2.baseline_skipped, "{run2:?}");
+        assert_eq!(run2.reused_files, 1, "a.ts itself is reused: {run2:?}");
+    }
+
+    #[test]
+    fn cache_mode_for_maps_flags_to_modes() {
+        assert_eq!(cache_mode_for(false, false, false), CacheMode::ReadWrite);
+        assert_eq!(cache_mode_for(true, false, false), CacheMode::Bypass);
+        assert_eq!(cache_mode_for(false, true, false), CacheMode::Bypass);
+        assert_eq!(cache_mode_for(false, false, true), CacheMode::Fresh);
+        // Narrowed runs bypass even when --no-cache is also given.
+        assert_eq!(cache_mode_for(true, false, true), CacheMode::Bypass);
+        assert_eq!(cache_mode_for(false, true, true), CacheMode::Bypass);
+    }
+
+    #[test]
     fn parses_operator_filter_csv() {
         let parsed = parse_operators(Some("arith,cmp")).unwrap();
         assert_eq!(parsed, vec![Operator::Arith, Operator::Cmp]);
@@ -1087,6 +2310,7 @@ describe("g", () => {
             true,
             Isolation::InProcess,
             1,
+            CacheMode::Bypass,
             &mut sink,
         )
         .expect("ok");
@@ -1153,6 +2377,7 @@ describe("g", () => { it("ok", () => expect(ok).toBe(1)); });
             true,
             Isolation::InProcess,
             1,
+            CacheMode::Bypass,
             &mut sink,
         )
         .expect("ok");
@@ -1188,6 +2413,7 @@ describe("g", () => { it("ok", () => expect(ok).toBe(true)); });
             true,
             Isolation::InProcess,
             1,
+            CacheMode::Bypass,
             &mut sink,
         )
         .expect("ok");
@@ -1223,6 +2449,7 @@ describe("g", () => {
             true,
             Isolation::InProcess,
             1,
+            CacheMode::Bypass,
             &mut sink,
         )
         .expect("ok");
@@ -1260,6 +2487,7 @@ describe("g", () => {
             true,
             Isolation::InProcess,
             1,
+            CacheMode::Bypass,
             &mut sink,
         )
         .expect("ok");
@@ -1296,6 +2524,7 @@ describe("g", () => { it("ok", () => expect(ok).toBe(1)); });
             true,
             Isolation::InProcess,
             1,
+            CacheMode::Bypass,
             &mut sink,
         )
         .expect("ok");
@@ -1354,6 +2583,7 @@ describe("g", () => { it("oops", () => expect(add(1,1)).toBe(99)); });
             true,
             Isolation::InProcess,
             1,
+            CacheMode::Bypass,
             &mut sink,
         )
         .expect("ok");
@@ -1387,6 +2617,7 @@ describe("g", () => {
             true,
             Isolation::InProcess,
             1,
+            CacheMode::Bypass,
             &mut sink,
         )
         .expect("ok");
@@ -1422,6 +2653,7 @@ describe("g", () => { it("calls", () => { add(1,2); expect(1).toBe(1); }); });
             true,
             Isolation::InProcess,
             1,
+            CacheMode::Bypass,
             &mut sink,
         )
         .expect("ok");
@@ -1460,6 +2692,7 @@ describe("g", () => {
             true,
             Isolation::InProcess,
             1,
+            CacheMode::Bypass,
             &mut sink,
         )
         .expect("ok");
@@ -1535,6 +2768,7 @@ describe("q", () => {
             true,
             Isolation::InProcess,
             1,
+            CacheMode::Bypass,
             &mut sink,
         )
         .expect("ok");
@@ -1599,6 +2833,7 @@ describe("q", () => {
             true,
             Isolation::InProcess,
             1,
+            CacheMode::Bypass,
             &mut sink,
         )
         .expect("ok");
@@ -1708,6 +2943,7 @@ describe("page", () => {
             true,
             Isolation::InProcess,
             1,
+            CacheMode::Bypass,
             &mut sink,
         )
         .expect("ok");
@@ -1745,6 +2981,7 @@ describe("g", () => { it("noop", () => expect(typeof unused).toBe("function")); 
             true,
             Isolation::InProcess,
             1,
+            CacheMode::Bypass,
             &mut sink,
         )
         .expect("ok");
@@ -1819,6 +3056,7 @@ describe("parts", () => {
             true,
             Isolation::InProcess,
             1,
+            CacheMode::Bypass,
             &mut sink,
         )
         .expect("ok");

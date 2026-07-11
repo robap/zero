@@ -64,6 +64,10 @@ enum Commands {
         /// sequential.
         #[arg(long, default_value_t = default_threads())]
         threads: usize,
+        /// Ignore the incremental cache: re-run every mutant and rewrite
+        /// `mutation/cache.json`.
+        #[arg(long, default_value_t = false)]
+        no_cache: bool,
     },
     /// Refresh framework files in .zero/
     Update {
@@ -121,7 +125,8 @@ async fn main() {
             max_mutants,
             quiet,
             threads,
-        } => cmd::mutate::run(target, operators, max_mutants, quiet, threads).await,
+            no_cache,
+        } => cmd::mutate::run(target, operators, max_mutants, quiet, threads, no_cache).await,
         Commands::MutateWorker {
             root,
             mutated_src,
@@ -174,5 +179,38 @@ mod tests {
     fn default_threads_is_bounded_and_at_least_one() {
         let n = default_threads();
         assert!((1..=8).contains(&n), "got {n}");
+    }
+
+    fn parsed_no_cache(args: &[&str]) -> bool {
+        let cli = Cli::try_parse_from(args).expect("parse");
+        match cli.command {
+            Commands::Mutate { no_cache, .. } => no_cache,
+            _ => panic!("expected mutate"),
+        }
+    }
+
+    #[test]
+    fn no_cache_defaults_to_false() {
+        assert!(!parsed_no_cache(&["zero", "mutate"]));
+    }
+
+    #[test]
+    fn no_cache_flag_parses_to_true() {
+        assert!(parsed_no_cache(&["zero", "mutate", "--no-cache"]));
+    }
+
+    #[test]
+    fn no_cache_composes_with_threads() {
+        let cli =
+            Cli::try_parse_from(["zero", "mutate", "--no-cache", "--threads", "2"]).expect("parse");
+        match cli.command {
+            Commands::Mutate {
+                no_cache, threads, ..
+            } => {
+                assert!(no_cache);
+                assert_eq!(threads, 2);
+            }
+            _ => panic!("expected mutate"),
+        }
     }
 }

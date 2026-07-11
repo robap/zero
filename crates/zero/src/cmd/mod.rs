@@ -3,6 +3,7 @@ pub mod dev;
 pub mod init;
 pub mod lint;
 pub mod mutate;
+pub mod mutate_cache;
 pub mod preview;
 pub mod test;
 pub mod update;

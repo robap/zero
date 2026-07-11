@@ -31,7 +31,7 @@ you*.
 | [`zero lint`](./linting.html) | After every edit touching `.ts` / `.js` / `.scss`. | Sub-second. Catches the rule-table footguns (R01-R03, T01-T04, C01-C02, I01-I02, S01, L01-L13) before they reach tests. Bugs the linter would have caught instead surface as failing tests with longer feedback loops. |
 | [`zero test [pattern]`](./testing.html) | After every logic change. | The basic behavior signal. If you change a function and don't run its test, you're guessing. |
 | [`zero test --coverage`](./testing.html) | Before declaring done; before deciding whether to run `zero mutate`. | Names the lines no test reaches, so you know what to write a test for. Cheap pre-check before paying mutation-testing cost on lines you already know are untested. |
-| [`zero mutate [--threads N] [--operators ID,…]`](./config-and-cli.html#zero-mutate) | Before declaring done on correctness-critical code. | *tests can pass vacuously* — mutation testing forces the question "would this test actually fail if I broke the code?" That's the rationale for the whole tool. Without it, green tests are evidence the test ran, not evidence the code is correct. |
+| [`zero mutate [--threads N] [--operators ID,…]`](./config-and-cli.html#zero-mutate) | Before declaring done on correctness-critical code. | *tests can pass vacuously* — mutation testing forces the question "would this test actually fail if I broke the code?" That's the rationale for the whole tool. Without it, green tests are evidence the test ran, not evidence the code is correct. Repeat runs are cheap: unchanged files replay from the cache, so running it after every change is affordable. |
 | `zero fmt` *(forthcoming)* | Before commit. | Idempotent format. Cuts review noise so reviewers can read the change, not the formatting. |
 | `zero preview` *(forthcoming)* | Before pushing UI changes. | Smoke-tests the production bundle. `zero dev` runs the dev server; `zero preview` catches asset-pipeline regressions a dev run won't. |
 
@@ -241,7 +241,7 @@ Write a failing test first, add a stub that compiles but still fails on behavior
 
 ## End of plan
 
-When every box is `[x]`, run `zero test --coverage` to find under-tested lines, then `zero mutate --threads 8 --quiet` on correctness-critical code to catch tests that pass vacuously.
+When every box is `[x]`, run `zero test --coverage` to find under-tested lines, then `zero mutate --threads 8 --quiet` on correctness-critical code to catch tests that pass vacuously. Repeat `zero mutate` runs are cheap — unchanged files replay from the cache — so there's no cost argument for skipping it between steps.
 
 ## Output
 

@@ -190,9 +190,41 @@ with each mutation applied.
 | `--max-mutants <n>`           | Cap total mutants generated.                           |
 | `--threads <n>`               | Run mutants in parallel. Defaults to `min(cores, 8)` — parallel by default; the cap keeps headroom on bigger boxes for IDE / build processes. Pass `1` for sequential. |
 | `-q, --quiet`                 | Suppress per-mutant lines; print summary only.         |
+| `--no-cache`                  | Ignore the incremental cache: re-run every mutant and rewrite `mutation/cache.json`. |
 
 Operator ids accepted by `--operators`: `arith`, `cmp`, `bool`,
 `cond_neg`, `boundary`, `lit_bool`, `lit_num`, `lit_str`.
+
+#### Incremental runs
+
+Runs are incremental by default. A source file's mutant verdicts are
+reused from the previous run when its full closure is byte-identical:
+the file itself, every test that exercises it, and every module those
+tests load. Any doubt — an edited file, a new test, an unreadable
+member — resolves to re-execution. Reuse is reported on the summary's
+`Generated:` line, e.g.
+`Generated: 12 mutants across 3 files (41 reused from cache across 9 files)`.
+
+When *nothing* changed at all — same test files, same source files,
+every recorded file hashing identically — the run skips the baseline
+too and replays the previous result, printing:
+
+```
+zero mutate: no changes since last run — replaying cached result (baseline skipped)
+```
+
+The cache lives in `mutation/cache.json`. It is internal,
+version-keyed (a different `zero` binary invalidates it), gitignored
+in scaffolded projects, and always safe to delete — the next run is
+simply a full run that rewrites it. `--operators` and `--max-mutants`
+runs neither read nor write it; `[pattern]` runs reuse and refresh
+only the files they cover. One caveat: a flaky suite freezes whichever
+verdict was observed when the entry was written — `--no-cache` re-runs
+everything from scratch.
+
+`mutation/mutation.json` is unchanged by all of this (still schema
+version 2): reused verdicts are folded in, so its totals always
+describe the whole tree.
 
 #### Reading `Generated: 0`
 

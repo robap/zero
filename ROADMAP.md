@@ -95,6 +95,7 @@ refactor that *is* a tracked item follows the same ⏳ → ✅ lifecycle.
 | [mutate-operators](issues/mutate-operators/spec.md) | ✅ | 2026-05-23 |
 | [mutate-equivalence](issues/mutate-equivalence/spec.md) | ✅ | 2026-05-23 |
 | [mutate-reachability](issues/mutate-reachability/spec.md) | ✅ | 2026-05-29 |
+| [mutate-cache](issues/mutate-cache/spec.md) | ✅ | 2026-06-06 |
 | [internal-quality](issues/internal-quality/spec.md) | ✅ | 2026-05-16 |
 | [minification](issues/minification/spec.md) | ✅ | 2026-05-23 |
 

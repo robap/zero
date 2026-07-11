@@ -43,7 +43,9 @@ zero test src/app.test.ts       # project-root-relative (still works)
 ```
 
 `zero mutate` is a sibling command that runs the same suite under
-mutation testing — see [Config and CLI](./config-and-cli.html#zero-mutate).
+mutation testing; repeat runs are incremental — cached verdicts are
+reused for files whose closure hasn't changed — see
+[Config and CLI](./config-and-cli.html#zero-mutate).
 
 ## Structure API
 
