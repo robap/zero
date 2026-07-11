@@ -85,4 +85,8 @@ pub struct FileResult {
     pub outcomes: Vec<TestOutcome>,
     /// Non-None if the file itself failed to load (syntax error, top-level throw, etc.).
     pub load_error: Option<Failure>,
+    /// `true` when execution was aborted by the per-mutant engine deadline
+    /// (see `run_file_with_loader_deadline`). Always `false` for ordinary
+    /// `zero test` runs, which arm no deadline.
+    pub timed_out: bool,
 }

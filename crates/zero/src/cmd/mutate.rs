@@ -16,11 +16,12 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use zero_config::Config;
 use zero_test_runner::coverage::{CoverageMap, CoverageScope};
 use zero_test_runner::discovery::{DiscoveryOpts, DiscoveryResult, discover};
-use zero_test_runner::harness::{run_file_with_coverage, run_file_with_loader};
+use zero_test_runner::harness::{run_file_with_coverage, run_file_with_loader_deadline};
 use zero_test_runner::loader::{CoverageContext, ZeroModuleLoader};
 use zero_test_runner::mutate::{GenerateOptions, MutationSite, Operator, apply, generate};
 use zero_test_runner::result::Status;
@@ -34,6 +35,10 @@ pub enum MutantStatus {
     Killed,
     Survived,
     Errored,
+    /// The mutant did not terminate within the per-mutant budget. Counts as
+    /// `Killed` for the score (an infinite loop is a detected divergence),
+    /// but is surfaced as a distinct `timed-out` sub-count.
+    TimedOut,
 }
 
 impl MutantStatus {
@@ -42,6 +47,7 @@ impl MutantStatus {
             MutantStatus::Killed => "killed",
             MutantStatus::Survived => "survived",
             MutantStatus::Errored => "errored",
+            MutantStatus::TimedOut => "timed-out",
         }
     }
 
@@ -51,6 +57,7 @@ impl MutantStatus {
             MutantStatus::Survived => 0,
             MutantStatus::Killed => 1,
             MutantStatus::Errored => 2,
+            MutantStatus::TimedOut => 3,
         }
     }
 
@@ -60,6 +67,7 @@ impl MutantStatus {
             "killed" => Some(MutantStatus::Killed),
             "survived" => Some(MutantStatus::Survived),
             "errored" => Some(MutantStatus::Errored),
+            "timed-out" => Some(MutantStatus::TimedOut),
             _ => None,
         }
     }
@@ -82,6 +90,8 @@ pub enum Isolation {
 pub struct MutationSummary {
     pub generated: usize,
     pub killed: usize,
+    /// Mutants that hit the per-mutant timeout budget. A subset of `killed`.
+    pub timed_out: usize,
     pub survived: usize,
     pub errored: usize,
     pub skipped_unreachable: usize,
@@ -118,6 +128,8 @@ pub struct PerOperatorSummary {
     pub equivalent_byte: [usize; 8],
     pub equivalent_static: [usize; 8],
     pub killed: [usize; 8],
+    /// Subset of `killed` that timed out. Per-operator.
+    pub timed_out: [usize; 8],
     pub survived: [usize; 8],
     pub errored: [usize; 8],
 }
@@ -170,6 +182,38 @@ fn parse_operators(spec: Option<&str>) -> anyhow::Result<Vec<Operator>> {
             }
         }
     }
+}
+
+/// Lower bound on the per-mutant timeout budget, in milliseconds. Even a
+/// trivially fast baseline gets at least this long so a legitimately slow
+/// mutant isn't false-timed-out.
+const TIMEOUT_FLOOR_MS: u64 = 2000;
+/// Multiplier applied to the measured baseline wall-time to derive the budget.
+const TIMEOUT_FACTOR: u64 = 5;
+
+/// Parse a human-friendly duration for `--timeout`: `"<n>ms"`, `"<n>s"`, or a
+/// bare integer (seconds). Rejects anything else (floats, other units, empty).
+fn parse_timeout(s: &str) -> anyhow::Result<Duration> {
+    let s = s.trim();
+    let bad = || anyhow::anyhow!("invalid --timeout {s:?}; expected e.g. 10s, 500ms, or 2");
+    if let Some(ms) = s.strip_suffix("ms") {
+        let n: u64 = ms.trim().parse().map_err(|_| bad())?;
+        Ok(Duration::from_millis(n))
+    } else if let Some(sec) = s.strip_suffix('s') {
+        let n: u64 = sec.trim().parse().map_err(|_| bad())?;
+        Ok(Duration::from_secs(n))
+    } else {
+        let n: u64 = s.parse().map_err(|_| bad())?;
+        Ok(Duration::from_secs(n))
+    }
+}
+
+/// Per-mutant budget: the explicit `override_` when given, else
+/// `max(floor, baseline_ms × factor)`.
+fn mutant_budget(baseline_ms: u64, override_: Option<Duration>) -> Duration {
+    override_.unwrap_or_else(|| {
+        Duration::from_millis(TIMEOUT_FLOOR_MS.max(baseline_ms.saturating_mul(TIMEOUT_FACTOR)))
+    })
 }
 
 /// Walk `root/src` collecting paths that pass `scope.covers`.
@@ -290,12 +334,22 @@ fn write_terminal_summary<W: Write>(
             summary.generated, files_count
         )?;
     }
-    writeln!(
-        w,
-        "  Killed:    {:>3}  ({:.1}%)",
-        summary.killed,
-        pct(summary.killed)
-    )?;
+    if summary.timed_out > 0 {
+        writeln!(
+            w,
+            "  Killed:    {:>3}  ({:.1}%)  (incl. {} timed-out)",
+            summary.killed,
+            pct(summary.killed),
+            summary.timed_out,
+        )?;
+    } else {
+        writeln!(
+            w,
+            "  Killed:    {:>3}  ({:.1}%)",
+            summary.killed,
+            pct(summary.killed)
+        )?;
+    }
     writeln!(
         w,
         "  Survived:  {:>3}  ({:.1}%)",
@@ -398,16 +452,22 @@ fn write_per_operator_row<W: Write>(
     let equivalent_byte = per_op.equivalent_byte[i];
     let equivalent_static = per_op.equivalent_static[i];
     let killed = per_op.killed[i];
+    let timed_out = per_op.timed_out[i];
     let survived = per_op.survived[i];
     let errored = per_op.errored[i];
     let executed = killed + survived + errored;
+    let killed_field = if timed_out > 0 {
+        format!("killed {killed} (incl. {timed_out} timed-out)")
+    } else {
+        format!("killed {killed}")
+    };
     writeln!(
         w,
-        "  {}: matched {}, executed {} (killed {}, survived {}, errored {}), unreachable {}, equivalent-byte {}, equivalent-static {}",
+        "  {}: matched {}, executed {} ({}, survived {}, errored {}), unreachable {}, equivalent-byte {}, equivalent-static {}",
         op.id(),
         matched,
         executed,
-        killed,
+        killed_field,
         survived,
         errored,
         unreachable,
@@ -463,6 +523,7 @@ fn write_mutation_json(
                 "equivalent_byte":    summary.per_operator.equivalent_byte[i],
                 "equivalent_static":  summary.per_operator.equivalent_static[i],
                 "killed":             summary.per_operator.killed[i],
+                "timed_out":          summary.per_operator.timed_out[i],
                 "survived":           summary.per_operator.survived[i],
                 "errored":            summary.per_operator.errored[i],
                 "executed":           executed,
@@ -478,6 +539,7 @@ fn write_mutation_json(
         "totals": {
             "generated": summary.generated,
             "killed": summary.killed,
+            "timed_out": summary.timed_out,
             "survived": summary.survived,
             "errored": summary.errored,
             "skipped": total_skipped,
@@ -507,6 +569,9 @@ fn write_mutation_json(
 ///   `min(available_parallelism, 8)`.
 /// - `target`, `operators`, `max_mutants`, `quiet`, `isolation`,
 ///   `progress`: see CLI surface in spec §3.1.
+///
+/// Uses the default per-mutant timeout budget (no override). See
+/// [`run_inner_timed`] to pass an explicit `--timeout`.
 #[allow(clippy::too_many_arguments)]
 pub fn run_inner(
     root: &Path,
@@ -519,6 +584,40 @@ pub fn run_inner(
     isolation: Isolation,
     threads: usize,
     cache_mode: CacheMode,
+    progress: &mut dyn Write,
+) -> anyhow::Result<MutationSummary> {
+    run_inner_timed(
+        root,
+        out_dir,
+        cwd,
+        target,
+        operators,
+        max_mutants,
+        quiet,
+        isolation,
+        threads,
+        cache_mode,
+        None,
+        progress,
+    )
+}
+
+/// Like [`run_inner`] but with an explicit per-mutant `timeout` override. When
+/// `timeout` is `None` the budget is derived from the measured baseline
+/// wall-time: `max(2s, baseline × 5)`.
+#[allow(clippy::too_many_arguments)]
+pub fn run_inner_timed(
+    root: &Path,
+    out_dir: &Path,
+    cwd: &Path,
+    target: Option<&str>,
+    operators: &[Operator],
+    max_mutants: Option<usize>,
+    quiet: bool,
+    isolation: Isolation,
+    threads: usize,
+    cache_mode: CacheMode,
+    timeout: Option<Duration>,
     progress: &mut dyn Write,
 ) -> anyhow::Result<MutationSummary> {
     let DiscoveryResult { files: test_files } = discover(DiscoveryOpts {
@@ -557,7 +656,10 @@ pub fn run_inner(
         return Ok(replay);
     }
 
+    let t0 = Instant::now();
     let baseline = run_baseline(root, &scope, &test_files);
+    let baseline_ms = t0.elapsed().as_millis() as u64;
+    let budget = mutant_budget(baseline_ms, timeout);
     summary.baseline_passed = baseline.passed;
     if !baseline.passed {
         return Ok(summary);
@@ -582,7 +684,15 @@ pub fn run_inner(
     );
     let total = queue.len();
 
-    let result_rx = dispatch_mutants(root, queue, &baseline, &test_files, isolation, threads);
+    let result_rx = dispatch_mutants(
+        root,
+        queue,
+        &baseline,
+        &test_files,
+        isolation,
+        threads,
+        budget,
+    );
     consume_mutant_results(result_rx, total, quiet, cwd, progress, &mut summary);
 
     // Persist verdicts for the next run. The red-baseline return above keeps
@@ -635,6 +745,7 @@ fn generate_queue(
 }
 
 /// Route the queue to sequential or parallel dispatch.
+#[allow(clippy::too_many_arguments)]
 fn dispatch_mutants(
     root: &Path,
     queue: Vec<MutantWork>,
@@ -642,6 +753,7 @@ fn dispatch_mutants(
     test_files: &[PathBuf],
     isolation: Isolation,
     threads: usize,
+    budget: Duration,
 ) -> std::sync::mpsc::Receiver<MutantResult> {
     if threads <= 1 || isolation == Isolation::InProcess {
         dispatch_sequential(
@@ -650,6 +762,7 @@ fn dispatch_mutants(
             baseline.src_to_tests.clone(),
             test_files.to_vec(),
             isolation,
+            budget,
         )
     } else {
         dispatch_parallel(
@@ -658,6 +771,7 @@ fn dispatch_mutants(
             baseline.src_to_tests.clone(),
             test_files.to_vec(),
             threads,
+            budget,
         )
     }
 }
@@ -832,6 +946,7 @@ fn fold_cached_entry(summary: &mut MutationSummary, src: &Path, entry: &CacheEnt
         global.equivalent_byte[i] += per_op.equivalent_byte[i];
         global.equivalent_static[i] += per_op.equivalent_static[i];
         global.killed[i] += per_op.killed[i];
+        global.timed_out[i] += per_op.timed_out[i];
         global.survived[i] += per_op.survived[i];
         global.errored[i] += per_op.errored[i];
     }
@@ -842,6 +957,10 @@ fn fold_cached_entry(summary: &mut MutationSummary, src: &Path, entry: &CacheEnt
         summary.generated += 1;
         match status {
             MutantStatus::Killed => summary.killed += 1,
+            MutantStatus::TimedOut => {
+                summary.killed += 1;
+                summary.timed_out += 1;
+            }
             MutantStatus::Survived => summary.survived += 1,
             MutantStatus::Errored => summary.errored += 1,
         }
@@ -1158,6 +1277,14 @@ fn consume_mutant_results(
                 summary.killed += 1;
                 summary.per_operator.killed[op_idx] += 1;
             }
+            MutantStatus::TimedOut => {
+                // Timed-out ⊂ killed: bump both so the score treats it as a
+                // kill while the sub-count stays visible.
+                summary.killed += 1;
+                summary.timed_out += 1;
+                summary.per_operator.killed[op_idx] += 1;
+                summary.per_operator.timed_out[op_idx] += 1;
+            }
             MutantStatus::Survived => {
                 summary.survived += 1;
                 summary.per_operator.survived[op_idx] += 1;
@@ -1173,6 +1300,10 @@ fn consume_mutant_results(
             .or_default();
         match status {
             MutantStatus::Killed => per_file.killed[op_idx] += 1,
+            MutantStatus::TimedOut => {
+                per_file.killed[op_idx] += 1;
+                per_file.timed_out[op_idx] += 1;
+            }
             MutantStatus::Survived => per_file.survived[op_idx] += 1,
             MutantStatus::Errored => per_file.errored[op_idx] += 1,
         }
@@ -1204,6 +1335,7 @@ fn dispatch_sequential(
     src_to_tests: HashMap<PathBuf, Vec<PathBuf>>,
     test_files: Vec<PathBuf>,
     isolation: Isolation,
+    budget: Duration,
 ) -> std::sync::mpsc::Receiver<MutantResult> {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
@@ -1214,11 +1346,15 @@ fn dispatch_sequential(
                 .unwrap_or(test_files.as_slice());
             let status = match isolation {
                 Isolation::InProcess => {
-                    run_one_mutant_inproc(&root, &item.src_path, &item.mutated_js, relevant)
+                    run_one_mutant_inproc(&root, &item.src_path, &item.mutated_js, relevant, budget)
                 }
-                Isolation::Subprocess => {
-                    run_one_mutant_subprocess(&root, &item.src_path, &item.mutated_js, relevant)
-                }
+                Isolation::Subprocess => run_one_mutant_subprocess(
+                    &root,
+                    &item.src_path,
+                    &item.mutated_js,
+                    relevant,
+                    budget,
+                ),
             };
             if tx.send((item.src_path, item.site, status)).is_err() {
                 break;
@@ -1240,6 +1376,7 @@ fn dispatch_parallel(
     src_to_tests: HashMap<PathBuf, Vec<PathBuf>>,
     test_files: Vec<PathBuf>,
     threads: usize,
+    budget: Duration,
 ) -> std::sync::mpsc::Receiver<MutantResult> {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1267,8 +1404,13 @@ fn dispatch_parallel(
                     .get(&item.src_path)
                     .map(|v| v.as_slice())
                     .unwrap_or(test_files.as_slice());
-                let status =
-                    run_one_mutant_subprocess(&root, &item.src_path, &item.mutated_js, relevant);
+                let status = run_one_mutant_subprocess(
+                    &root,
+                    &item.src_path,
+                    &item.mutated_js,
+                    relevant,
+                    budget,
+                );
                 if tx
                     .send((item.src_path.clone(), item.site.clone(), status))
                     .is_err()
@@ -1282,18 +1424,26 @@ fn dispatch_parallel(
     rx
 }
 
-/// Run a single mutant's full test loop in the calling process.
+/// Run a single mutant's full test loop in the calling process. Each test
+/// file is run under a fresh `budget` deadline; if the engine deadline trips
+/// the mutant is [`MutantStatus::TimedOut`] (checked before the load-error /
+/// failure classification so an aborted infinite loop isn't miscounted).
 fn run_one_mutant_inproc(
     root: &Path,
     src_path: &Path,
     mutated_js: &str,
     test_files: &[PathBuf],
+    budget: Duration,
 ) -> MutantStatus {
     let mut overlay: HashMap<PathBuf, String> = HashMap::new();
     overlay.insert(src_path.to_path_buf(), mutated_js.to_string());
     for tf in test_files {
         let loader = Rc::new(ZeroModuleLoader::new(root).with_overlay(overlay.clone()));
-        let result = run_file_with_loader(root, tf, loader);
+        let deadline = Some(Instant::now() + budget);
+        let result = run_file_with_loader_deadline(root, tf, loader, deadline);
+        if result.timed_out {
+            return MutantStatus::TimedOut;
+        }
         if result.load_error.is_some() {
             return MutantStatus::Errored;
         }
@@ -1308,15 +1458,67 @@ fn run_one_mutant_inproc(
     MutantStatus::Survived
 }
 
+/// Extra wall-time the parent waits beyond the child's own engine deadline
+/// before hard-killing it. The child normally self-reports a `timed-out`
+/// verdict well within `budget`; this grace lets that precise report win the
+/// common case, with the OS kill as a true last resort.
+const GRACE: Duration = Duration::from_secs(2);
+
+/// How the parent's bounded wait on a `mutate-worker` child concluded.
+#[derive(Debug, PartialEq, Eq)]
+enum WaitOutcome {
+    /// The child exited on its own; carries `Child::status().code()`.
+    Exited(Option<i32>),
+    /// The child overran the hard deadline and the parent killed it.
+    Killed,
+    /// `try_wait`/`wait` failed at the OS level.
+    WaitError,
+}
+
+/// Poll `child` until it exits or `hard` elapses. On overrun the child is
+/// killed (and reaped) and [`WaitOutcome::Killed`] returned. std-only: a 10ms
+/// `try_wait` poll loop — negligible next to mutant run times.
+fn wait_or_kill(child: &mut std::process::Child, hard: Instant) -> WaitOutcome {
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return WaitOutcome::Exited(status.code()),
+            Ok(None) => {
+                if Instant::now() >= hard {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return WaitOutcome::Killed;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(_) => return WaitOutcome::WaitError,
+        }
+    }
+}
+
+/// Map a child's [`WaitOutcome`] onto a verdict. Exit codes mirror
+/// [`MutantStatus::to_exit_code`]; a parent-killed child is `TimedOut` (we
+/// know why it died); anything else is `Errored`.
+fn classify_child(outcome: WaitOutcome) -> MutantStatus {
+    match outcome {
+        WaitOutcome::Exited(Some(0)) => MutantStatus::Survived,
+        WaitOutcome::Exited(Some(1)) => MutantStatus::Killed,
+        WaitOutcome::Exited(Some(3)) => MutantStatus::TimedOut,
+        WaitOutcome::Killed => MutantStatus::TimedOut,
+        WaitOutcome::Exited(_) | WaitOutcome::WaitError => MutantStatus::Errored,
+    }
+}
+
 /// Run a single mutant's full test loop in a child `zero mutate-worker`
-/// process. Child exit codes encode the verdict; anything outside `0..=2`
-/// (e.g. an engine-internal abort during context teardown) is reported as
-/// [`MutantStatus::Errored`].
+/// process. The child arms its own engine deadline (`--timeout-ms`) and
+/// exits `3` on a self-observed timeout; the parent additionally hard-waits
+/// `budget + GRACE` and kills a wedged child, recording either as `TimedOut`.
+/// Temp files are cleaned on every path, including the kill path.
 fn run_one_mutant_subprocess(
     root: &Path,
     src_path: &Path,
     mutated_js: &str,
     test_files: &[PathBuf],
+    budget: Duration,
 ) -> MutantStatus {
     let tmp_dir = std::env::temp_dir();
     let uniq = format!("zero-mutate-{}-{}", std::process::id(), next_tmp_counter());
@@ -1341,7 +1543,8 @@ fn run_one_mutant_subprocess(
             Ok(p) => p,
             Err(_) => return MutantStatus::Errored,
         };
-        let output = Command::new(exe)
+        let budget_ms = budget.as_millis() as u64;
+        let mut child = match Command::new(exe)
             .arg("mutate-worker")
             .arg("--root")
             .arg(root)
@@ -1351,18 +1554,17 @@ fn run_one_mutant_subprocess(
             .arg(&mutated_path)
             .arg("--tests-file")
             .arg(&tests_path)
+            .arg("--timeout-ms")
+            .arg(budget_ms.to_string())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .output();
-        let status = match output {
-            Ok(o) => o.status,
+            .spawn()
+        {
+            Ok(c) => c,
             Err(_) => return MutantStatus::Errored,
         };
-        match status.code() {
-            Some(0) => MutantStatus::Survived,
-            Some(1) => MutantStatus::Killed,
-            _ => MutantStatus::Errored,
-        }
+        let hard = Instant::now() + budget + GRACE;
+        classify_child(wait_or_kill(&mut child, hard))
     })();
 
     let _ = std::fs::remove_file(&mutated_path);
@@ -1385,11 +1587,14 @@ fn next_tmp_counter() -> u64 {
 /// - `mutated_src`: canonical source-file path being mutated (overlay key).
 /// - `mutated_js_file`: file containing the mutated JS body.
 /// - `tests_file`: file with newline-separated absolute test-file paths.
+/// - `timeout_ms`: per-mutant engine deadline in milliseconds. `None` falls
+///   back to the default floor budget (the parent always passes it).
 pub fn worker_main(
     root: &Path,
     mutated_src: &Path,
     mutated_js_file: &Path,
     tests_file: &Path,
+    timeout_ms: Option<u64>,
 ) -> MutantStatus {
     let mutated_js = match std::fs::read_to_string(mutated_js_file) {
         Ok(s) => s,
@@ -1405,7 +1610,10 @@ pub fn worker_main(
         .filter(|l| !l.is_empty())
         .map(PathBuf::from)
         .collect();
-    run_one_mutant_inproc(root, mutated_src, &mutated_js, &tests)
+    let budget = timeout_ms
+        .map(Duration::from_millis)
+        .unwrap_or_else(|| mutant_budget(0, None));
+    run_one_mutant_inproc(root, mutated_src, &mutated_js, &tests, budget)
 }
 
 /// Map the CLI flags onto a [`CacheMode`]. Narrowed runs (`--operators`,
@@ -1422,6 +1630,7 @@ fn cache_mode_for(filter_set: bool, max_set: bool, no_cache: bool) -> CacheMode 
 }
 
 /// CLI entry point for `zero mutate`.
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     target: Option<String>,
     operators: Option<String>,
@@ -1429,6 +1638,7 @@ pub async fn run(
     quiet: bool,
     threads: usize,
     no_cache: bool,
+    timeout: Option<String>,
 ) -> anyhow::Result<()> {
     let config = Config::load_from_cwd()?;
     let cwd = std::env::current_dir()?;
@@ -1437,9 +1647,10 @@ pub async fn run(
     let filter_was_set = operators.is_some();
     let ops = parse_operators(operators.as_deref())?;
     let cache_mode = cache_mode_for(filter_was_set, max_mutants.is_some(), no_cache);
+    let timeout = timeout.as_deref().map(parse_timeout).transpose()?;
 
     let mut stdout = std::io::stdout().lock();
-    let summary = run_inner(
+    let summary = run_inner_timed(
         &root,
         &out,
         &cwd,
@@ -1450,6 +1661,7 @@ pub async fn run(
         Isolation::Subprocess,
         threads,
         cache_mode,
+        timeout,
         &mut stdout,
     )?;
 
@@ -1730,7 +1942,7 @@ describe("g", () => {
 
         let s = fs::read_to_string(root.join("mutation/cache.json")).expect("cache written");
         let v: serde_json::Value = serde_json::from_str(&s).unwrap();
-        assert_eq!(v["schema_version"], 1);
+        assert_eq!(v["schema_version"], 2);
 
         let entries = v["entries"].as_object().expect("entries object");
         assert!(
@@ -2070,7 +2282,7 @@ export function alpha(a: number, b: number) { return a + b + base() - base() }
         let v: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(root.join("mutation/cache.json")).unwrap())
                 .expect("rewritten cache parses");
-        assert_eq!(v["schema_version"], 1);
+        assert_eq!(v["schema_version"], 2);
 
         // Version skew: a structurally valid cache written by another CLI
         // version is treated as absent.
@@ -2272,6 +2484,119 @@ describe("alpha again", () => { it("adds", () => expect(alpha(2, 2)).toBe(4)); }
         // Narrowed runs bypass even when --no-cache is also given.
         assert_eq!(cache_mode_for(true, false, true), CacheMode::Bypass);
         assert_eq!(cache_mode_for(false, true, true), CacheMode::Bypass);
+    }
+
+    /// Build a `MutationSummary` by streaming `results` through
+    /// `consume_mutant_results` (the real accounting path).
+    fn tally(results: Vec<MutantResult>) -> MutationSummary {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let total = results.len();
+        for r in results {
+            tx.send(r).unwrap();
+        }
+        drop(tx);
+        let mut summary = MutationSummary::default();
+        let mut sink: Vec<u8> = Vec::new();
+        consume_mutant_results(rx, total, true, Path::new("/"), &mut sink, &mut summary);
+        summary
+    }
+
+    fn site_at(op: Operator) -> MutationSite {
+        MutationSite {
+            file: PathBuf::from("/proj/src/foo.ts"),
+            operator: op,
+            line: 1,
+            column: 1,
+            original: "x".into(),
+            replacement: "y".into(),
+        }
+    }
+
+    #[test]
+    fn parse_timeout_accepts_ms_s_and_bare_seconds() {
+        assert_eq!(parse_timeout("500ms").unwrap(), Duration::from_millis(500));
+        assert_eq!(parse_timeout("10s").unwrap(), Duration::from_secs(10));
+        assert_eq!(parse_timeout("2").unwrap(), Duration::from_secs(2));
+        assert_eq!(parse_timeout(" 3s ").unwrap(), Duration::from_secs(3));
+    }
+
+    #[test]
+    fn parse_timeout_rejects_garbage() {
+        for bad in ["", "abc", "10m", "1.5s", "-4", "s", "ms"] {
+            assert!(parse_timeout(bad).is_err(), "expected {bad:?} to error");
+        }
+    }
+
+    #[test]
+    fn mutant_budget_floor_and_factor_and_override() {
+        // Fast baseline: the floor dominates.
+        assert_eq!(
+            mutant_budget(100, None),
+            Duration::from_millis(TIMEOUT_FLOOR_MS)
+        );
+        // Slow baseline: the factor dominates.
+        assert_eq!(
+            mutant_budget(1000, None),
+            Duration::from_millis(1000 * TIMEOUT_FACTOR)
+        );
+        // Override always wins, regardless of baseline.
+        assert_eq!(
+            mutant_budget(9_999, Some(Duration::from_millis(50))),
+            Duration::from_millis(50)
+        );
+    }
+
+    #[test]
+    fn timed_out_folds_into_killed_with_distinct_subcount() {
+        let summary = tally(vec![(
+            PathBuf::from("/proj/src/foo.ts"),
+            site_at(Operator::Arith),
+            MutantStatus::TimedOut,
+        )]);
+        assert_eq!(summary.killed, 1, "timed-out counts as killed");
+        assert_eq!(summary.timed_out, 1, "and as a distinct sub-count");
+        assert_eq!(summary.survived, 0);
+        assert_eq!(summary.errored, 0);
+        assert!((summary.score() - 1.0).abs() < f64::EPSILON);
+        let arith = Operator::Arith.index();
+        assert_eq!(summary.per_operator.killed[arith], 1);
+        assert_eq!(summary.per_operator.timed_out[arith], 1);
+    }
+
+    #[test]
+    fn terminal_summary_reports_timed_out_subcount_when_present() {
+        let with = tally(vec![(
+            PathBuf::from("/proj/src/foo.ts"),
+            site_at(Operator::Arith),
+            MutantStatus::TimedOut,
+        )]);
+        let mut buf: Vec<u8> = Vec::new();
+        write_terminal_summary(&mut buf, &with, Path::new("/proj"), true, None).expect("write");
+        let s = String::from_utf8(buf).unwrap();
+        assert!(
+            s.contains("incl. 1 timed-out"),
+            "expected sub-count in:\n{s}"
+        );
+
+        let without = tally(vec![(
+            PathBuf::from("/proj/src/foo.ts"),
+            site_at(Operator::Arith),
+            MutantStatus::Killed,
+        )]);
+        let mut buf2: Vec<u8> = Vec::new();
+        write_terminal_summary(&mut buf2, &without, Path::new("/proj"), true, None).expect("write");
+        let s2 = String::from_utf8(buf2).unwrap();
+        assert!(!s2.contains("timed-out"), "should omit when zero:\n{s2}");
+    }
+
+    #[test]
+    fn timed_out_status_round_trips_and_exit_code() {
+        assert_eq!(MutantStatus::TimedOut.as_str(), "timed-out");
+        assert_eq!(
+            MutantStatus::parse("timed-out"),
+            Some(MutantStatus::TimedOut)
+        );
+        assert_eq!(MutantStatus::TimedOut.to_exit_code(), 3);
     }
 
     #[test]
@@ -2661,6 +2986,220 @@ describe("g", () => { it("calls", () => { add(1,2); expect(1).toBe(1); }); });
         assert!(
             summary.survived >= 1,
             "expected a surviving mutant: {summary:?}"
+        );
+    }
+
+    /// A `humanBytes`-shaped loop whose progress step is a *binary* add
+    /// (`i = i + 1`), so the arith operator can invert it to `i = i - 1` and
+    /// produce a non-terminating mutant — the reported bug in miniature.
+    const LOOP_SRC: &str = r#"export function sumTo(n: number): number {
+  let total = 0;
+  let i = 0;
+  while (i < n) {
+    total = total + 1;
+    i = i + 1;
+  }
+  return total;
+}
+"#;
+
+    /// R1 / R6 case 1: an infinite-loop mutant is aborted at the budget,
+    /// recorded `TimedOut`, folds into `killed`, and the run completes in
+    /// bounded wall-time (proving no hang).
+    #[test]
+    fn infinite_loop_mutant_times_out_instead_of_hanging() {
+        let dir = make_project(
+            LOOP_SRC,
+            r#"import { describe, it, expect } from "zero/test";
+import { sumTo } from "./src/foo.ts";
+describe("sumTo", () => {
+  it("counts", () => expect(sumTo(3)).toBe(3));
+});
+"#,
+        );
+        let root = dir.path();
+        let out = root.join("dist");
+        let mut sink: Vec<u8> = Vec::new();
+        let start = Instant::now();
+        let summary = run_inner_timed(
+            root,
+            &out,
+            root,
+            None,
+            &[Operator::Arith],
+            None,
+            true,
+            Isolation::InProcess,
+            1,
+            CacheMode::Bypass,
+            Some(Duration::from_millis(400)),
+            &mut sink,
+        )
+        .expect("ok");
+        let elapsed = start.elapsed();
+
+        assert!(summary.baseline_passed, "baseline failed: {summary:?}");
+        assert!(
+            summary.timed_out >= 1,
+            "the loop-inverting mutant should time out: {summary:?}"
+        );
+        assert!(
+            summary.killed >= summary.timed_out,
+            "timed-out must fold into killed: {summary:?}"
+        );
+        let executed = summary.killed + summary.survived + summary.errored;
+        assert!(executed > 0, "score must be non-vacuous: {summary:?}");
+        assert!(
+            elapsed < Duration::from_secs(30),
+            "run must not hang; took {elapsed:?}"
+        );
+    }
+
+    /// R6 case 4: an explicit short override forces a `TimedOut` on the
+    /// infinite-loop mutant even though the *derived* budget (2s floor) would
+    /// also catch it — this proves the override plumbing reaches dispatch.
+    /// A 1ms budget trips the deadline near-instantly, keeping the test fast.
+    #[test]
+    fn explicit_short_timeout_override_forces_timeout() {
+        let dir = make_project(
+            LOOP_SRC,
+            r#"import { describe, it, expect } from "zero/test";
+import { sumTo } from "./src/foo.ts";
+describe("sumTo", () => { it("counts", () => expect(sumTo(3)).toBe(3)); });
+"#,
+        );
+        let root = dir.path();
+        let out = root.join("dist");
+        let mut sink: Vec<u8> = Vec::new();
+        let start = Instant::now();
+        let summary = run_inner_timed(
+            root,
+            &out,
+            root,
+            None,
+            &[Operator::Arith],
+            None,
+            true,
+            Isolation::InProcess,
+            1,
+            CacheMode::Bypass,
+            Some(Duration::from_millis(1)),
+            &mut sink,
+        )
+        .expect("ok");
+        assert!(summary.baseline_passed, "baseline: {summary:?}");
+        assert!(
+            summary.timed_out >= 1,
+            "short override should force a timeout: {summary:?}"
+        );
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "must stay bounded"
+        );
+    }
+
+    /// R6 case 3: with a generous budget a normal killed/survived fixture
+    /// produces no timeouts — the guard doesn't perturb terminating mutants.
+    #[test]
+    fn generous_budget_no_regression_on_terminating_mutants() {
+        let dir = make_project(
+            "export function add(a: number, b: number) { return a + b }\n",
+            r#"import { describe, it, expect } from "zero/test";
+import { add } from "./src/foo.ts";
+describe("g", () => {
+  it("adds 1+2", () => expect(add(1, 2)).toBe(3));
+  it("adds 5+7", () => expect(add(5, 7)).toBe(12));
+});
+"#,
+        );
+        let root = dir.path();
+        let out = root.join("dist");
+        let mut sink: Vec<u8> = Vec::new();
+        let summary = run_inner_timed(
+            root,
+            &out,
+            root,
+            None,
+            &[Operator::Arith],
+            None,
+            true,
+            Isolation::InProcess,
+            1,
+            CacheMode::Bypass,
+            Some(Duration::from_secs(30)),
+            &mut sink,
+        )
+        .expect("ok");
+        assert!(summary.baseline_passed);
+        assert_eq!(summary.timed_out, 0, "no false timeouts: {summary:?}");
+        assert!(summary.killed >= 1);
+        assert_eq!(summary.survived, 0);
+    }
+
+    #[test]
+    fn classify_child_maps_exit_codes_and_kill() {
+        assert_eq!(
+            classify_child(WaitOutcome::Exited(Some(0))),
+            MutantStatus::Survived
+        );
+        assert_eq!(
+            classify_child(WaitOutcome::Exited(Some(1))),
+            MutantStatus::Killed
+        );
+        assert_eq!(
+            classify_child(WaitOutcome::Exited(Some(3))),
+            MutantStatus::TimedOut
+        );
+        // A parent-killed child is a timeout, not an error.
+        assert_eq!(classify_child(WaitOutcome::Killed), MutantStatus::TimedOut);
+        // Unknown code / no code / wait error → Errored.
+        assert_eq!(
+            classify_child(WaitOutcome::Exited(Some(2))),
+            MutantStatus::Errored
+        );
+        assert_eq!(
+            classify_child(WaitOutcome::Exited(None)),
+            MutantStatus::Errored
+        );
+        assert_eq!(
+            classify_child(WaitOutcome::WaitError),
+            MutantStatus::Errored
+        );
+    }
+
+    #[test]
+    fn wait_or_kill_reaps_a_fast_child() {
+        // `exit 3` returns promptly, well within the deadline.
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg("exit 3")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn sh");
+        let hard = Instant::now() + Duration::from_secs(10);
+        assert_eq!(wait_or_kill(&mut child, hard), WaitOutcome::Exited(Some(3)));
+    }
+
+    #[test]
+    fn wait_or_kill_kills_an_overrunning_child() {
+        // A child that sleeps far past the deadline must be killed, and the
+        // whole call must return in bounded wall-time.
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg("sleep 30")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn sh");
+        let start = Instant::now();
+        let hard = start + Duration::from_millis(100);
+        let outcome = wait_or_kill(&mut child, hard);
+        let elapsed = start.elapsed();
+        assert_eq!(outcome, WaitOutcome::Killed);
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "kill path must be bounded; took {elapsed:?}"
         );
     }
 

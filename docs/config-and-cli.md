@@ -191,9 +191,40 @@ with each mutation applied.
 | `--threads <n>`               | Run mutants in parallel. Defaults to `min(cores, 8)` — parallel by default; the cap keeps headroom on bigger boxes for IDE / build processes. Pass `1` for sequential. |
 | `-q, --quiet`                 | Suppress per-mutant lines; print summary only.         |
 | `--no-cache`                  | Ignore the incremental cache: re-run every mutant and rewrite `mutation/cache.json`. |
+| `--timeout <dur>`             | Per-mutant execution budget. Accepts `10s`, `500ms`, or a bare integer (seconds). Default: `max(2s, baseline × 5)`. |
 
 Operator ids accepted by `--operators`: `arith`, `cmp`, `bool`,
 `cond_neg`, `boundary`, `lit_bool`, `lit_num`, `lit_str`.
+
+#### Timeouts
+
+Mutation testing deliberately runs *hostile* variants of your code, and some
+of them don't terminate — inverting a loop's progress step (`i += 1` →
+`i -= 1`) or growing a value the loop waits to shrink turns a bounded loop
+into an infinite one. Rather than hang the run, `zero mutate` gives every
+mutant a per-run budget and aborts any mutant that exceeds it.
+
+- **Budget.** Derived once per run from the measured baseline suite
+  wall-time: `max(2s, baseline × 5)`. This adapts to slow suites and slow
+  machines. Override it with `--timeout <dur>` (`10s`, `500ms`, or a bare
+  integer meaning seconds). The flag composes with `--threads`,
+  `--operators`, `--max-mutants`, `--no-cache`, and `--quiet`.
+- **Classification.** A mutant that does not terminate within the budget is
+  **killed** — an infinite loop is a real, test-detectable divergence, not a
+  survivor — and is additionally reported as a `timed-out` sub-count so you
+  can see how many kills were timeouts, e.g.
+  `Killed: 9 (incl. 2 timed-out)`. The per-operator breakdown carries the
+  same sub-count.
+- **Two guards.** In-process runs (and the unit tests) rely on a QuickJS
+  engine deadline that lets the JS loop self-abort precisely. The CLI's
+  subprocess workers arm that same deadline *and* the parent hard-waits
+  `budget + 2s` and kills a child that wedges for any reason the engine
+  deadline can't observe, so a run can never stall past `budget + grace`.
+
+`mutation.json` is unchanged by this — still **schema version 2**. The
+`timed_out` counts (per-operator and in `totals`) are additive, optional
+fields that older readers ignore; the frozen `killed / survived / errored`
+buckets and their meanings are the same.
 
 #### Incremental runs
 

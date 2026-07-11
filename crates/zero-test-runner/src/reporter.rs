@@ -191,6 +191,7 @@ mod tests {
             path: PathBuf::from(path),
             outcomes,
             load_error,
+            timed_out: false,
         }
     }
 

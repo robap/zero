@@ -68,6 +68,9 @@ enum Commands {
         /// `mutation/cache.json`.
         #[arg(long, default_value_t = false)]
         no_cache: bool,
+        /// Per-mutant timeout (e.g. 10s, 500ms). Default: max(2s, baseline×5).
+        #[arg(long)]
+        timeout: Option<String>,
     },
     /// Refresh framework files in .zero/
     Update {
@@ -93,6 +96,9 @@ enum Commands {
         mutated_js_file: std::path::PathBuf,
         #[arg(long)]
         tests_file: std::path::PathBuf,
+        /// Per-mutant engine deadline in milliseconds (parent-supplied).
+        #[arg(long)]
+        timeout_ms: Option<u64>,
     },
 }
 
@@ -126,15 +132,33 @@ async fn main() {
             quiet,
             threads,
             no_cache,
-        } => cmd::mutate::run(target, operators, max_mutants, quiet, threads, no_cache).await,
+            timeout,
+        } => {
+            cmd::mutate::run(
+                target,
+                operators,
+                max_mutants,
+                quiet,
+                threads,
+                no_cache,
+                timeout,
+            )
+            .await
+        }
         Commands::MutateWorker {
             root,
             mutated_src,
             mutated_js_file,
             tests_file,
+            timeout_ms,
         } => {
-            let status =
-                cmd::mutate::worker_main(&root, &mutated_src, &mutated_js_file, &tests_file);
+            let status = cmd::mutate::worker_main(
+                &root,
+                &mutated_src,
+                &mutated_js_file,
+                &tests_file,
+                timeout_ms,
+            );
             std::process::exit(status.to_exit_code());
         }
         Commands::Update { yes } => cmd::update::run(yes).await,
@@ -155,6 +179,54 @@ mod tests {
         let cli = Cli::try_parse_from(args).expect("parse");
         match cli.command {
             Commands::Mutate { threads, .. } => threads,
+            _ => panic!("expected mutate"),
+        }
+    }
+
+    fn parsed_timeout(args: &[&str]) -> Option<String> {
+        let cli = Cli::try_parse_from(args).expect("parse");
+        match cli.command {
+            Commands::Mutate { timeout, .. } => timeout,
+            _ => panic!("expected mutate"),
+        }
+    }
+
+    #[test]
+    fn timeout_absent_is_none() {
+        assert_eq!(parsed_timeout(&["zero", "mutate"]), None);
+    }
+
+    #[test]
+    fn timeout_flag_parses_value() {
+        assert_eq!(
+            parsed_timeout(&["zero", "mutate", "--timeout", "10s"]),
+            Some("10s".to_string())
+        );
+    }
+
+    #[test]
+    fn timeout_composes_with_threads_and_no_cache() {
+        let cli = Cli::try_parse_from([
+            "zero",
+            "mutate",
+            "--timeout",
+            "500ms",
+            "--threads",
+            "2",
+            "--no-cache",
+        ])
+        .expect("parse");
+        match cli.command {
+            Commands::Mutate {
+                timeout,
+                threads,
+                no_cache,
+                ..
+            } => {
+                assert_eq!(timeout, Some("500ms".to_string()));
+                assert_eq!(threads, 2);
+                assert!(no_cache);
+            }
             _ => panic!("expected mutate"),
         }
     }
@@ -197,6 +269,50 @@ mod tests {
     #[test]
     fn no_cache_flag_parses_to_true() {
         assert!(parsed_no_cache(&["zero", "mutate", "--no-cache"]));
+    }
+
+    #[test]
+    fn mutate_worker_parses_timeout_ms() {
+        let cli = Cli::try_parse_from([
+            "zero",
+            "mutate-worker",
+            "--root",
+            "/p",
+            "--mutated-src",
+            "/p/src/a.ts",
+            "--mutated-js-file",
+            "/tmp/x.js",
+            "--tests-file",
+            "/tmp/x.tests",
+            "--timeout-ms",
+            "1500",
+        ])
+        .expect("parse");
+        match cli.command {
+            Commands::MutateWorker { timeout_ms, .. } => assert_eq!(timeout_ms, Some(1500)),
+            _ => panic!("expected mutate-worker"),
+        }
+    }
+
+    #[test]
+    fn mutate_worker_timeout_ms_optional() {
+        let cli = Cli::try_parse_from([
+            "zero",
+            "mutate-worker",
+            "--root",
+            "/p",
+            "--mutated-src",
+            "/p/src/a.ts",
+            "--mutated-js-file",
+            "/tmp/x.js",
+            "--tests-file",
+            "/tmp/x.tests",
+        ])
+        .expect("parse");
+        match cli.command {
+            Commands::MutateWorker { timeout_ms, .. } => assert_eq!(timeout_ms, None),
+            _ => panic!("expected mutate-worker"),
+        }
     }
 
     #[test]

@@ -114,7 +114,21 @@ pub fn run_file_with_loader(
     file_abs: &Path,
     loader: Rc<ZeroModuleLoader>,
 ) -> FileResult {
-    run_with_loader(project_root, file_abs, loader, false).result
+    run_with_loader(project_root, file_abs, loader, false, None).result
+}
+
+/// Like [`run_file_with_loader`] but arms a QuickJS execution deadline: when
+/// `deadline` is `Some(d)`, JS execution self-aborts once `Instant::now() >= d`
+/// and the returned [`FileResult`] has `timed_out == true`. `None` behaves
+/// exactly like [`run_file_with_loader`] (no deadline). Used by `zero mutate`
+/// to bound per-mutant execution so an infinite-loop mutant can't hang.
+pub fn run_file_with_loader_deadline(
+    project_root: &Path,
+    file_abs: &Path,
+    loader: Rc<ZeroModuleLoader>,
+    deadline: Option<Instant>,
+) -> FileResult {
+    run_with_loader(project_root, file_abs, loader, false, deadline).result
 }
 
 /// Like [`run_file`] but optionally enables coverage instrumentation. When
@@ -131,7 +145,7 @@ pub fn run_file_with_coverage(
         Some(ctx) => Rc::new(ZeroModuleLoader::new_with_coverage(project_root, ctx)),
         None => Rc::new(ZeroModuleLoader::new(project_root)),
     };
-    run_with_loader(project_root, file_abs, loader, want_coverage)
+    run_with_loader(project_root, file_abs, loader, want_coverage, None)
 }
 
 fn run_with_loader(
@@ -139,6 +153,7 @@ fn run_with_loader(
     file_abs: &Path,
     loader: Rc<ZeroModuleLoader>,
     want_coverage: bool,
+    deadline: Option<Instant>,
 ) -> RunOutcome {
     let rel_path = file_abs
         .strip_prefix(project_root)
@@ -148,12 +163,18 @@ fn run_with_loader(
     let project_root_owned = project_root.to_path_buf();
     let file_abs_owned = file_abs.to_path_buf();
 
+    // The deadline-tripped flag lives here, outside `catch_unwind`, so it is
+    // still readable if the inner run panics during teardown after the
+    // interrupt fired.
+    let tripped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
     // Swap in a silent panic hook for the duration of catch_unwind so a
     // teardown panic doesn't dump a stderr trace before the synthetic failure
     // is reported. The guard restores the original hook on drop, even if the
     // closure itself panics.
     let _hook_guard = SilentPanicHookGuard::install();
 
+    let inner_tripped = tripped.clone();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         run_with_loader_inner(
             &project_root_owned,
@@ -161,14 +182,18 @@ fn run_with_loader(
             loader,
             want_coverage,
             rel_path,
+            deadline,
+            inner_tripped,
         )
     }));
     drop(_hook_guard);
 
-    match result {
+    let mut outcome = match result {
         Ok(outcome) => outcome,
         Err(payload) => synthesize_panic_outcome(rel_for_panic, payload),
-    }
+    };
+    outcome.result.timed_out = tripped.load(std::sync::atomic::Ordering::Relaxed);
+    outcome
 }
 
 fn run_with_loader_inner(
@@ -177,6 +202,8 @@ fn run_with_loader_inner(
     loader: Rc<ZeroModuleLoader>,
     want_coverage: bool,
     rel_path: PathBuf,
+    deadline: Option<Instant>,
+    tripped: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> RunOutcome {
     let raw = match read_test_source(file_abs) {
         Ok(s) => s,
@@ -196,6 +223,23 @@ fn run_with_loader_inner(
         Ok(r) => r,
         Err(e) => return load_error_outcome(rel_path, infra_failure(format!("runtime: {e}"))),
     };
+    if let Some(d) = deadline {
+        // QuickJS calls this handler periodically (not per-op). Keep it O(1):
+        // one `Instant::now()` compare. Returning `true` aborts execution,
+        // which surfaces as an exception the outer layers map to a load error
+        // or a synthetic failure — but `tripped` is the source of truth that
+        // marks the run as timed out.
+        use std::sync::atomic::Ordering;
+        let tripped = tripped.clone();
+        rt.set_interrupt_handler(Some(Box::new(move || {
+            if Instant::now() >= d {
+                tripped.store(true, Ordering::Relaxed);
+                true
+            } else {
+                false
+            }
+        })));
+    }
     rt.set_loader(
         ZeroResolver::new(loader.clone()),
         ZeroLoader::new(loader.clone()),
@@ -257,6 +301,7 @@ fn run_with_loader_inner(
                 path: rel_path,
                 outcomes,
                 load_error: None,
+                timed_out: false,
             },
             coverage,
             loaded,
@@ -338,6 +383,7 @@ pub(crate) fn synthesize_panic_outcome(
                 }),
             }],
             load_error: None,
+            timed_out: false,
         },
         coverage: None,
         loaded: vec![],
@@ -361,6 +407,7 @@ pub(crate) fn load_error_outcome(rel_path: PathBuf, failure: Failure) -> RunOutc
             path: rel_path,
             outcomes: vec![],
             load_error: Some(failure),
+            timed_out: false,
         },
         coverage: None,
         loaded: vec![],
@@ -1690,6 +1737,58 @@ describe("g", () => {
         for o in &result.outcomes {
             assert!(matches!(o.status, Status::Passed));
         }
+    }
+
+    #[test]
+    fn deadline_aborts_infinite_loop_and_flags_timed_out() {
+        use std::time::{Duration, Instant};
+        // A test body with an unbounded loop. Without the engine deadline this
+        // would hang the test process forever.
+        let f = write_temp_js(
+            r#"import { it, expect } from "zero/test";
+it("spins", () => { while (true) {} expect(1).toBe(1); });
+"#,
+        );
+        let root = f.path().parent().unwrap();
+        let start = Instant::now();
+        let deadline = Some(start + Duration::from_millis(200));
+        let result = run_file_with_loader_deadline(
+            root,
+            f.path(),
+            Rc::new(ZeroModuleLoader::new(root)),
+            deadline,
+        );
+        let elapsed = start.elapsed();
+        assert!(
+            result.timed_out,
+            "expected timed_out flag to be set: {result:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "run must not hang; took {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn generous_deadline_does_not_perturb_normal_run() {
+        use std::time::{Duration, Instant};
+        let f = write_temp_js(
+            r#"import { describe, it, expect } from "zero/test";
+describe("g", () => { it("ok", () => expect(1).toBe(1)); });
+"#,
+        );
+        let root = f.path().parent().unwrap();
+        let deadline = Some(Instant::now() + Duration::from_secs(60));
+        let result = run_file_with_loader_deadline(
+            root,
+            f.path(),
+            Rc::new(ZeroModuleLoader::new(root)),
+            deadline,
+        );
+        assert!(!result.timed_out, "generous deadline must not trip");
+        assert!(result.load_error.is_none(), "no load error: {result:?}");
+        assert_eq!(result.outcomes.len(), 1);
+        assert_eq!(result.outcomes[0].status, Status::Passed);
     }
 
     #[test]

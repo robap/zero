@@ -17,7 +17,7 @@ use super::mutate::PerOperatorSummary;
 
 /// Version of the `mutation/cache.json` schema. Any mismatch on read makes
 /// the cache count as absent.
-pub const CACHE_SCHEMA_VERSION: u64 = 1;
+pub const CACHE_SCHEMA_VERSION: u64 = 2;
 
 /// How `run_inner` interacts with `mutation/cache.json`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -202,6 +202,9 @@ fn per_operator_from_json(v: &serde_json::Value) -> Option<PerOperatorSummary> {
         out.equivalent_byte[i] = count("equivalent_byte")?;
         out.equivalent_static[i] = count("equivalent_static")?;
         out.killed[i] = count("killed")?;
+        // Additive field (cache schema v2): tolerate its absence so a
+        // half-written or hand-edited cache still loads.
+        out.timed_out[i] = count("timed_out").unwrap_or(0);
         out.survived[i] = count("survived")?;
         out.errored[i] = count("errored")?;
     }
@@ -258,6 +261,7 @@ fn entry_to_json(e: &CacheEntry) -> serde_json::Value {
                 "equivalent_byte":   e.per_operator.equivalent_byte[i],
                 "equivalent_static": e.per_operator.equivalent_static[i],
                 "killed":            e.per_operator.killed[i],
+                "timed_out":         e.per_operator.timed_out[i],
                 "survived":          e.per_operator.survived[i],
                 "errored":           e.per_operator.errored[i],
             }),
@@ -387,6 +391,7 @@ mod tests {
         per_op.equivalent_byte[1] = 2;
         per_op.equivalent_static[2] = 4;
         per_op.killed[0] = 2;
+        per_op.timed_out[0] = 1;
         per_op.survived[3] = 1;
         per_op.errored[7] = 5;
         let mut entries = BTreeMap::new();
@@ -394,14 +399,24 @@ mod tests {
             "src/a.ts".to_string(),
             CacheEntry {
                 fingerprint: "f".repeat(64),
-                sites: vec![CachedSite {
-                    line: 3,
-                    column: 14,
-                    operator: "arith".into(),
-                    original: "a + b".into(),
-                    replacement: "a - b".into(),
-                    status: "killed".into(),
-                }],
+                sites: vec![
+                    CachedSite {
+                        line: 3,
+                        column: 14,
+                        operator: "arith".into(),
+                        original: "a + b".into(),
+                        replacement: "a - b".into(),
+                        status: "killed".into(),
+                    },
+                    CachedSite {
+                        line: 4,
+                        column: 5,
+                        operator: "arith".into(),
+                        original: "i += 1".into(),
+                        replacement: "i -= 1".into(),
+                        status: "timed-out".into(),
+                    },
+                ],
                 per_operator: per_op,
             },
         );
@@ -442,7 +457,7 @@ mod tests {
         let a = &loaded.entries["src/a.ts"];
         let orig_a = &cache.entries["src/a.ts"];
         assert_eq!(a.fingerprint, orig_a.fingerprint);
-        assert_eq!(a.sites.len(), 1);
+        assert_eq!(a.sites.len(), 2);
         let s = &a.sites[0];
         assert_eq!((s.line, s.column, s.operator.as_str()), (3, 14, "arith"));
         assert_eq!(
@@ -453,6 +468,8 @@ mod tests {
             ),
             ("a + b", "a - b", "killed")
         );
+        // A timed-out site survives save → load.
+        assert_eq!(a.sites[1].status.as_str(), "timed-out");
         for i in 0..8 {
             assert_eq!(a.per_operator.matched[i], orig_a.per_operator.matched[i]);
             assert_eq!(
@@ -468,6 +485,10 @@ mod tests {
                 orig_a.per_operator.equivalent_static[i]
             );
             assert_eq!(a.per_operator.killed[i], orig_a.per_operator.killed[i]);
+            assert_eq!(
+                a.per_operator.timed_out[i],
+                orig_a.per_operator.timed_out[i]
+            );
             assert_eq!(a.per_operator.survived[i], orig_a.per_operator.survived[i]);
             assert_eq!(a.per_operator.errored[i], orig_a.per_operator.errored[i]);
         }
