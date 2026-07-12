@@ -372,7 +372,7 @@ describe("createForm", () => {
         Input({ value: form.fields.code.value, error: form.fields.code.error }),
       );
       const input = find(el, "input")!;
-      expect(input.getAttribute("value")).toBe("abc");
+      expect(input.value).toBe("abc");
       fire(input, "input", { target: { value: "abcd" } });
       expect(form.fields.code.value.val).toBe("abcd");
       expect(form.fields.code.touched.val).toBe(true);

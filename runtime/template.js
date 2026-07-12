@@ -376,7 +376,35 @@ function _walkPath(root, path) {
   return node;
 }
 
+/**
+ * If `(el, name)` is a live form property (`value` on input/textarea/select,
+ * `checked` on input, `selected` on option), set the DOM property instead of
+ * the content attribute and return `true`; otherwise return `false` so the
+ * caller falls back to attribute handling. The content attribute is only the
+ * *default* — browsers track the shown/checked/selected state on the property,
+ * so a late `setAttribute` is ignored for what the user sees.
+ * @internal
+ * @param {Element} el
+ * @param {string} name
+ * @param {unknown} v
+ * @returns {boolean}
+ */
+function _applyLiveProp(el, name, v) {
+  const tag = el.tagName;
+  if (name === 'value' && (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT')) {
+    const next = v == null ? '' : String(v);
+    // Guard: assigning the value the user already typed would move the caret
+    // to the end on every keystroke of a controlled input.
+    if (el.value !== next) el.value = next;
+    return true;
+  }
+  if (name === 'checked' && tag === 'INPUT') { el.checked = !!v && v !== 'false'; return true; }
+  if (name === 'selected' && tag === 'OPTION') { el.selected = !!v && v !== 'false'; return true; }
+  return false;
+}
+
 function _applyAttr(el, name, v) {
+  if (_applyLiveProp(el, name, v)) return;
   if (v === false || v == null) el.removeAttribute(name);
   else if (v === true) el.setAttribute(name, '');
   else el.setAttribute(name, String(v));
@@ -445,6 +473,7 @@ function _setJoinedAttr(el, name, statics, values) {
   for (let i = 0; i < values.length; i++) {
     out += _coerceConcatValue(values[i]) + statics[i + 1];
   }
+  if (_applyLiveProp(el, name, out)) return;
   el.setAttribute(name, out);
 }
 

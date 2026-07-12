@@ -169,10 +169,35 @@ sel.value = "b";
 fire(sel, "change");          // handler reads e.target.value === "b"
 ```
 
-One documented divergence from the browser: the shim treats the
+`<input>` and `<textarea>` model the browser's default-vs-live split
+for `value`, and `<input>` for `checked`:
+
+- The content attribute is the **default**; the property is the
+  **live value**. A static `<input value="start">` reads
+  `input.value === "start"` until the property is set.
+- Assigning the property (`input.value = "x"`, `input.checked = true`)
+  — which is what a reactive `value=${…}` / `checked=${…}` binding
+  does — sets the live value; a later `setAttribute("value", …)` /
+  `setAttribute("checked", …)` updates only the default and does
+  **not** change what the property reads. Assigning `value` also moves
+  the caret to the end, matching a browser.
+
+Because bindings write the property, tests assert `input.value` /
+`input.checked` directly (not `getAttribute`):
+
+```ts
+const url = signal("");
+const input = find(render(html`<input value=${url} />`), "input") as HTMLInputElement;
+url.set("https://example.com/presign");
+expect(input.value).toBe("https://example.com/presign");
+```
+
+One documented divergence remains for `<option>`: the shim treats the
 `selected` **attribute as current state**. There is no
-`defaultSelected` / dirtiness model — reactive `selected=${…}` bindings
-commit the attribute, and reads derive from it.
+`defaultSelected` / dirtiness model for options — reactive
+`selected=${…}` bindings set the property, whose setter writes the
+attribute, and reads derive from it (this keeps the select's
+attribute-based selection model consistent).
 
 Wire `cleanup()` into `afterEach` so per-test mounts don't leak:
 

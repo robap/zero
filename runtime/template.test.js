@@ -781,3 +781,79 @@ describe('select reactive selection', () => {
     expect(handler.callCount).toBe(0);
   });
 });
+
+describe('live form property bindings', () => {
+  afterEach(cleanup);
+
+  it('select value=${sig} selects the matching option and updates on change', () => {
+    const sig = signal('b');
+    const el = render(html`
+      <select value=${sig}>
+        <option value="a">A</option>
+        <option value="b">B</option>
+        <option value="c">C</option>
+      </select>
+    `);
+    const sel = find(el, 'select');
+    expect(sel.value).toBe('b');
+    sig.set('c');
+    expect(sel.value).toBe('c');
+  });
+
+  it('input value=${sig} reflects the signal and updates programmatically', () => {
+    const sig = signal('hello');
+    const el = render(html`<input value=${sig} />`);
+    const input = find(el, 'input');
+    expect(input.value).toBe('hello');
+    sig.set('world');
+    expect(input.value).toBe('world');
+  });
+
+  it('input checked=${sig} reflects the boolean signal', () => {
+    const sig = signal(true);
+    const el = render(html`<input type="checkbox" checked=${sig} />`);
+    const input = find(el, 'input');
+    expect(input.checked).toBe(true);
+    sig.set(false);
+    expect(input.checked).toBe(false);
+  });
+
+  it('option selected=${sig} reflects the boolean signal', () => {
+    // A `multiple` select lets an option be independently (de)selected — a
+    // single select keeps its first option selected (the default-first rule).
+    const sig = signal(true);
+    const el = render(html`
+      <select multiple>
+        <option value="a" selected=${() => sig.val}>A</option>
+        <option value="b">B</option>
+      </select>
+    `);
+    const [a] = findAll(el, 'option');
+    expect(a.selected).toBe(true);
+    sig.set(false);
+    expect(a.selected).toBe(false);
+  });
+
+  it('joined value="draft-${id}" sets the property and updates', () => {
+    const id = signal(1);
+    const el = render(html`<input value="draft-${id}" />`);
+    const input = find(el, 'input');
+    expect(input.value).toBe('draft-1');
+    id.set(2);
+    expect(input.value).toBe('draft-2');
+  });
+
+  it('does not reset the caret when the bound value equals the current value', () => {
+    const sig = signal('');
+    const el = render(html`<input value=${sig} />`);
+    const input = find(el, 'input');
+    // Simulate native typing: the DOM value is 'ab' with the caret mid-string.
+    input.value = 'ab';
+    input.setSelectionRange(1, 1);
+    // The binding effect re-runs with a value equal to what is already shown.
+    sig.set('ab');
+    // Guard skipped the assignment, so the caret is untouched (would be 2
+    // without the guard, since setting .value moves the caret to the end).
+    expect(input.selectionStart).toBe(1);
+  });
+});

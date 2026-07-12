@@ -77,16 +77,35 @@ based on the attribute:
 
 ```ts
 html`<div class=${cls}>...</div>`            // string attribute
-html`<input value=${name} />`                // signal binds value
+html`<input value=${name} />`                // value → live DOM property
 html`<input disabled=${isDisabled} />`       // boolean attribute
 html`<a href=${"/users/" + id}>profile</a>`  // computed string
 ```
 
-For boolean-shaped HTML attributes (`disabled`, `checked`,
-`hidden`, `readonly`, `required`, `selected`, `open`, `multiple`),
-the binding is a true on/off — the attribute is added when the
-value is truthy and removed when falsy. For everything else, the
-value is stringified.
+For boolean-shaped HTML attributes (`disabled`, `hidden`,
+`readonly`, `required`, `open`, `multiple`), the binding is a true
+on/off — the attribute is added when the value is truthy and removed
+when falsy. For everything else, the value is stringified.
+
+**Live form properties.** `value` (on `<input>`, `<textarea>`,
+`<select>`), `checked` (on `<input>`), and `selected` (on
+`<option>`) bind to the live DOM *property*, not the content
+attribute. On a form control the content attribute is only the
+*default* — once the element exists the browser tracks the shown,
+checked, and selected state on the property, and a late attribute
+write is ignored. Binding the property is what makes a programmatic
+state change actually appear in the field:
+
+```ts
+const url = signal("");
+html`<input value=${url} />`;   // url.set("https://…") populates the input
+```
+
+This is a one-way binding (state → field). To push user edits back
+into state, add an `@input` / `@change` handler (see below). The
+guard on `value` is caret-safe: writing the value the user has
+already typed is a no-op, so a controlled input never has its cursor
+jumped to the end.
 
 Static text and placeholders mix freely inside a single attribute
 value:

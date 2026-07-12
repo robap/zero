@@ -508,12 +508,26 @@ describe('select element model', () => {
     expect(sel.hasAttribute('multiple')).toBe(true);
   });
 
-  it('input value keeps the generic attribute-coupled behavior', () => {
+  it('input value diverges from the value attribute once set (browser model)', () => {
     const el = render(html`<input value="start" />`);
     const input = find(el, 'input');
-    input.value = 'anything goes';
-    expect(input.value).toBe('anything goes');
-    expect(input.getAttribute('value')).toBe('anything goes');
+    expect(input.value).toBe('start'); // default comes from the attribute
+    input.value = 'typed';
+    expect(input.value).toBe('typed'); // live value
+    expect(input.getAttribute('value')).toBe('start'); // attribute is only the default
+    input.setAttribute('value', 'later');
+    expect(input.value).toBe('typed'); // late attribute set ignored by live value
+  });
+
+  it('input checked diverges from the checked attribute once set (browser model)', () => {
+    const el = render(html`<input type="checkbox" checked />`);
+    const input = find(el, 'input');
+    expect(input.checked).toBe(true); // default from attribute presence
+    input.checked = false;
+    expect(input.checked).toBe(false); // live value
+    expect(input.hasAttribute('checked')).toBe(true); // attribute is only the default
+    input.setAttribute('checked', '');
+    expect(input.checked).toBe(false); // late attribute set ignored by live value
   });
 });
 

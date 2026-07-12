@@ -41,6 +41,7 @@ refactor that *is* a tracked item follows the same ⏳ → ✅ lifecycle.
 | [app-router-2](issues/app-router-2/spec.md) | ✅ | 2026-05-13 |
 | [pagination](issues/pagination/spec.md) | ✅ | 2026-05-23 |
 | [pagination-computed](issues/pagination-computed/spec.md) | ✅ | 2026-05-24 |
+| [live-props](issues/live-props/spec.md) | ✅ | 2026-07-11 |
 
 ## Components
 

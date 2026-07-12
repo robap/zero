@@ -860,6 +860,48 @@ function _defineStringAttrProp(el, prop, attrName) {
 }
 
 /**
+ * Define `value` as a live property with a browser-like default-vs-live split:
+ * the getter returns the live value once set, else the `value` attribute (the
+ * default); the setter stores the live value and moves the caret to the end
+ * (as a browser does on assignment). A late `setAttribute("value", …)` updates
+ * only the default and cannot change what `.value` returns after a set.
+ * @internal
+ * @param {object} el
+ * @returns {void}
+ */
+function _defineLiveValueProp(el) {
+  Object.defineProperty(el, "value", {
+    get() { return el._liveValue !== undefined ? el._liveValue : (_getAttribute(el, "value") ?? ""); },
+    set(v) {
+      el._liveValue = v == null ? "" : String(v);
+      const len = el._liveValue.length;
+      el._selStart = len;
+      el._selEnd = len;
+    },
+    configurable: true,
+    enumerable: true,
+  });
+}
+
+/**
+ * Define `checked` as a live property with the same default-vs-live split as
+ * `_defineLiveValueProp`: the getter returns the live boolean once set, else
+ * the `checked` attribute presence (the default). A late
+ * `setAttribute("checked", …)` updates only the default.
+ * @internal
+ * @param {object} el
+ * @returns {void}
+ */
+function _defineLiveCheckedProp(el) {
+  Object.defineProperty(el, "checked", {
+    get() { return el._liveChecked !== undefined ? el._liveChecked : _hasAttribute(el, "checked"); },
+    set(v) { el._liveChecked = !!v; },
+    configurable: true,
+    enumerable: true,
+  });
+}
+
+/**
  * Define `name` as a boolean property on `el` coupled to attribute presence.
  * @internal
  * @param {object} el
@@ -951,8 +993,12 @@ function _attachClassNameProp(el) {
  * @returns {void}
  */
 function _attachInputProps(el) {
-  _defineStringAttrProp(el, "value", "value");
-  _defineBoolAttrProp(el, "checked", "checked");
+  // Form controls track a live property that diverges from the content
+  // attribute (the default); other elements keep simple attribute reflection.
+  if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") _defineLiveValueProp(el);
+  else _defineStringAttrProp(el, "value", "value");
+  if (el.tagName === "INPUT") _defineLiveCheckedProp(el);
+  else _defineBoolAttrProp(el, "checked", "checked");
   _defineBoolAttrProp(el, "disabled", "disabled");
   _defineBoolAttrProp(el, "selected", "selected");
   _defineStringAttrProp(el, "name", "name");
