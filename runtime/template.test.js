@@ -782,6 +782,46 @@ describe('select reactive selection', () => {
   });
 });
 
+describe('bare boolean attribute before another attribute', () => {
+  afterEach(cleanup);
+
+  it('a bound attribute after a bare boolean is not swallowed', () => {
+    const sig = signal('');
+    const el = render(html`<input class="f" readonly value=${sig} />`);
+    const input = find(el, 'input');
+    sig.set('SIG');
+    expect(input.value).toBe('SIG');
+  });
+
+  it('a static attribute after a bare boolean is not swallowed', () => {
+    const el = render(html`<input class="f" readonly value="static" />`);
+    const input = find(el, 'input');
+    expect(input.value).toBe('static');
+  });
+
+  it('two bare boolean attributes both apply cleanly', () => {
+    const el = render(html`<input readonly disabled />`);
+    const input = find(el, 'input');
+    expect(input.hasAttribute('readonly')).toBe(true);
+    expect(input.getAttribute('readonly')).toBe('');
+    expect(input.hasAttribute('disabled')).toBe(true);
+  });
+
+  it('a bare boolean before an unquoted valued attribute keeps both', () => {
+    const el = render(html`<input readonly type=text />`);
+    const input = find(el, 'input');
+    expect(input.hasAttribute('readonly')).toBe(true);
+    expect(input.getAttribute('type')).toBe('text');
+  });
+
+  it('a bare boolean immediately before self-close stays boolean', () => {
+    const el = render(html`<div><input readonly /></div>`);
+    const input = find(el, 'input');
+    expect(input.hasAttribute('readonly')).toBe(true);
+    expect(input.getAttribute('readonly')).toBe('');
+  });
+});
+
 describe('live form property bindings', () => {
   afterEach(cleanup);
 

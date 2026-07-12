@@ -69,6 +69,10 @@ function _parseTemplate(strings) {
   const parentPath = [];
   let currentAttrName = '';
   let currentAttrValue = '';
+  // Whether an `=` has been seen for the current attribute. Distinguishes
+  // `readonly value` (bare boolean, then a new attribute) from `name=value`
+  // (an unquoted value) once we are in AFTER_ATTR_NAME.
+  let sawEquals = false;
   /** @type {string[] | null} */
   let attrStatics = null;
   let attrHasPlaceholders = false;
@@ -200,12 +204,14 @@ function _parseTemplate(strings) {
           } else if (ch !== ' ' && ch !== '\t' && ch !== '\n' && ch !== '\r') {
             state = ATTR_NAME;
             currentAttrName = ch;
+            sawEquals = false;
           }
           break;
 
         case ATTR_NAME:
           if (ch === '=') {
             state = AFTER_ATTR_NAME;
+            sawEquals = true;
           } else if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
             // Boolean attribute followed by whitespace — may still get `=value`.
             state = AFTER_ATTR_NAME;
@@ -228,13 +234,20 @@ function _parseTemplate(strings) {
             flushAttr();
             state = TEXT;
           } else if (ch === '=') {
-            // skip
+            sawEquals = true;
           } else if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
             // still in whitespace after attr name
-          } else {
+          } else if (sawEquals) {
             // Unquoted attribute value — capture the first character.
             state = ATTR_VALUE_UNQUOTED;
             currentAttrValue = ch;
+          } else {
+            // No `=` was seen: the current attribute is a bare boolean and
+            // this char begins the next attribute (or a tag terminator like
+            // `/>`). Flush the boolean and re-process this char in IN_TAG.
+            flushAttr();
+            state = IN_TAG;
+            ci--;
           }
           break;
 
